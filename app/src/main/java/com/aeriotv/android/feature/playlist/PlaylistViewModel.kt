@@ -34,9 +34,15 @@ class PlaylistViewModel @Inject constructor(
         val url: String = "",
         val playlist: PlaylistEntity? = null,
         val channels: List<M3UChannel> = emptyList(),
+        val searchQuery: String = "",
+        val selectedGroup: String = ALL_GROUPS,
         val isLoading: Boolean = false,
         val error: String? = null,
     )
+
+    companion object {
+        const val ALL_GROUPS = "All"
+    }
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -88,6 +94,14 @@ class PlaylistViewModel @Inject constructor(
 
     fun onUrlChange(value: String) {
         _state.update { it.copy(url = value, error = null) }
+    }
+
+    fun onSearchQueryChange(value: String) {
+        _state.update { it.copy(searchQuery = value) }
+    }
+
+    fun onGroupSelected(group: String) {
+        _state.update { it.copy(selectedGroup = group) }
     }
 
     /** Pre-fill URL and immediately attempt to load. Used by debug intent-extra and future deep links. */

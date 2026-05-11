@@ -9,23 +9,31 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,12 +54,39 @@ fun ChannelListScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    val groups by remember(state.channels) {
+        derivedStateOf {
+            val unique = state.channels.asSequence()
+                .map { it.groupTitle }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sortedBy { it.lowercase() }
+                .toList()
+            listOf(PlaylistViewModel.ALL_GROUPS) + unique
+        }
+    }
+
+    val filtered by remember(state.channels, state.searchQuery, state.selectedGroup) {
+        derivedStateOf {
+            val query = state.searchQuery.trim()
+            state.channels.asSequence()
+                .filter {
+                    state.selectedGroup == PlaylistViewModel.ALL_GROUPS ||
+                            it.groupTitle.equals(state.selectedGroup, ignoreCase = true)
+                }
+                .filter {
+                    query.isEmpty() || it.name.contains(query, ignoreCase = true)
+                }
+                .toList()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
             title = {
                 val playlistName = state.playlist?.name?.takeIf { it.isNotBlank() } ?: "Channels"
                 Text(
-                    text = "$playlistName  •  ${state.channels.size}",
+                    text = "$playlistName  •  ${filtered.size} / ${state.channels.size}",
                     style = MaterialTheme.typography.titleMedium,
                 )
             },
@@ -70,12 +105,50 @@ fun ChannelListScreen(
             ),
         )
 
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = viewModel::onSearchQueryChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            singleLine = true,
+            placeholder = { Text("Search channels") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        )
+
+        if (groups.size > 1) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(groups, key = { it }) { group ->
+                    FilterChip(
+                        selected = state.selectedGroup == group,
+                        onClick = { viewModel.onGroupSelected(group) },
+                        label = { Text(group) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                    )
+                }
+            }
+        }
+
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            thickness = 0.5.dp,
+        )
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            items(items = state.channels, key = { it.id }) { channel ->
+            items(items = filtered, key = { it.id }) { channel ->
                 ChannelRow(channel = channel, onClick = { onChannelClick(channel) })
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.surfaceVariant,
