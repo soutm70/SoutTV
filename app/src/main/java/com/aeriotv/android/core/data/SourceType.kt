@@ -1,0 +1,23 @@
+package com.aeriotv.android.core.data
+
+/**
+ * Where the channel list comes from. Mirrors iOS ServerType (Aerio/Models/Models.swift:111+)
+ * with the same three categories. Each implies a different fetch + auth flow:
+ *
+ *  - [M3uUrl]: user pastes a raw M3U/M3U8 URL plus an optional XMLTV URL.
+ *    No auth, no derivation, the URLs go to the fetcher as-is.
+ *  - [DispatcharrApiKey]: user supplies a server base URL and an admin API key
+ *    from Dispatcharr's Users -> Edit -> API & XC tab. M3U/EPG are derived
+ *    as `${base}/output/m3u` and `${base}/output/epg` with `X-API-Key` header.
+ *  - [DispatcharrUserPass]: server base URL + admin username/password. Login
+ *    flow exchanges them for a JWT pair, then runs API calls with Bearer auth.
+ *    Wired in Phase 4b.
+ *  - [XtreamCodes]: server base URL + Xtream username/password. M3U is
+ *    generated via `/get.php?type=m3u_plus&username=&password=`. Wired in Phase 4c.
+ */
+enum class SourceType(val displayName: String, val isImplemented: Boolean) {
+    M3uUrl("M3U URL", true),
+    DispatcharrApiKey("Dispatcharr (API Key)", true),
+    DispatcharrUserPass("Dispatcharr (Username & Password)", false),
+    XtreamCodes("Xtream Codes", false),
+}

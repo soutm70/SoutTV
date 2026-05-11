@@ -22,13 +22,18 @@ class MainActivity : ComponentActivity() {
         // handling will introduce its own intent-filter when needed, not this path.
         val initialUrl = if (BuildConfig.DEBUG) intent?.getStringExtra("url") else null
         val initialEpgUrl = if (BuildConfig.DEBUG) intent?.getStringExtra("epg") else null
+        val initialApiKey = if (BuildConfig.DEBUG) intent?.getStringExtra("apikey") else null
         setContent {
             AerioTVTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AerioTVNavHost(initialUrl = initialUrl, initialEpgUrl = initialEpgUrl)
+                    AerioTVNavHost(
+                        initialUrl = initialUrl,
+                        initialEpgUrl = initialEpgUrl,
+                        initialApiKey = initialApiKey,
+                    )
                 }
             }
         }

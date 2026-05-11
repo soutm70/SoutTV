@@ -14,11 +14,31 @@ import java.util.UUID
 data class PlaylistEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
+    /**
+     * For [SourceType.M3uUrl] this is the raw M3U URL.
+     * For Dispatcharr / Xtream Codes this is the server base URL (no trailing slash
+     * is required; the repository strips one if present). Derived endpoints
+     * (`/output/m3u`, `/output/epg`, `/player_api.php`, etc.) live in
+     * [PlaylistRepository], NOT in the entity.
+     */
     val urlString: String,
+    /** Optional XMLTV URL when [sourceType] is [SourceType.M3uUrl]; ignored otherwise. */
     val epgUrl: String? = null,
+    /** Source type as enum NAME (`M3uUrl`, `DispatcharrApiKey`, etc.). */
+    val sourceType: String = "M3uUrl",
+    /** Dispatcharr admin API key. Used as `X-API-Key` header. Sensitive — see TODO. */
+    val apiKey: String? = null,
+    /** Username for Dispatcharr (user/pass) and Xtream Codes flows. */
+    val username: String? = null,
+    /** Password for Dispatcharr (user/pass) and Xtream Codes. Sensitive — see TODO. */
+    val password: String? = null,
     val channelCount: Int = 0,
     val lastRefreshedAt: Long? = null,
     val lastEpgRefreshedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val isActive: Boolean = true,
 )
+// TODO Phase 9 (Block Store): move apiKey + password out of Room into Google Play
+// Block Store / EncryptedSharedPreferences. Room cleartext storage is acceptable for
+// pre-1.0 dev iteration but ships of any real build need encrypted credential storage.
+

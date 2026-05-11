@@ -26,10 +26,18 @@ class MPVPlayerView @JvmOverloads constructor(
      * Absolute path to the Mozilla CA bundle copied from the AAR's assets/cacert.pem
      * to the app's filesDir by `Utils.copyAssets`. PlayerScreen sets this BEFORE
      * calling [initialize] so initOptions can wire it as the TLS root store.
-     * Without it, mbedTLS rejects every HTTPS handshake — Android does not expose
+     * Without it, mbedTLS rejects every HTTPS handshake - Android does not expose
      * its system trust store in a format libmpv can read.
      */
     var caFilePath: String? = null
+
+    /**
+     * Optional HTTP headers to attach to every fetch the underlying ffmpeg/mpv stream
+     * stack makes (segment requests, manifests, etc.). Used for Dispatcharr API key
+     * auth on `/proxy/ts/stream/...` and any future XC/server-specific custom headers.
+     * Mirrors iOS MPVPlayerView.swift lines 3516-3527 (`user-agent` + `http-header-fields`).
+     */
+    var httpHeaders: Map<String, String> = emptyMap()
 
     /**
      * Pre-init options (iOS lines 3055-3527, before mpv_initialize).
@@ -72,6 +80,20 @@ class MPVPlayerView @JvmOverloads constructor(
         caFilePath?.let { path ->
             m.setOptionString("tls-ca-file", path)
             m.setOptionString("tls-verify", "yes")
+        }
+
+        // HTTP headers for the stream URL (iOS lines 3516-3527). User-Agent is its own
+        // option; everything else goes as one CRLF-separated string under
+        // `http-header-fields`. Crucial for Dispatcharr API-key proxy URLs and any
+        // server that requires Authorization on /proxy/ts/stream/<uuid>.
+        val userAgent = httpHeaders.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
+        if (userAgent != null) {
+            m.setOptionString("user-agent", userAgent)
+        }
+        val otherHeaders = httpHeaders.filterKeys { !it.equals("User-Agent", ignoreCase = true) }
+        if (otherHeaders.isNotEmpty()) {
+            val packed = otherHeaders.entries.joinToString(separator = "\r\n") { (k, v) -> "$k: $v" }
+            m.setOptionString("http-header-fields", packed)
         }
 
         if (isLive) {

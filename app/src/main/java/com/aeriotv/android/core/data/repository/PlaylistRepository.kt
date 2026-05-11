@@ -2,8 +2,10 @@ package com.aeriotv.android.core.data.repository
 
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.PlaylistFetcher
 import com.aeriotv.android.core.parser.M3UParser
 import com.aeriotv.android.core.parser.XMLTVParser
@@ -15,33 +17,63 @@ import javax.inject.Singleton
  * Single source of truth for playlist persistence + fetch + parse.
  * Mirrors how iOS Aerio handles playlists: row stored in SwiftData, channels
  * re-parsed from source on every refresh (NOT cached individually).
+ *
+ * Derives the M3U URL, EPG URL, and HTTP headers from the playlist's
+ * [PlaylistEntity.sourceType]:
+ *  - M3uUrl: use [PlaylistEntity.urlString] directly + optional [PlaylistEntity.epgUrl].
+ *  - DispatcharrApiKey: M3U = `${urlString}/output/m3u`, EPG = `${urlString}/output/epg`,
+ *    headers = `{X-API-Key: ${apiKey}, Accept: application/json}` (Phase 4a).
+ *  - DispatcharrUserPass: TODO Phase 4b (JWT flow).
+ *  - XtreamCodes: TODO Phase 4c (player_api.php enumeration -> get.php m3u_plus).
  */
 @Singleton
 class PlaylistRepository @Inject constructor(
     private val dao: PlaylistDao,
     private val fetcher: PlaylistFetcher,
+    private val dispatcharrClient: DispatcharrClient,
 ) {
+
+    /** Inputs for creating or updating a playlist row. */
+    data class SaveRequest(
+        val sourceType: SourceType,
+        val name: String?,
+        val url: String,
+        val epgUrl: String? = null,
+        val apiKey: String? = null,
+        val username: String? = null,
+        val password: String? = null,
+    )
 
     suspend fun activePlaylist(): PlaylistEntity? = dao.firstActive()
 
-    /**
-     * Fetch the given URL, parse it, return the channels, and persist the URL
-     * (or update an existing row if [existingId] is passed) with the new
-     * channelCount + lastRefreshedAt. Channels themselves are NOT persisted.
-     */
     suspend fun loadAndPersist(
-        url: String,
-        epgUrl: String? = null,
-        name: String = deriveName(url),
+        request: SaveRequest,
         existingId: String? = null,
     ): Result<Pair<PlaylistEntity, List<M3UChannel>>> = runCatching {
-        val bytes = fetcher.fetchBytes(url)
-        val channels = M3UParser.parseBytes(bytes)
+        val normalisedBase = request.url.trimEnd('/')
+        val sourceType = request.sourceType
+        if (!sourceType.isImplemented) {
+            throw UnsupportedOperationException(
+                "${sourceType.displayName} support lands in a later phase",
+            )
+        }
+
+        val channels = fetchChannelsFor(
+            sourceType = sourceType,
+            base = normalisedBase,
+            userEpgUrl = request.epgUrl,
+            apiKey = request.apiKey,
+        )
+
         val entity = PlaylistEntity(
             id = existingId ?: UUID.randomUUID().toString(),
-            name = name,
-            urlString = url,
-            epgUrl = epgUrl?.takeIf { it.isNotBlank() },
+            name = request.name?.takeIf { it.isNotBlank() } ?: deriveName(normalisedBase),
+            urlString = normalisedBase,
+            epgUrl = request.epgUrl?.takeIf { it.isNotBlank() },
+            sourceType = sourceType.name,
+            apiKey = request.apiKey?.takeIf { it.isNotBlank() },
+            username = request.username?.takeIf { it.isNotBlank() },
+            password = request.password?.takeIf { it.isNotBlank() },
             channelCount = channels.size,
             lastRefreshedAt = System.currentTimeMillis(),
         )
@@ -50,29 +82,35 @@ class PlaylistRepository @Inject constructor(
     }
 
     /**
-     * Re-fetch channels for an existing playlist row, updating channelCount
-     * and lastRefreshedAt without changing id/name/urlString.
+     * Re-fetch channels for an existing playlist row, updating channelCount and
+     * lastRefreshedAt without changing identity fields.
      */
     suspend fun refresh(playlist: PlaylistEntity): Result<List<M3UChannel>> = runCatching {
-        val bytes = fetcher.fetchBytes(playlist.urlString)
-        val channels = M3UParser.parseBytes(bytes)
+        val sourceType = playlist.resolvedSourceType()
+        val channels = fetchChannelsFor(
+            sourceType = sourceType,
+            base = playlist.urlString,
+            userEpgUrl = playlist.epgUrl,
+            apiKey = playlist.apiKey,
+        )
         dao.update(
             playlist.copy(
                 channelCount = channels.size,
                 lastRefreshedAt = System.currentTimeMillis(),
-            )
+            ),
         )
         channels
     }
 
-    /**
-     * Fetch + parse the EPG for the given playlist. Returns empty list when
-     * no EPG URL is configured. .gz is transparently handled by the parser.
-     */
     suspend fun loadEpg(playlist: PlaylistEntity): Result<List<EPGProgramme>> = runCatching {
-        val url = playlist.epgUrl?.takeIf { it.isNotBlank() }
-            ?: return@runCatching emptyList()
-        val bytes = fetcher.fetchBytes(url)
+        val sourceType = playlist.resolvedSourceType()
+        // M3U: hit the user-supplied XMLTV URL.
+        // Dispatcharr: EPG via /api/epg/grid/ has a different JSON shape — that
+        // path lands in Phase 4a-ii. Returning empty is the graceful fallback;
+        // channel-row now-playing badges will simply not appear.
+        if (sourceType != SourceType.M3uUrl) return@runCatching emptyList()
+        val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
+        val bytes = fetcher.fetchBytes(epgUrl)
         val programmes = XMLTVParser.parseBytes(bytes)
         dao.update(playlist.copy(lastEpgRefreshedAt = System.currentTimeMillis()))
         programmes
@@ -81,5 +119,46 @@ class PlaylistRepository @Inject constructor(
     suspend fun clear() = dao.clear()
 
     private fun deriveName(url: String): String =
-        url.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Playlist" }
+        url.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Source" }
+
+    private suspend fun fetchChannelsFor(
+        sourceType: SourceType,
+        base: String,
+        userEpgUrl: String?,
+        apiKey: String?,
+    ): List<M3UChannel> = when (sourceType) {
+        SourceType.M3uUrl -> {
+            val bytes = fetcher.fetchBytes(base)
+            M3UParser.parseBytes(bytes)
+        }
+        SourceType.DispatcharrApiKey -> {
+            val key = apiKey?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("Dispatcharr API key is required")
+            val groups = dispatcharrClient.listGroups(base, key)
+                .associate { it.id to it.name }
+            val channels = dispatcharrClient.listChannels(base, key)
+            channels
+                .filter { !it.uuid.isNullOrBlank() }
+                .sortedWith(compareBy(
+                    { it.channelNumber ?: Double.MAX_VALUE },
+                    { it.name.lowercase() },
+                ))
+                .map { ch ->
+                    M3UChannel(
+                        name = ch.name,
+                        url = dispatcharrClient.streamUrl(base, ch.uuid!!),
+                        groupTitle = ch.channelGroupId?.let { groups[it] }.orEmpty(),
+                        tvgID = ch.tvgId.orEmpty(),
+                        tvgName = ch.name,
+                        tvgLogo = ch.logoId?.let { dispatcharrClient.logoUrl(base, it) }.orEmpty(),
+                        channelNumber = ch.channelNumber?.toInt(),
+                    )
+                }
+        }
+        SourceType.DispatcharrUserPass,
+        SourceType.XtreamCodes -> error("$sourceType is not implemented yet")
+    }
 }
+
+private fun PlaylistEntity.resolvedSourceType(): SourceType =
+    SourceType.entries.firstOrNull { it.name == sourceType } ?: SourceType.M3uUrl

@@ -32,9 +32,14 @@ class PlaylistFetcher @Inject constructor() {
         }
     }
 
-    suspend fun fetchBytes(url: String, userAgent: String? = null): ByteArray {
+    suspend fun fetchBytes(
+        url: String,
+        userAgent: String? = null,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ): ByteArray {
         val response: HttpResponse = client.get(url) {
             if (userAgent != null) header("User-Agent", userAgent)
+            for ((k, v) in extraHeaders) header(k, v)
         }
         if (!response.status.isSuccess()) {
             throw IllegalStateException("HTTP ${response.status.value} ${response.status.description} from $url")

@@ -34,6 +34,7 @@ private const val TAG = "PlayerScreen"
 fun PlayerScreen(
     streamUrl: String,
     isLive: Boolean = true,
+    httpHeaders: Map<String, String> = emptyMap(),
 ) {
     Box(
         modifier = Modifier
@@ -54,6 +55,7 @@ fun PlayerScreen(
                     )
                     this.isLive = isLive
                     this.caFilePath = "$configDir/cacert.pem"
+                    this.httpHeaders = httpHeaders
                 }
 
                 Log.i(TAG, "Initializing MPV (configDir=$configDir cacheDir=$cacheDir)")

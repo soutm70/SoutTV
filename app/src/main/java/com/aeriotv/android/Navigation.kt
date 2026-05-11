@@ -35,7 +35,11 @@ object Routes {
 }
 
 @Composable
-fun AerioTVNavHost(initialUrl: String? = null, initialEpgUrl: String? = null) {
+fun AerioTVNavHost(
+    initialUrl: String? = null,
+    initialEpgUrl: String? = null,
+    initialApiKey: String? = null,
+) {
     val navController = rememberNavController()
 
     NavHost(navController = navController, startDestination = Routes.PLAYLIST_GRAPH) {
@@ -48,10 +52,16 @@ fun AerioTVNavHost(initialUrl: String? = null, initialEpgUrl: String? = null) {
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
 
-                // One-shot debug entry: if MainActivity received --es url, load it now.
-                LaunchedEffect(initialUrl, initialEpgUrl) {
+                // One-shot debug entry. --es url + optional --es epg loads an M3U source.
+                // --es url + --es apikey loads a Dispatcharr API-key source. Both gated
+                // behind BuildConfig.DEBUG in MainActivity so release builds ignore them.
+                LaunchedEffect(initialUrl, initialEpgUrl, initialApiKey) {
                     if (!initialUrl.isNullOrBlank() && state.url.isBlank()) {
-                        vm.loadFromUrl(initialUrl, initialEpgUrl)
+                        if (!initialApiKey.isNullOrBlank()) {
+                            vm.loadFromDispatcharr(initialUrl, initialApiKey)
+                        } else {
+                            vm.loadFromUrl(initialUrl, initialEpgUrl)
+                        }
                     }
                 }
 
@@ -109,15 +119,33 @@ fun AerioTVNavHost(initialUrl: String? = null, initialEpgUrl: String? = null) {
                     },
                 )
             }
-        }
 
-        composable(
-            route = Routes.PLAYER,
-            arguments = listOf(navArgument("url") { type = NavType.StringType }),
-        ) { entry ->
-            val encoded = entry.arguments?.getString("url").orEmpty()
-            val url = Uri.decode(encoded)
-            PlayerScreen(streamUrl = url, isLive = true)
+            composable(
+                route = Routes.PLAYER,
+                arguments = listOf(navArgument("url") { type = NavType.StringType }),
+            ) { entry ->
+                val parent = remember(entry) {
+                    navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
+                }
+                val vm: PlaylistViewModel = hiltViewModel(parent)
+                val state by vm.state.collectAsStateWithLifecycle()
+                val encoded = entry.arguments?.getString("url").orEmpty()
+                val url = Uri.decode(encoded)
+                // Derive HTTP headers from the active source so mpv can authenticate against
+                // the server when fetching /proxy/ts/stream/<uuid>. Phase 4a only fills the
+                // Dispatcharr API-key headers; Phase 4b will add Bearer JWT, etc.
+                val headers = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
+                    val pl = state.playlist
+                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
+                    if (pl?.sourceType == com.aeriotv.android.core.data.SourceType.DispatcharrApiKey.name && key != null) {
+                        mapOf(
+                            "X-API-Key" to key,
+                            "Authorization" to "ApiKey $key",
+                        )
+                    } else emptyMap()
+                }
+                PlayerScreen(streamUrl = url, isLive = true, httpHeaders = headers)
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 
 @Database(
     entities = [PlaylistEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AerioDatabase : RoomDatabase() {
