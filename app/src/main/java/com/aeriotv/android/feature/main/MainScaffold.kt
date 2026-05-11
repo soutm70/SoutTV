@@ -20,7 +20,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
-import com.aeriotv.android.feature.channels.ChannelListScreen
+import com.aeriotv.android.feature.livetv.LiveTVTabContent
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.settings.SettingsScreen
 
@@ -79,9 +79,9 @@ fun MainScaffold(
         },
     ) { padding ->
         when (selectedTab) {
-            AppTab.LiveTV -> ChannelListScreen(
+            AppTab.LiveTV -> LiveTVTabContent(
                 onChannelClick = onChannelClick,
-                modifierWrap = Modifier.padding(padding),
+                modifier = Modifier.padding(padding),
             )
             AppTab.Favorites -> PlaceholderScreen(
                 tabLabel = "Favorites",

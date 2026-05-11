@@ -19,7 +19,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Search
@@ -55,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.feature.livetv.LiveTVViewMode
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.SortMode
 import com.aeriotv.android.feature.playlist.nowPlaying
@@ -65,6 +68,9 @@ fun ChannelListScreen(
     onChannelClick: (M3UChannel) -> Unit,
     viewModel: PlaylistViewModel = hiltViewModel(),
     modifierWrap: Modifier = Modifier,
+    viewMode: LiveTVViewMode = LiveTVViewMode.List,
+    canToggleViewMode: Boolean = false,
+    onToggleViewMode: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -113,6 +119,17 @@ fun ChannelListScreen(
                 )
             },
             actions = {
+                if (canToggleViewMode) {
+                    IconButton(onClick = onToggleViewMode) {
+                        Icon(
+                            imageVector = if (viewMode == LiveTVViewMode.Guide)
+                                Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
+                            contentDescription = if (viewMode == LiveTVViewMode.Guide)
+                                "Switch to List" else "Switch to Guide",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
                 SortMenu(
                     currentMode = state.sortMode,
                     onSelect = viewModel::onSortModeChange,

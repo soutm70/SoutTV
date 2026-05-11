@@ -1,0 +1,85 @@
+package com.aeriotv.android.feature.livetv
+
+import android.app.Activity
+import android.content.res.Configuration
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
+import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+
+/**
+ * Whether Live TV renders the dense channel List or the time-x-channels Guide grid.
+ * Mirrors iOS `defaultLiveTVView` @AppStorage. Phase 5 keeps the value
+ * rememberSaveable; Phase 8 (Settings sub-screens) will move it to DataStore so
+ * the user choice survives cold starts.
+ */
+enum class LiveTVViewMode { List, Guide }
+
+/**
+ * Form-factor decision matching iOS ChannelListView dispatcher
+ * (`ChannelListView.swift:348`):
+ *  - iPhone (Compact width): List only, no toggle.
+ *  - iPad / large screens (Expanded width): Guide default, toggle available.
+ *  - Medium (foldable unfolded / smaller tablets): List default, toggle available.
+ *  - Google TV / Android TV (UI_MODE_TYPE_TELEVISION): Guide default, toggle available.
+ *
+ * Android maps the iOS `idiom` enum onto WindowWidthSizeClass + the Configuration's
+ * `uiMode` television flag.
+ */
+@Immutable
+data class LiveTvFormFactor(
+    val widthClass: WindowWidthSizeClass,
+    val isTv: Boolean,
+) {
+    /** Phone-class layout: no toggle, force List. */
+    val isCompactPhone: Boolean get() = widthClass == WindowWidthSizeClass.Compact && !isTv
+
+    /** Whether the user can flip between List and Guide. */
+    val supportsToggle: Boolean get() = !isCompactPhone
+
+    /** Default view when no user override exists. */
+    val defaultMode: LiveTVViewMode
+        get() = when {
+            isCompactPhone -> LiveTVViewMode.List
+            isTv -> LiveTVViewMode.Guide
+            widthClass == WindowWidthSizeClass.Expanded -> LiveTVViewMode.Guide
+            else -> LiveTVViewMode.List
+        }
+}
+
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
+@Composable
+fun rememberLiveTvFormFactor(): LiveTvFormFactor {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val widthClass = if (activity != null) {
+        calculateWindowSizeClass(activity).widthSizeClass
+    } else {
+        WindowWidthSizeClass.Compact
+    }
+    val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+    val isTv = uiMode == Configuration.UI_MODE_TYPE_TELEVISION
+    return remember(widthClass, isTv) { LiveTvFormFactor(widthClass, isTv) }
+}
+
+@Composable
+fun rememberLiveTvViewModeState(formFactor: LiveTvFormFactor): MutableState<LiveTVViewMode> {
+    return rememberSaveable(formFactor.defaultMode) {
+        mutableStateOf(formFactor.defaultMode)
+    }
+}
+
+private fun android.content.Context.findActivity(): Activity? {
+    var ctx: android.content.Context? = this
+    while (ctx != null) {
+        if (ctx is Activity) return ctx
+        ctx = (ctx as? android.content.ContextWrapper)?.baseContext
+    }
+    return null
+}
