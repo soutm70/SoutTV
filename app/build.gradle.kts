@@ -17,6 +17,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         vectorDrawables { useSupportLibrary = true }
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -46,6 +49,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
@@ -63,6 +69,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
 
     implementation(libs.androidx.tv.material)
+
+    implementation(libs.mpv.android.lib)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
