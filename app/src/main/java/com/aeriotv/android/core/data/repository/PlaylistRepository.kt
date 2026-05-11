@@ -6,9 +6,11 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.network.DispatcharrClient
+import com.aeriotv.android.core.network.DispatcharrEpgEntry
 import com.aeriotv.android.core.network.PlaylistFetcher
 import com.aeriotv.android.core.parser.M3UParser
 import com.aeriotv.android.core.parser.XMLTVParser
+import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -119,14 +121,20 @@ class PlaylistRepository @Inject constructor(
 
     suspend fun loadEpg(playlist: PlaylistEntity): Result<List<EPGProgramme>> = runCatching {
         val sourceType = playlist.resolvedSourceType()
-        // M3U: hit the user-supplied XMLTV URL.
-        // Dispatcharr: EPG via /api/epg/grid/ has a different JSON shape — that
-        // path lands in Phase 4a-ii. Returning empty is the graceful fallback;
-        // channel-row now-playing badges will simply not appear.
-        if (sourceType != SourceType.M3uUrl) return@runCatching emptyList()
-        val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
-        val bytes = fetcher.fetchBytes(epgUrl)
-        val programmes = XMLTVParser.parseBytes(bytes)
+        val programmes = when (sourceType) {
+            SourceType.M3uUrl -> {
+                val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
+                val bytes = fetcher.fetchBytes(epgUrl)
+                XMLTVParser.parseBytes(bytes)
+            }
+            SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
+                val key = playlist.apiKey?.takeIf { it.isNotBlank() }
+                    ?: return@runCatching emptyList()
+                dispatcharrClient.getEpgGrid(playlist.urlString, key)
+                    .toProgrammes()
+            }
+            SourceType.XtreamCodes -> return@runCatching emptyList()
+        }
         dao.update(playlist.copy(lastEpgRefreshedAt = System.currentTimeMillis()))
         programmes
     }
@@ -178,3 +186,31 @@ class PlaylistRepository @Inject constructor(
 
 private fun PlaylistEntity.resolvedSourceType(): SourceType =
     SourceType.entries.firstOrNull { it.name == sourceType } ?: SourceType.M3uUrl
+
+/**
+ * Convert Dispatcharr `/api/epg/grid/` entries into the universal EPGProgramme
+ * shape the rest of the app consumes. Entries without a tvg_id are dropped -
+ * they cannot be matched back to a channel row. Entries with malformed times
+ * are dropped too (Instant.parse will throw).
+ *
+ * Dispatcharr bulk grid intentionally omits `category` for perf; we propagate
+ * empty string. Lazy category enrichment via /api/epg/programs/<id>/ lives in
+ * a later phase tied to ProgramInfoView.
+ */
+private fun List<DispatcharrEpgEntry>.toProgrammes(): List<EPGProgramme> =
+    mapNotNull { entry ->
+        val channelId = entry.tvgId?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        val start = runCatching { Instant.parse(entry.startTime).toEpochMilli() }.getOrNull()
+            ?: return@mapNotNull null
+        val end = runCatching { Instant.parse(entry.endTime).toEpochMilli() }.getOrNull()
+            ?: return@mapNotNull null
+        val title = entry.title.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        EPGProgramme(
+            channelId = channelId,
+            title = title,
+            description = entry.description,
+            startMillis = start,
+            endMillis = end,
+            category = "",
+        )
+    }

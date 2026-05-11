@@ -127,6 +127,31 @@ class DispatcharrClient @Inject constructor() {
     suspend fun listGroups(baseUrl: String, apiKey: String): List<DispatcharrGroup> =
         fetchListOrResults("${baseUrl.trimEnd('/')}/api/channels/groups/", apiKey)
 
+    /**
+     * GET /api/epg/grid/ - bulk EPG window covering roughly -1h to +24h. iOS uses
+     * this as the universal EPG source for Dispatcharr-backed playlists; the
+     * `/output/epg` XMLTV path is gated by Dispatcharr 0.23+ LAN-only policy and
+     * mostly redundant when this endpoint is available (EPGGuideView.swift:641-660).
+     *
+     * Response shape:
+     *   {"data": [{id, start_time (ISO 8601 UTC), end_time, title, sub_title,
+     *              description, tvg_id, season, episode, is_new, is_live, ...}, ...]}
+     *
+     * `<category>` is intentionally stripped from this bulk endpoint for perf;
+     * categories are lazy-loaded per programme via /api/epg/programs/<id>/ when the
+     * user opens ProgramInfoView (Phase 6+ in the Android port).
+     */
+    suspend fun getEpgGrid(baseUrl: String, apiKey: String): List<DispatcharrEpgEntry> {
+        val response: HttpResponse = client.get("${baseUrl.trimEnd('/')}/api/epg/grid/") {
+            applyAuth(apiKey)
+        }
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException("EPG grid failed: HTTP ${response.status.value} ${response.status.description}")
+        }
+        val wrapper: EpgGridResponse = response.body()
+        return wrapper.data
+    }
+
     private suspend inline fun <reified T> fetchListOrResults(
         url: String,
         apiKey: String,
@@ -217,4 +242,39 @@ data class DispatcharrChannel(
     val tvgId: String? = null,
     @SerialName("epg_data_id")
     val epgDataId: Int? = null,
+)
+
+@Serializable
+data class EpgGridResponse(
+    val data: List<DispatcharrEpgEntry>,
+)
+
+@Serializable
+data class DispatcharrEpgEntry(
+    // NB: `id` is intentionally omitted. Real EPG entries carry a numeric `id`,
+    // but Dispatcharr's "Dummy EPG" channels emit string ids like
+    // `"dummy-custom-16444-21"`, which kotlinx-serialization can't coerce into
+    // a single Kotlin numeric type. We don't need the id until per-programme
+    // category lazy-load (Phase 6+), at which point we can switch to JsonElement
+    // or split the model into typed/untyped variants.
+    @SerialName("start_time")
+    val startTime: String,
+    @SerialName("end_time")
+    val endTime: String,
+    val title: String = "",
+    @SerialName("sub_title")
+    val subTitle: String? = null,
+    val description: String = "",
+    @SerialName("tvg_id")
+    val tvgId: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    @SerialName("is_new")
+    val isNew: Boolean = false,
+    @SerialName("is_live")
+    val isLive: Boolean = false,
+    @SerialName("is_premiere")
+    val isPremiere: Boolean = false,
+    @SerialName("is_finale")
+    val isFinale: Boolean = false,
 )
