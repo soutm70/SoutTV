@@ -24,6 +24,7 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.dvr.DvrTabContent
 import com.aeriotv.android.feature.livetv.LiveTVTabContent
+import com.aeriotv.android.feature.ondemand.OnDemandTabContent
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.settings.AppBehaviorsSettingsScreen
 import com.aeriotv.android.feature.settings.AppearanceSettingsScreen
@@ -122,10 +123,7 @@ fun MainScaffold(
                 hint = "Pin channels for quick access. Coming with the Favorites phase.",
             )
             AppTab.DVR -> DvrTabContent(modifier = Modifier.padding(padding))
-            AppTab.OnDemand -> PlaceholderScreen(
-                tabLabel = "On Demand",
-                hint = "Movies and series from your server. Coming with the VOD phase.",
-            )
+            AppTab.OnDemand -> OnDemandTabContent(modifier = Modifier.padding(padding))
             AppTab.Settings -> SettingsTabContent()
         }
     }

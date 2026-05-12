@@ -241,6 +241,48 @@ class DispatcharrClient @Inject constructor() {
     suspend fun listRecordings(baseUrl: String, apiKey: String): List<DispatcharrRecording> =
         fetchListOrResults("${baseUrl.trimEnd('/')}/api/channels/recordings/", apiKey)
 
+    /**
+     * GET /api/vod/movies/?page_size=100 — first page of VOD movies. iOS
+     * walks all pages via fetchAllPages; the Android first cut shows page 1
+     * and a "Load more" affordance lands when the user request comes.
+     */
+    suspend fun getVODMoviesFirstPage(baseUrl: String, apiKey: String): VODMoviesPage {
+        val response: HttpResponse = client.get("${baseUrl.trimEnd('/')}/api/vod/movies/?page_size=100") {
+            applyAuth(apiKey)
+        }
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException("VOD movies fetch failed: HTTP ${response.status.value}")
+        }
+        val raw: JsonElement = response.body()
+        return when {
+            raw is JsonArray -> VODMoviesPage(
+                count = raw.size,
+                next = null,
+                results = raw.map { json.decodeFromJsonElement(serializer<DispatcharrVODMovie>(), it) },
+            )
+            raw is JsonObject -> {
+                val results = (raw["results"] as? JsonArray)?.map {
+                    json.decodeFromJsonElement(serializer<DispatcharrVODMovie>(), it)
+                } ?: emptyList()
+                val count = (raw["count"]?.toString()?.toIntOrNull()) ?: results.size
+                val next = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                VODMoviesPage(count = count, next = next, results = results)
+            }
+            else -> throw IllegalStateException("Unexpected /api/vod/movies/ shape: ${raw::class.simpleName}")
+        }
+    }
+
+    /**
+     * Returns the canonical VOD playback URL for a Dispatcharr movie. Mirrors
+     * iOS DispatcharrAPI.proxyMovieURL (StreamingAPIs.swift:2105). Optional
+     * `streamId` picks one of the movie's stream providers; omit to let the
+     * server choose.
+     */
+    fun vodMovieUrl(baseUrl: String, movieUuid: String, streamId: Int? = null): String {
+        val base = "${baseUrl.trimEnd('/')}/proxy/vod/movie/$movieUuid"
+        return if (streamId != null) "$base?stream_id=$streamId" else base
+    }
+
     /** DELETE /api/channels/recordings/{id}/ — cancels a scheduled recording or removes a completed file. */
     suspend fun deleteRecording(baseUrl: String, apiKey: String, recordingId: Int) {
         val response: HttpResponse = client.delete("${baseUrl.trimEnd('/')}/api/channels/recordings/$recordingId/") {
@@ -314,6 +356,52 @@ data class DispatcharrChannel(
 @Serializable
 data class EpgGridResponse(
     val data: List<DispatcharrEpgEntry>,
+)
+
+@Serializable
+data class VODMoviesPage(
+    val count: Int,
+    val next: String?,
+    val results: List<DispatcharrVODMovie>,
+)
+
+@Serializable
+data class DispatcharrVODMovie(
+    val id: Int,
+    val uuid: String,
+    val title: String = "",
+    val name: String? = null,
+    val plot: String? = null,
+    val genre: String? = null,
+    val rating: String? = null,
+    val year: Int? = null,
+    @SerialName("duration_secs")
+    val durationSecs: Int? = null,
+    @SerialName("tmdb_id")
+    val tmdbId: String? = null,
+    @SerialName("imdb_id")
+    val imdbId: String? = null,
+    val logo: DispatcharrVODLogo? = null,
+    val streams: List<DispatcharrVODStreamOption> = emptyList(),
+) {
+    val displayName: String get() = title.ifBlank { name.orEmpty() }
+    val posterUrl: String? get() = logo?.url
+    val firstStreamId: Int? get() = streams.firstOrNull()?.streamId
+}
+
+@Serializable
+data class DispatcharrVODLogo(
+    val url: String? = null,
+    @SerialName("cache_url")
+    val cacheUrl: String? = null,
+)
+
+@Serializable
+data class DispatcharrVODStreamOption(
+    @SerialName("stream_id")
+    val streamId: Int? = null,
+    @SerialName("provider_id")
+    val providerId: Int? = null,
 )
 
 /**
