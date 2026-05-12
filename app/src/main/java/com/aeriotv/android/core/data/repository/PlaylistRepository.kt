@@ -20,6 +20,11 @@ import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Single source of truth for playlist persistence + fetch + parse.
@@ -171,6 +176,93 @@ class PlaylistRepository @Inject constructor(
             ),
         )
         channels
+    }
+
+    /**
+     * Dispatcharr-only follow-up that fans `/api/epg/programs/<id>/` requests
+     * for every channel's currently-airing programme, in parallel with a cap
+     * of 4 concurrent in-flight fetches. Mirrors iOS
+     * `EPGGuideView.enrichDispatcharrCategories` (post v1.6.22) — the bulk
+     * `/api/epg/grid/` endpoint deliberately strips `<category>` for perf, so
+     * we lazily backfill the category on the now-airing program per channel
+     * after the grid lands. Categories are propagated to every same-titled
+     * future programme on the same channel so a recurring show (SportsCenter,
+     * Dateline) keeps its tint across re-airings.
+     *
+     * Returns the input list when [playlist] isn't a Dispatcharr source.
+     * Failures on individual program fetches are swallowed silently — a
+     * single 404 shouldn't blank out the whole channel's tint.
+     */
+    suspend fun enrichNowPlayingCategories(
+        playlist: PlaylistEntity,
+        programmes: List<EPGProgramme>,
+    ): List<EPGProgramme> {
+        val sourceType = playlist.resolvedSourceType()
+        val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+            sourceType == SourceType.DispatcharrUserPass
+        if (!isDispatcharr || programmes.isEmpty()) return programmes
+
+        val now = System.currentTimeMillis()
+        // Group nominees: channels whose currently-airing program has a real
+        // integer programID and a blank category (so we don't re-fetch
+        // already-enriched data or Dummy EPG string-id rows).
+        val nowPlayingByChannel: Map<String, EPGProgramme> = programmes.asSequence()
+            .filter { it.startMillis <= now && it.endMillis > now }
+            .filter { it.category.isBlank() && it.dispatcharrProgramId != null }
+            .associateBy { it.channelId }
+        if (nowPlayingByChannel.isEmpty()) return programmes
+
+        val base = effectiveBaseUrl(playlist)
+
+        // Cap-of-4 fan-out matches iOS `enrichCategories(programIDs:)`.
+        // Anything higher and Dispatcharr starts shedding connections; lower
+        // and a thousand-channel playlist takes minutes to fully tint.
+        val gate = Semaphore(4)
+        val categoryByProgramId: Map<Int, String> = coroutineScope {
+            nowPlayingByChannel.values.mapNotNull { p ->
+                val pid = p.dispatcharrProgramId ?: return@mapNotNull null
+                async {
+                    gate.withPermit {
+                        runCatching {
+                            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                                dispatcharrClient.getProgramDetail(base, key, pid)
+                            }
+                        }.getOrNull()?.let { detail ->
+                            val joined = detail.categories
+                                ?.filter { it.isNotBlank() }
+                                ?.joinToString(",")
+                                .orEmpty()
+                            if (joined.isNotBlank()) pid to joined else null
+                        }
+                    }
+                }
+            }.awaitAll().filterNotNull().toMap()
+        }
+
+        if (categoryByProgramId.isEmpty()) return programmes
+
+        // Title-match propagation: for each channel that just got a fresh
+        // category on its now-airing program, stamp that category onto every
+        // future programme of the SAME title on the same channel. iOS does
+        // the same so a recurring news/sports show keeps its tint across the
+        // schedule without N more enrichment fetches per channel.
+        val titleCategoryByChannel: Map<String, Pair<String, String>> = buildMap {
+            nowPlayingByChannel.forEach { (channelId, p) ->
+                val pid = p.dispatcharrProgramId ?: return@forEach
+                val cat = categoryByProgramId[pid] ?: return@forEach
+                put(channelId, p.title to cat)
+            }
+        }
+
+        return programmes.map { p ->
+            if (p.category.isNotBlank()) return@map p
+            val pid = p.dispatcharrProgramId
+            val direct = pid?.let { categoryByProgramId[it] }
+            if (direct != null) return@map p.copy(category = direct)
+            // Title-match: same channel + same title gets the same category.
+            val (matchTitle, matchCat) = titleCategoryByChannel[p.channelId] ?: return@map p
+            if (p.title == matchTitle) p.copy(category = matchCat) else p
+        }
     }
 
     suspend fun loadEpg(playlist: PlaylistEntity): Result<List<EPGProgramme>> = runCatching {

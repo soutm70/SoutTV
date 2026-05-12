@@ -277,6 +277,29 @@ class PlaylistViewModel @Inject constructor(
                         .groupBy { it.channelId }
                         .mapValues { (_, list) -> list.sortedBy { it.startMillis } }
                     _state.update { it.copy(epgByChannel = byChannel, isEpgLoading = false) }
+                    // iOS parity: fire-and-forget category enrichment for
+                    // Dispatcharr's bulk grid (which strips <category>).
+                    // Categories tint in progressively as detail responses
+                    // land — Live TV cards + Guide cells stay interactive
+                    // throughout. Mirrors EPGGuideView.swift line 848
+                    // `Task { await self.enrichDispatcharrCategories(...) }`.
+                    launch {
+                        val enriched = runCatching {
+                            repository.enrichNowPlayingCategories(playlist, programmes)
+                        }.onFailure { Log.w(TAG, "category enrichment failed", it) }
+                            .getOrDefault(programmes)
+                        // Only push an update when enrichment actually
+                        // changed something — short-circuits the recompose
+                        // when the source already had categories baked in
+                        // (XMLTV path) or no nominees existed.
+                        if (enriched !== programmes) {
+                            val enrichedByChannel: Map<String, List<EPGProgramme>> = enriched
+                                .groupBy { it.channelId }
+                                .mapValues { (_, list) -> list.sortedBy { it.startMillis } }
+                            _state.update { it.copy(epgByChannel = enrichedByChannel) }
+                            Log.i(TAG, "EPG enriched: categories backfilled for now-playing programmes")
+                        }
+                    }
                 },
                 onFailure = { t ->
                     Log.w(TAG, "EPG load failed", t)
