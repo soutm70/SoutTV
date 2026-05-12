@@ -26,7 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -69,17 +69,20 @@ fun FavoritesTabContent(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
+        // Matches the Phase 50 / 56 tab-header style — centered, titleLarge,
+        // bold — so every dynamic tab top reads as one consistent surface.
+        // Channel count moves out of the title (iOS Live TV doesn't surface
+        // it in the header either) so the bold "Favorites" lines up with
+        // "Live TV", "My Recordings", "On Demand", and "Settings" visually.
+        CenterAlignedTopAppBar(
             title = {
                 Text(
-                    text = if (channels.isNotEmpty())
-                        "Favorites  •  ${channels.size}"
-                    else
-                        "Favorites",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "Favorites",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
                 )
             },
-            colors = TopAppBarDefaults.topAppBarColors(
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
             ),
