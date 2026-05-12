@@ -24,7 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Icon
@@ -190,7 +190,7 @@ private fun BrandBlock(alignStart: Boolean = false) {
 private fun SupportedTypesGroup(alignStart: Boolean = false) {
     Column(modifier = Modifier.fillMaxWidth()) {
         SupportedTypeRow(icon = Icons.Filled.Key, label = "Dispatcharr Direct Connect", alignStart = alignStart)
-        SupportedTypeRow(icon = Icons.Filled.LiveTv, label = "Xtream Codes", alignStart = alignStart)
+        SupportedTypeRow(icon = Icons.Filled.Tv, label = "Xtream Codes", alignStart = alignStart)
         SupportedTypeRow(icon = Icons.Filled.Description, label = "M3U + EPG", alignStart = alignStart)
     }
 }

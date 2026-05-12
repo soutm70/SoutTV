@@ -18,7 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -119,7 +119,7 @@ fun ChooseSourceTypeScreen(
                                 .tappable { onChoose(SourceType.DispatcharrApiKey) },
                         )
                         SourceTypeCard(
-                            icon = Icons.Filled.LiveTv,
+                            icon = Icons.Filled.Tv,
                             title = "Xtream Codes",
                             subtitle = "Xtream Codes API. Live TV, VOD movies & series.",
                             modifier = Modifier
@@ -144,7 +144,7 @@ fun ChooseSourceTypeScreen(
                         modifier = Modifier.tappable { onChoose(SourceType.DispatcharrApiKey) },
                     )
                     SourceTypeCard(
-                        icon = Icons.Filled.LiveTv,
+                        icon = Icons.Filled.Tv,
                         title = "Xtream Codes",
                         subtitle = "Xtream Codes API. Live TV, VOD movies & series.",
                         modifier = Modifier.tappable { onChoose(SourceType.XtreamCodes) },

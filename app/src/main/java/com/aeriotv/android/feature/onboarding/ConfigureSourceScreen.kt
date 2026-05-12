@@ -23,7 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
@@ -111,7 +111,7 @@ fun ConfigureSourceScreen(
                     "(*AerioTV is not officially affiliated with the Dispatcharr project)"
         }
         SourceType.XtreamCodes -> {
-            cardIcon = Icons.Filled.LiveTv
+            cardIcon = Icons.Filled.Tv
             cardTitle = "Xtream Codes"
             cardSubtitle = "Xtream Codes API. Live TV, VOD movies & series."
         }
