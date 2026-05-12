@@ -54,7 +54,9 @@ import coil3.compose.AsyncImage
 import com.aeriotv.android.core.data.db.entity.WatchProgressEntity
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODSeries
+import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
+import com.aeriotv.android.ui.scale.WithDisplayScale
 
 /**
  * On Demand tab shell. Mirrors iOS OnDemandView (Aerio/Features/VOD/OnDemandView.swift):
@@ -73,7 +75,10 @@ fun OnDemandTabContent(
     viewModel: OnDemandViewModel = hiltViewModel(),
 ) {
     var section by rememberSaveable { mutableStateOf(OnDemandSection.Movies) }
+    val settingsVm: SettingsViewModel = hiltViewModel()
+    val scale by settingsVm.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
 
+    WithDisplayScale(scale = scale) {
     Column(modifier = modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text("On Demand", style = MaterialTheme.typography.titleMedium) },
@@ -98,6 +103,7 @@ fun OnDemandTabContent(
                 onSeriesClick = onSeriesClick,
             )
         }
+    }
     }
 }
 

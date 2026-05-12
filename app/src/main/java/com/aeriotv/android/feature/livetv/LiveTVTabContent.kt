@@ -9,6 +9,7 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.feature.channels.ChannelListScreen
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.settings.SettingsViewModel
+import com.aeriotv.android.ui.scale.WithDisplayScale
 
 /**
  * Entry point for the Live TV tab. Picks the appropriate sub-screen
@@ -28,6 +29,7 @@ fun LiveTVTabContent(
 ) {
     val formFactor = rememberLiveTvFormFactor()
     val stored by settingsVm.defaultLiveTVView.collectAsStateWithLifecycle(initialValue = "")
+    val scale by settingsVm.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
 
     val mode = when (stored.lowercase()) {
         "list" -> LiveTVViewMode.List
@@ -39,15 +41,20 @@ fun LiveTVTabContent(
         settingsVm.setDefaultLiveTVView(next.storageKey())
     }
 
+    // iOS canon scopes the "Live TV List" Display Scale slider to List mode
+    // only (the Guide grid is a strict-pitch layout that the user shouldn't
+    // be free-scaling). Match that scoping rule here.
     when (mode) {
-        LiveTVViewMode.List -> ChannelListScreen(
-            onChannelClick = onChannelClick,
-            viewModel = viewModel,
-            modifierWrap = modifier,
-            viewMode = mode,
-            canToggleViewMode = formFactor.supportsToggle,
-            onToggleViewMode = toggleMode,
-        )
+        LiveTVViewMode.List -> WithDisplayScale(scale = scale) {
+            ChannelListScreen(
+                onChannelClick = onChannelClick,
+                viewModel = viewModel,
+                modifierWrap = modifier,
+                viewMode = mode,
+                canToggleViewMode = formFactor.supportsToggle,
+                onToggleViewMode = toggleMode,
+            )
+        }
         LiveTVViewMode.Guide -> GuideScreen(
             onChannelClick = onChannelClick,
             viewModel = viewModel,
