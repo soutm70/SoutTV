@@ -68,4 +68,20 @@ class SettingsViewModel @Inject constructor(
     fun setStreamBufferSize(value: String) {
         viewModelScope.launch { prefs.setStreamBufferSize(value) }
     }
+
+    // Multiview (Phase 11c)
+    val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
+    fun setMultiviewAudioFocusStyle(value: String) {
+        viewModelScope.launch { prefs.setMultiviewAudioFocusStyle(value) }
+    }
+
+    val multiviewTilePadding: Flow<Boolean> = prefs.multiviewTilePadding
+    fun setMultiviewTilePadding(value: Boolean) {
+        viewModelScope.launch { prefs.setMultiviewTilePadding(value) }
+    }
+
+    val multiviewTileCornersRounded: Flow<Boolean> = prefs.multiviewTileCornersRounded
+    fun setMultiviewTileCornersRounded(value: Boolean) {
+        viewModelScope.launch { prefs.setMultiviewTileCornersRounded(value) }
+    }
 }

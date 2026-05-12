@@ -29,6 +29,7 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.settings.AppBehaviorsSettingsScreen
 import com.aeriotv.android.feature.settings.AppearanceSettingsScreen
 import com.aeriotv.android.feature.settings.DeveloperSettingsScreen
+import com.aeriotv.android.feature.settings.MultiviewSettingsScreen
 import com.aeriotv.android.feature.settings.NetworkSettingsScreen
 import com.aeriotv.android.feature.settings.SettingsScreen
 import com.aeriotv.android.feature.settings.SettingsSection
@@ -143,11 +144,7 @@ private fun SettingsTabContent() {
         null -> SettingsScreen(onSectionClick = { section = it })
         SettingsSection.Appearance -> AppearanceSettingsScreen(onBack = { section = null })
         SettingsSection.AppBehaviors -> AppBehaviorsSettingsScreen(onBack = { section = null })
-        SettingsSection.Multiview -> SettingsSubScreenPlaceholder(
-            title = "Multiview",
-            body = "Audio-focus indicator, tile padding, tile corners. Lands with Phase 11 Multiview.",
-            onBack = { section = null },
-        )
+        SettingsSection.Multiview -> MultiviewSettingsScreen(onBack = { section = null })
         SettingsSection.Network -> NetworkSettingsScreen(onBack = { section = null })
         SettingsSection.Sync -> SettingsSubScreenPlaceholder(
             title = "Sync",

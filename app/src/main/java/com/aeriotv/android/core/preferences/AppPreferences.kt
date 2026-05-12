@@ -121,6 +121,36 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_STREAM_BUFFER_SIZE] = value }
     }
 
+    // ── Multiview ────────────────────────────────────────────────────────
+
+    /**
+     * iOS `multiviewAudioFocusStyle` parity. One of "centerIcon" (default)
+     * / "grayPersistent" / "themeFading". Controls how the multiview grid
+     * indicates which tile owns audio.
+     */
+    val multiviewAudioFocusStyle: Flow<String> = store.data.map {
+        it[KEY_MULTIVIEW_AUDIO_FOCUS_STYLE] ?: "centerIcon"
+    }
+    suspend fun setMultiviewAudioFocusStyle(value: String) {
+        store.edit { it[KEY_MULTIVIEW_AUDIO_FOCUS_STYLE] = value }
+    }
+
+    /** iOS `multiviewTilePadding` parity. Adds gaps between tiles. */
+    val multiviewTilePadding: Flow<Boolean> = store.data.map {
+        it[KEY_MULTIVIEW_TILE_PADDING] ?: false
+    }
+    suspend fun setMultiviewTilePadding(value: Boolean) {
+        store.edit { it[KEY_MULTIVIEW_TILE_PADDING] = value }
+    }
+
+    /** iOS `multiviewTileCornersRounded` parity. Rounds tile corners. */
+    val multiviewTileCornersRounded: Flow<Boolean> = store.data.map {
+        it[KEY_MULTIVIEW_TILE_CORNERS_ROUNDED] ?: false
+    }
+    suspend fun setMultiviewTileCornersRounded(value: Boolean) {
+        store.edit { it[KEY_MULTIVIEW_TILE_CORNERS_ROUNDED] = value }
+    }
+
     private companion object {
         val KEY_SELECTED_THEME = stringPreferencesKey("selected_theme")
         val KEY_DEFAULT_LIVE_TV_VIEW = stringPreferencesKey("default_live_tv_view")
@@ -131,5 +161,8 @@ class AppPreferences @Inject constructor(
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")
         val KEY_STREAM_BUFFER_SIZE = stringPreferencesKey("stream_buffer_size")
+        val KEY_MULTIVIEW_AUDIO_FOCUS_STYLE = stringPreferencesKey("multiview_audio_focus_style")
+        val KEY_MULTIVIEW_TILE_PADDING = booleanPreferencesKey("multiview_tile_padding")
+        val KEY_MULTIVIEW_TILE_CORNERS_ROUNDED = booleanPreferencesKey("multiview_tile_corners_rounded")
     }
 }

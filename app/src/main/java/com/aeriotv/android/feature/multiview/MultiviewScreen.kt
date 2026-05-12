@@ -73,8 +73,21 @@ fun MultiviewScreen(
     val selected by storeHandle.selected.collectAsState()
     val focused by storeHandle.audioFocusedIndex.collectAsState()
     val bufferSize by settingsVm.streamBufferSize.collectAsState(initial = "default")
+    val audioFocusStyle by settingsVm.multiviewAudioFocusStyle.collectAsState(initial = "centerIcon")
+    val tilePadding by settingsVm.multiviewTilePadding.collectAsState(initial = false)
+    val tileRounded by settingsVm.multiviewTileCornersRounded.collectAsState(initial = false)
 
     var chromeVisible by remember { mutableStateOf(true) }
+    // For the themeFading mode: track the last time audio focus changed so the
+    // accent border can auto-hide after 5s. Resets when the user taps a new tile.
+    var focusActivityAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(focused) { focusActivityAt = System.currentTimeMillis() }
+    var focusFadedOut by remember { mutableStateOf(false) }
+    LaunchedEffect(focusActivityAt) {
+        focusFadedOut = false
+        kotlinx.coroutines.delay(5_000L)
+        focusFadedOut = true
+    }
 
     if (selected.isEmpty()) {
         Box(
@@ -107,6 +120,11 @@ fun MultiviewScreen(
             focusedIndex = focused,
             httpHeaders = httpHeaders,
             cachingMs = bufferMillisFor(bufferSize),
+            audioFocusStyle = audioFocusStyle,
+            tilePadding = tilePadding,
+            tileRounded = tileRounded,
+            chromeVisible = chromeVisible,
+            focusFadedOut = focusFadedOut,
             onTileTap = { idx -> storeHandle.setAudioFocus(idx) },
         )
 
@@ -176,9 +194,15 @@ private fun TileGrid(
     focusedIndex: Int,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
+    audioFocusStyle: String,
+    tilePadding: Boolean,
+    tileRounded: Boolean,
+    chromeVisible: Boolean,
+    focusFadedOut: Boolean,
     onTileTap: (Int) -> Unit,
 ) {
     val (rows, cols) = gridShapeFor(tiles.size)
+    val pad = if (tilePadding) 4.dp else 0.dp
     Column(modifier = Modifier.fillMaxSize()) {
         for (r in 0 until rows) {
             Row(
@@ -193,7 +217,7 @@ private fun TileGrid(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
-                            .padding(2.dp),
+                            .padding(pad),
                     ) {
                         if (channel != null) {
                             Tile(
@@ -201,6 +225,10 @@ private fun TileGrid(
                                 isAudioFocused = index == focusedIndex,
                                 httpHeaders = httpHeaders,
                                 cachingMs = cachingMs,
+                                audioFocusStyle = audioFocusStyle,
+                                tileRounded = tileRounded,
+                                chromeVisible = chromeVisible,
+                                focusFadedOut = focusFadedOut,
                                 onTap = { onTileTap(index) },
                             )
                         }
@@ -217,15 +245,35 @@ private fun Tile(
     isAudioFocused: Boolean,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
+    audioFocusStyle: String,
+    tileRounded: Boolean,
+    chromeVisible: Boolean,
+    focusFadedOut: Boolean,
     onTap: () -> Unit,
 ) {
-    val borderColor = if (isAudioFocused) MaterialTheme.colorScheme.primary
-    else Color.White.copy(alpha = 0.08f)
+    val shape = if (tileRounded) RoundedCornerShape(8.dp) else RoundedCornerShape(0.dp)
+    // Resolve the focus indicator for this tile. iOS canon:
+    //   centerIcon: speaker icon fades with the chrome
+    //   grayPersistent: muted gray border always around the active tile
+    //   themeFading: cyan border that auto-hides after 5s of inactivity
+    val showCenterIcon = isAudioFocused && audioFocusStyle == "centerIcon" && chromeVisible
+    val borderColor = when {
+        isAudioFocused && audioFocusStyle == "grayPersistent" ->
+            Color.White.copy(alpha = 0.5f)
+        isAudioFocused && audioFocusStyle == "themeFading" && !focusFadedOut ->
+            MaterialTheme.colorScheme.primary
+        else -> Color.White.copy(alpha = 0.08f)
+    }
+    val borderWidth = when {
+        isAudioFocused && (audioFocusStyle == "grayPersistent" ||
+                (audioFocusStyle == "themeFading" && !focusFadedOut)) -> 2.dp
+        else -> 1.dp
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(6.dp))
-            .border(if (isAudioFocused) 2.dp else 1.dp, borderColor, RoundedCornerShape(6.dp))
+            .clip(shape)
+            .border(borderWidth, borderColor, shape)
             .clickable(onClick = onTap),
     ) {
         AndroidView(
@@ -276,9 +324,10 @@ private fun Tile(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        // Audio-focus indicator (default centerIcon mode). Phase 11c will add
-        // grayPersistent and themeFading via the iOS @AppStorage parity setting.
-        if (isAudioFocused) {
+        // Audio-focus indicator. centerIcon mode shows the speaker icon over
+        // the active tile while the chrome is visible. grayPersistent and
+        // themeFading are border-only — handled above on the outer Box.
+        if (showCenterIcon) {
             Icon(
                 imageVector = Icons.Filled.VolumeUp,
                 contentDescription = null,
