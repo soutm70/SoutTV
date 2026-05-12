@@ -75,7 +75,20 @@ class MPVPlayerHolder @Inject constructor() {
             this.httpHeaders = httpHeaders
             this.cachingMs = cachingMs
         }
-        fresh.initialize(configDir, cacheDir)
+        // Time the first-create cost so the MpvLibraryWarmup benefit is
+        // visible in logcat. On a cold launch without the warmup this
+        // typically prints 800-2000ms on real hardware (the JNI bridge +
+        // codec/protocol registration the warmup pre-pays). With the
+        // warmup, this prints under 100ms because the global registrations
+        // are already cached and only the per-handle init runs.
+        val initMs = kotlin.system.measureTimeMillis {
+            fresh.initialize(configDir, cacheDir)
+        }
+        Log.i(
+            TAG,
+            "MPVPlayerView.initialize() completed in ${initMs}ms " +
+                "(warmup=${com.aeriotv.android.feature.player.MpvLibraryWarmup.isComplete})",
+        )
         view = fresh
         return fresh
     }

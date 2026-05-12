@@ -173,6 +173,14 @@ fun PlayerScreen(
                         }
                     })
                     view.mpv.addObserver(object : MPV.EventObserver {
+                        // Tap-to-first-frame timing. The user taps a channel
+                        // -> view.playFile fires -> MPV starts the loadfile
+                        // pipeline -> START_FILE event -> FILE_LOADED event
+                        // -> first VIDEO_RECONFIG (first decoded frame ready)
+                        // -> PLAYBACK_RESTART (first frame presented). The
+                        // PLAYBACK_RESTART offset from START_FILE is the
+                        // user-visible "wait time" we're optimizing.
+                        var loadStartedAt = 0L
                         override fun eventProperty(property: String) {}
                         override fun eventProperty(property: String, value: Long) {}
                         override fun eventProperty(property: String, value: Boolean) {}
@@ -191,7 +199,15 @@ fun PlayerScreen(
                                 MPVEvents.SHUTDOWN -> "SHUTDOWN"
                                 else -> "event#$eventId"
                             }
-                            Log.i(TAG, "mpv $label")
+                            if (eventId == MPVEvents.START_FILE) {
+                                loadStartedAt = android.os.SystemClock.elapsedRealtime()
+                                Log.i(TAG, "mpv $label")
+                            } else if (eventId == MPVEvents.PLAYBACK_RESTART && loadStartedAt > 0) {
+                                val ms = android.os.SystemClock.elapsedRealtime() - loadStartedAt
+                                Log.i(TAG, "mpv $label (tap-to-first-frame: ${ms}ms)")
+                            } else {
+                                Log.i(TAG, "mpv $label")
+                            }
                         }
                     })
                     Log.i(TAG, "Loading initial stream: $streamUrl")

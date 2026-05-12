@@ -6,6 +6,7 @@ import androidx.work.Configuration
 import com.aeriotv.android.core.debug.DebugLogger
 import com.aeriotv.android.core.network.DispatcharrWarmupCoordinator
 import com.aeriotv.android.core.preferences.AppPreferences
+import com.aeriotv.android.feature.player.MpvLibraryWarmup
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +45,17 @@ class AerioTVApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         dispatcharrWarmup.bind()
+        // Kick off the libmpv process-wide warm-up. Internally defers
+        // 800 ms behind launch + runs on a background dispatcher so it
+        // never competes with the visible cold-launch sequence for the
+        // JNI mutex. iOS does the equivalent via MPVLibraryWarmup.warmUp()
+        // (MPVPlayerView.swift lines 39-86); on iOS this single change
+        // is the headline reason channel-tap startup feels instant. The
+        // first PlayerScreen composition waits up to 5 s for this to
+        // complete before its real mpv.create() call, so the user-facing
+        // handle pays only loadfile cost instead of the full process-wide
+        // codec/protocol/hwdec/mediacodec-bridge registration too.
+        MpvLibraryWarmup.start(this)
         appScope.launch {
             appPreferences.debugLoggingEnabled.collectLatest { enabled ->
                 debugLogger.setEnabled(enabled)
