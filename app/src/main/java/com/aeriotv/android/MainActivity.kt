@@ -11,6 +11,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.aeriotv.android.core.preferences.AppPreferences
+import com.aeriotv.android.feature.splash.SplashGate
 import com.aeriotv.android.ui.theme.AerioTVTheme
 import com.aeriotv.android.ui.theme.AppTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -38,11 +39,13 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AerioTVNavHost(
-                        initialUrl = initialUrl,
-                        initialEpgUrl = initialEpgUrl,
-                        initialApiKey = initialApiKey,
-                    )
+                    SplashGate {
+                        AerioTVNavHost(
+                            initialUrl = initialUrl,
+                            initialEpgUrl = initialEpgUrl,
+                            initialApiKey = initialApiKey,
+                        )
+                    }
                 }
             }
         }
