@@ -31,9 +31,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -809,10 +811,18 @@ data class DispatcharrVODStreamOption(
 )
 
 /**
- * Server-reported recording shape from /api/channels/recordings/. Mirrors
- * iOS `Recording` (Models.swift:680) on the wire fields. `custom_properties`
- * is a free-form bag — title, description, comskip flag, and (when present)
- * the program metadata block live in there per the iOS createRecording call.
+ * Server-reported recording shape from `/api/channels/recordings/`. Wire shape
+ * matches iOS `DispatcharrAPI.Recording` (StreamingAPIs.swift:2246) — only
+ * `id`, `channel`, `start_time`, `end_time`, and `custom_properties` come back
+ * at the top level. **Everything else (status, title, description, file size,
+ * comskip flag) lives inside `custom_properties`**, and titles emitted by the
+ * server-side scheduler are nested one level deeper under
+ * `custom_properties.program.{title,description}`.
+ *
+ * Earlier Android revisions read `status` from a hypothetical top-level field,
+ * which always decoded as null — that left every server recording in the
+ * `Unknown` status bucket so it never matched the default Scheduled filter.
+ * Re-aligning the getters with iOS (lines 2296-2316).
  */
 @Serializable
 data class DispatcharrRecording(
@@ -822,19 +832,69 @@ data class DispatcharrRecording(
     val startTime: String,
     @SerialName("end_time")
     val endTime: String,
-    val status: String? = null,
-    @SerialName("file_size")
-    val fileSize: Long? = null,
+    @SerialName("task_id")
+    val taskId: String? = null,
     @SerialName("custom_properties")
     val customProperties: JsonObject? = null,
 ) {
+    /** Recording status (`scheduled`, `recording`, `in_progress`, `completed`,
+     *  `stopped`, `failed`, ...). iOS reads this from custom_properties.status
+     *  (line 2297); the top-level field doesn't exist on the wire. */
+    val status: String?
+        get() = customProperties?.stringField("status")
+
+    /** Display title. Server-scheduled rows nest the program metadata under
+     *  `custom_properties.program`; AerioTV's own createRecording call sets
+     *  it as a flat key (`custom_properties.title`). Try the iOS-style nested
+     *  path first, fall back to flat — matches StreamingAPIs.swift line 2308-2314. */
     val title: String
-        get() = customProperties?.get("title")?.toString()?.trim('"').orEmpty()
+        get() {
+            val program = customProperties?.objectField("program")
+            return program?.stringField("title")
+                ?: customProperties?.stringField("title")
+                ?: ""
+        }
+
     val description: String
-        get() = customProperties?.get("description")?.toString()?.trim('"').orEmpty()
+        get() {
+            val program = customProperties?.objectField("program")
+            return program?.stringField("description")
+                ?: customProperties?.stringField("description")
+                ?: ""
+        }
+
     val comskip: Boolean
-        get() = customProperties?.get("comskip")?.toString() == "true"
+        get() = customProperties?.boolField("comskip") ?: false
+
+    val filePath: String?
+        get() = customProperties?.stringField("file_path")
+
+    val fileName: String?
+        get() = customProperties?.stringField("file_name")
+
+    /** Best-effort file-size lookup. Older Dispatcharr builds occasionally
+     *  surface this as a flat key on the row; the new pipeline keeps it
+     *  inside custom_properties. Try both. */
+    val fileSize: Long?
+        get() = customProperties?.longField("file_size")
+            ?: customProperties?.longField("file_size_bytes")
 }
+
+private fun JsonObject.stringField(name: String): String? =
+    (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+private fun JsonObject.boolField(name: String): Boolean? {
+    val prim = this[name] as? JsonPrimitive ?: return null
+    return prim.booleanOrNull ?: prim.content.toBooleanStrictOrNull()
+}
+
+private fun JsonObject.longField(name: String): Long? {
+    val prim = this[name] as? JsonPrimitive ?: return null
+    return prim.longOrNull ?: prim.content.toLongOrNull()
+}
+
+private fun JsonObject.objectField(name: String): JsonObject? =
+    this[name] as? JsonObject
 
 @Serializable
 data class DispatcharrEpgEntry(
