@@ -34,10 +34,10 @@ object Routes {
     const val CHOOSE_TYPE = "choose_type"
     const val CONFIGURE = "configure/{type}"
     const val MAIN = "main"
-    const val PLAYER = "player/{url}"
+    const val PLAYER = "player/{channelId}"
 
     fun configure(type: SourceType) = "configure/${type.name}"
-    fun player(url: String) = "player/${Uri.encode(url)}"
+    fun player(channelId: String) = "player/${Uri.encode(channelId)}"
 }
 
 @Composable
@@ -167,22 +167,22 @@ fun AerioTVNavHost(
 
                 MainScaffold(
                     onChannelClick = { channel ->
-                        navController.navigate(Routes.player(channel.url))
+                        navController.navigate(Routes.player(channel.id))
                     },
                 )
             }
 
             composable(
                 route = Routes.PLAYER,
-                arguments = listOf(navArgument("url") { type = NavType.StringType }),
+                arguments = listOf(navArgument("channelId") { type = NavType.StringType }),
             ) { entry ->
                 val parent = remember(entry) {
                     navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
                 }
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
-                val encoded = entry.arguments?.getString("url").orEmpty()
-                val url = Uri.decode(encoded)
+                val channelId = Uri.decode(entry.arguments?.getString("channelId").orEmpty())
+                val channel = state.channels.firstOrNull { it.id == channelId }
                 val headers = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
                     val pl = state.playlist
                     val key = pl?.apiKey?.takeIf { it.isNotBlank() }
@@ -195,7 +195,15 @@ fun AerioTVNavHost(
                         )
                     } else emptyMap()
                 }
-                PlayerScreen(streamUrl = url, isLive = true, httpHeaders = headers)
+                val programmes = channel?.let { state.epgByChannel[it.tvgID].orEmpty() } ?: emptyList()
+                PlayerScreen(
+                    channel = channel,
+                    streamUrl = channel?.url.orEmpty(),
+                    isLive = true,
+                    httpHeaders = headers,
+                    programmes = programmes,
+                    onClose = { navController.popBackStack() },
+                )
             }
         }
     }
