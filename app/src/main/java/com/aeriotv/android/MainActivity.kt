@@ -7,12 +7,20 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.ui.theme.AerioTVTheme
+import com.aeriotv.android.ui.theme.AppTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var appPreferences: AppPreferences
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -24,7 +32,8 @@ class MainActivity : ComponentActivity() {
         val initialEpgUrl = if (BuildConfig.DEBUG) intent?.getStringExtra("epg") else null
         val initialApiKey = if (BuildConfig.DEBUG) intent?.getStringExtra("apikey") else null
         setContent {
-            AerioTVTheme {
+            val theme by appPreferences.selectedTheme.collectAsState(initial = AppTheme.Aerio)
+            AerioTVTheme(appTheme = theme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

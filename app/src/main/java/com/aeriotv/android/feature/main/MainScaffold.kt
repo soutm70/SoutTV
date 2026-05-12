@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -22,7 +23,10 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.livetv.LiveTVTabContent
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import com.aeriotv.android.feature.settings.AppearanceSettingsScreen
 import com.aeriotv.android.feature.settings.SettingsScreen
+import com.aeriotv.android.feature.settings.SettingsSection
+import com.aeriotv.android.feature.settings.SettingsSubScreenPlaceholder
 
 /**
  * Top-level scaffold once a playlist is loaded. Mirrors iOS MainTabView with the
@@ -95,8 +99,47 @@ fun MainScaffold(
                 tabLabel = "On Demand",
                 hint = "Movies and series from your server. Coming with the VOD phase.",
             )
-            AppTab.Settings -> SettingsScreen()
+            AppTab.Settings -> SettingsTabContent()
         }
+    }
+}
+
+@Composable
+private fun SettingsTabContent() {
+    var section by remember { mutableStateOf<SettingsSection?>(null) }
+    when (section) {
+        null -> SettingsScreen(onSectionClick = { section = it })
+        SettingsSection.Appearance -> AppearanceSettingsScreen(onBack = { section = null })
+        SettingsSection.AppBehaviors -> SettingsSubScreenPlaceholder(
+            title = "App Behaviors",
+            body = "Splash, default tab, channel-flip, auto-resume. Lands in Phase 8b.",
+            onBack = { section = null },
+        )
+        SettingsSection.Multiview -> SettingsSubScreenPlaceholder(
+            title = "Multiview",
+            body = "Audio-focus indicator, tile padding, tile corners. Lands with Phase 11 Multiview.",
+            onBack = { section = null },
+        )
+        SettingsSection.Network -> SettingsSubScreenPlaceholder(
+            title = "Network",
+            body = "Stream buffer size, network timeout, retry count, background EPG refresh. Lands in Phase 8b.",
+            onBack = { section = null },
+        )
+        SettingsSection.Sync -> SettingsSubScreenPlaceholder(
+            title = "Sync",
+            body = "Google Drive AppData + Block Store credential sync. Lands with Phase 12 Sync.",
+            onBack = { section = null },
+        )
+        SettingsSection.DvrSettings -> SettingsSubScreenPlaceholder(
+            title = "DVR Settings",
+            body = "Local-recording storage cap, pre/post-roll defaults, custom folder. Lands with Phase 9 DVR.",
+            onBack = { section = null },
+        )
+        SettingsSection.Developer -> SettingsSubScreenPlaceholder(
+            title = "Developer",
+            body = "Diagnostic toggles and debug overlays. Lands in Phase 8b.",
+            onBack = { section = null },
+        )
     }
 }
 
