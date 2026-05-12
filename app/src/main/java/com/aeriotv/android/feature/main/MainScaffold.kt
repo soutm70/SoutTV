@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.main
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
@@ -76,6 +77,12 @@ fun MainScaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
+        // Each tab owns its own TopAppBar with its own status-bar inset. Without
+        // overriding here, Scaffold would also add a status-bar top inset to the
+        // content padding, producing a ~30dp empty gap above every TopAppBar.
+        // Bottom + horizontal insets stay system-managed so the navigation bar
+        // sits correctly above the system gesture area.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,

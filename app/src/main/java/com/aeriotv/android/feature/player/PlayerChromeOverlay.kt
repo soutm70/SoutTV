@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -117,11 +119,14 @@ fun PlayerChromeOverlay(
                     .align(Alignment.BottomCenter),
             )
 
-            // Top row: X close (left), ⋯ more + + add (right).
+            // Top row: X close (left), ⋯ more + + add (right). statusBarsPadding
+            // keeps the circle buttons below the camera notch / status bar since
+            // the player runs under edge-to-edge with no Scaffold to inset it.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .statusBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -186,11 +191,13 @@ fun PlayerChromeOverlay(
                 )
             }
 
-            // Info card just below the top-row.
+            // Info card just below the top-row. Stacks the same status-bar inset
+            // so it slides down with the buttons when the system bar is taller.
             channel?.let {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
+                        .statusBarsPadding()
                         .padding(top = 84.dp, start = 16.dp, end = 16.dp),
                 ) {
                     InfoCard(
@@ -201,11 +208,13 @@ fun PlayerChromeOverlay(
                 }
             }
 
-            // Bottom progress + remaining row.
+            // Bottom progress + remaining row. navigationBarsPadding keeps the
+            // copy clear of the system gesture handle.
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .navigationBarsPadding()
                     .padding(horizontal = 18.dp, vertical = 24.dp),
             ) {
                 nowProgramme?.let { prog ->
