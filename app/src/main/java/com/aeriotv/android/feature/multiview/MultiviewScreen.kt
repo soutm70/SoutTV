@@ -2,9 +2,11 @@ package com.aeriotv.android.feature.multiview
 
 import android.util.Log
 import android.view.ViewGroup
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -78,6 +80,9 @@ fun MultiviewScreen(
     val tileRounded by settingsVm.multiviewTileCornersRounded.collectAsState(initial = false)
 
     var chromeVisible by remember { mutableStateOf(true) }
+    // Long-press a tile -> relocate mode. The next tap swaps positions with
+    // the relocating tile. Tap the same tile again (or the close X) to cancel.
+    var relocatingIndex by remember { mutableStateOf<Int?>(null) }
     // For the themeFading mode: track the last time audio focus changed so the
     // accent border can auto-hide after 5s. Resets when the user taps a new tile.
     var focusActivityAt by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -118,6 +123,7 @@ fun MultiviewScreen(
         TileGrid(
             tiles = selected,
             focusedIndex = focused,
+            relocatingIndex = relocatingIndex,
             httpHeaders = httpHeaders,
             cachingMs = bufferMillisFor(bufferSize),
             audioFocusStyle = audioFocusStyle,
@@ -125,16 +131,36 @@ fun MultiviewScreen(
             tileRounded = tileRounded,
             chromeVisible = chromeVisible,
             focusFadedOut = focusFadedOut,
-            onTileTap = { idx -> storeHandle.setAudioFocus(idx) },
+            onTileTap = { idx ->
+                val r = relocatingIndex
+                if (r != null && r != idx) {
+                    storeHandle.swap(r, idx)
+                    relocatingIndex = null
+                } else if (r == idx) {
+                    relocatingIndex = null
+                } else {
+                    storeHandle.setAudioFocus(idx)
+                }
+            },
+            onTileLongPress = { idx ->
+                relocatingIndex = if (relocatingIndex == idx) null else idx
+            },
         )
 
         if (chromeVisible) {
-            CloseButton(onClose = onClose)
-            // Footer-ish: tile count, top-right corner.
+            CloseButton(onClose = {
+                if (relocatingIndex != null) relocatingIndex = null else onClose()
+            })
+            val countLabel = relocatingIndex?.let { "Tap a tile to swap" }
+                ?: "${selected.size} / ${storeHandle.maxTiles}"
             Text(
-                text = "${selected.size} / ${storeHandle.maxTiles}",
+                text = countLabel,
                 style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.85f),
+                color = if (relocatingIndex != null)
+                    MaterialTheme.colorScheme.primary
+                else
+                    Color.White.copy(alpha = 0.85f),
+                fontWeight = if (relocatingIndex != null) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
@@ -192,6 +218,7 @@ private fun gridShapeFor(count: Int): Pair<Int, Int> = when {
 private fun TileGrid(
     tiles: List<M3UChannel>,
     focusedIndex: Int,
+    relocatingIndex: Int?,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
     audioFocusStyle: String,
@@ -200,6 +227,7 @@ private fun TileGrid(
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
     onTileTap: (Int) -> Unit,
+    onTileLongPress: (Int) -> Unit,
 ) {
     val (rows, cols) = gridShapeFor(tiles.size)
     val pad = if (tilePadding) 4.dp else 0.dp
@@ -223,6 +251,7 @@ private fun TileGrid(
                             Tile(
                                 channel = channel,
                                 isAudioFocused = index == focusedIndex,
+                                isRelocating = index == relocatingIndex,
                                 httpHeaders = httpHeaders,
                                 cachingMs = cachingMs,
                                 audioFocusStyle = audioFocusStyle,
@@ -230,6 +259,7 @@ private fun TileGrid(
                                 chromeVisible = chromeVisible,
                                 focusFadedOut = focusFadedOut,
                                 onTap = { onTileTap(index) },
+                                onLongPress = { onTileLongPress(index) },
                             )
                         }
                     }
@@ -239,10 +269,12 @@ private fun TileGrid(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Tile(
     channel: M3UChannel,
     isAudioFocused: Boolean,
+    isRelocating: Boolean,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
     audioFocusStyle: String,
@@ -250,6 +282,7 @@ private fun Tile(
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
     onTap: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val shape = if (tileRounded) RoundedCornerShape(8.dp) else RoundedCornerShape(0.dp)
     // Resolve the focus indicator for this tile. iOS canon:
@@ -258,6 +291,7 @@ private fun Tile(
     //   themeFading: cyan border that auto-hides after 5s of inactivity
     val showCenterIcon = isAudioFocused && audioFocusStyle == "centerIcon" && chromeVisible
     val borderColor = when {
+        isRelocating -> MaterialTheme.colorScheme.primary
         isAudioFocused && audioFocusStyle == "grayPersistent" ->
             Color.White.copy(alpha = 0.5f)
         isAudioFocused && audioFocusStyle == "themeFading" && !focusFadedOut ->
@@ -265,6 +299,7 @@ private fun Tile(
         else -> Color.White.copy(alpha = 0.08f)
     }
     val borderWidth = when {
+        isRelocating -> 3.dp
         isAudioFocused && (audioFocusStyle == "grayPersistent" ||
                 (audioFocusStyle == "themeFading" && !focusFadedOut)) -> 2.dp
         else -> 1.dp
@@ -274,7 +309,10 @@ private fun Tile(
             .fillMaxSize()
             .clip(shape)
             .border(borderWidth, borderColor, shape)
-            .clickable(onClick = onTap),
+            .combinedClickable(
+                onClick = onTap,
+                onLongClick = onLongPress,
+            ),
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),

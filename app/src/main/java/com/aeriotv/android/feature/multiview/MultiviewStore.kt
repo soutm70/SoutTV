@@ -56,4 +56,23 @@ class MultiviewStore @Inject constructor() {
             _audioFocusedIndex.value = index
         }
     }
+
+    /** Swaps two tile positions. Audio focus moves with the originally-focused tile. */
+    fun swap(fromIndex: Int, toIndex: Int) {
+        val current = _selected.value
+        if (fromIndex !in current.indices || toIndex !in current.indices) return
+        if (fromIndex == toIndex) return
+        val mutable = current.toMutableList()
+        val tmp = mutable[fromIndex]
+        mutable[fromIndex] = mutable[toIndex]
+        mutable[toIndex] = tmp
+        _selected.value = mutable
+        // Track audio focus so it sticks to the same channel after the swap.
+        val focused = _audioFocusedIndex.value
+        _audioFocusedIndex.value = when (focused) {
+            fromIndex -> toIndex
+            toIndex -> fromIndex
+            else -> focused
+        }
+    }
 }
