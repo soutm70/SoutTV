@@ -48,7 +48,20 @@ class PlaybackService : Service() {
                 holder.setPaused(!nowPaused)
             }
             ACTION_STOP -> {
-                holder.destroy()
+                // CRITICAL: do NOT call holder.destroy() here. This service
+                // entry point fires from BOTH:
+                //   1. The mini-player Dismiss button (user wants MPV gone).
+                //   2. Every PlayerScreen mount (LaunchedEffect(Unit) ->
+                //      PlaybackService.stop, telling the bg service to drop
+                //      its notification because we're foreground again).
+                // Case 2 wants to keep MPV alive -- we just turned video on
+                // and called playFile microseconds earlier; destroying MPV
+                // here is exactly the "stream loads chrome but never plays"
+                // regression. Case 1 already calls mpvHolder.destroy()
+                // explicitly in MiniPlayerRow.onDismiss before invoking
+                // this action, so MPV teardown is owned by the caller, not
+                // by ACTION_STOP. ACTION_STOP is just "remove notification +
+                // exit foreground service" from now on.
                 stopForegroundCompat()
                 stopSelf()
             }
