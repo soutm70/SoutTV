@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +59,10 @@ import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.toInfoTarget
+import com.aeriotv.android.core.pip.PipState
+import com.aeriotv.android.core.pip.enterPip16x9
+import com.aeriotv.android.core.pip.findActivity
+import com.aeriotv.android.core.pip.supportsPip
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
 import kotlinx.coroutines.delay
 import java.text.DateFormat
@@ -96,9 +101,12 @@ fun PlayerChromeOverlay(
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val inPip by PipState.inPictureInPicture
+    val pipAvailable = remember { context.supportsPip() }
 
     AnimatedVisibility(
-        visible = chromeVisible,
+        visible = chromeVisible && !inPip,
         enter = fadeIn(),
         exit = fadeOut(),
     ) {
@@ -181,6 +189,14 @@ fun PlayerChromeOverlay(
                             moreOpen = false
                             onToggleAudioOnly()
                         },
+                    )
+                }
+                if (pipAvailable) {
+                    Spacer(Modifier.width(8.dp))
+                    CircleIconButton(
+                        icon = Icons.Filled.PictureInPicture,
+                        contentDescription = "Picture in picture",
+                        onClick = { context.findActivity()?.enterPip16x9() },
                     )
                 }
                 Spacer(Modifier.width(8.dp))

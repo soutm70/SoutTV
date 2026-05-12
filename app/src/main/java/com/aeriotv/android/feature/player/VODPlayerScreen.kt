@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material3.Icon
@@ -49,12 +50,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.core.pip.PipState
+import com.aeriotv.android.core.pip.enterPip16x9
+import com.aeriotv.android.core.pip.findActivity
+import com.aeriotv.android.core.pip.supportsPip
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.bufferMillisFor
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
@@ -89,6 +95,10 @@ fun VODPlayerScreen(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
     val watchVm: WatchProgressViewModel = hiltViewModel()
+
+    val context = LocalContext.current
+    val inPip by PipState.inPictureInPicture
+    val pipAvailable = remember { context.supportsPip() }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var mpvView by remember { mutableStateOf<MPVPlayerView?>(null) }
@@ -267,7 +277,7 @@ fun VODPlayerScreen(
         )
 
         AnimatedVisibility(
-            visible = chromeVisible,
+            visible = chromeVisible && !inPip,
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
@@ -312,6 +322,24 @@ fun VODPlayerScreen(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                     )
+                    if (pipAvailable) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            IconButton(onClick = { context.findActivity()?.enterPip16x9() }) {
+                                Icon(
+                                    imageVector = Icons.Filled.PictureInPicture,
+                                    contentDescription = "Picture in picture",
+                                    tint = Color.White,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Bottom chrome: scrubber + position/duration + play/pause + skip.

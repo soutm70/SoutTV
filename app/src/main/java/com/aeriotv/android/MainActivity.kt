@@ -1,5 +1,6 @@
 package com.aeriotv.android
 
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,6 +11,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.aeriotv.android.core.pip.PipState
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.splash.SplashGate
 import com.aeriotv.android.ui.theme.AerioTVTheme
@@ -21,6 +23,14 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var appPreferences: AppPreferences
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        PipState.inPictureInPicture.value = isInPictureInPictureMode
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
