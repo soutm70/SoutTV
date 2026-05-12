@@ -122,10 +122,14 @@ fun VODPlayerScreen(
         savedPositionMs = existing?.positionMs ?: -1L
     }
 
+    // Black player background -- not the navy app-background -- so the
+    // pre-first-frame gap reads as "loading" and 4:3/2.35:1 streams
+    // letterbox to black bars instead of navy. Matches PlayerScreen +
+    // every video player on every platform.
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(Color.Black),
     ) {
         // Don't mount MPV until the proxy redirect has been resolved into a
         // session URL - otherwise libmpv hits the 301 path that strips our

@@ -22,6 +22,20 @@ class MPVPlayerView @JvmOverloads constructor(
 
     private val tag = "MPVPlayerView"
 
+    init {
+        // Black background while the underlying Surface waits for its
+        // first decoded frame. SurfaceView punches a hole through the View
+        // hierarchy to draw its surface, so during the gap between
+        // SurfaceHolder.surfaceCreated and the first frame arriving, the
+        // surface is whatever the GPU left in that buffer last (often the
+        // host Box's background, which used to be navy app-background --
+        // hence the "blue box" the user reported). Setting black on the
+        // view itself + on the holder format guarantees the pre-first-
+        // frame visual is solid black. Mirrors iOS PlayerView's black
+        // backgroundColor + AVSampleBufferDisplayLayer.backgroundColor.
+        setBackgroundColor(android.graphics.Color.BLACK)
+    }
+
     /**
      * Absolute path to the Mozilla CA bundle copied from the AAR's assets/cacert.pem
      * to the app's filesDir by `Utils.copyAssets`. PlayerScreen sets this BEFORE

@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -145,10 +146,19 @@ fun PlayerScreen(
 
     val streamUrl = currentChannel?.url.orEmpty()
 
+    // Player background MUST be black -- not the app's navy app-background --
+    // so:
+    //   1. The brief gap between AndroidView mounting and the SurfaceView's
+    //      first decoded frame reads as a "video loading" black instead of a
+    //      navy rectangle floating in the player chrome. iOS uses pure black
+    //      here for the same reason.
+    //   2. Non-16:9 streams letterbox to black bars (the rest of the player
+    //      surface) rather than navy bars, matching every video player on
+    //      every platform.
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(Color.Black),
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
