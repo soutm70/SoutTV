@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.onboarding
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +23,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -37,9 +37,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.aeriotv.android.R
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
 
 /**
@@ -231,20 +233,15 @@ private fun ActionButtons(
 
 @Composable
 private fun BrandLogo() {
-    Box(
-        modifier = Modifier
-            .size(96.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surface),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.LiveTv,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(48.dp),
-        )
-    }
+    // Renders the iOS AerioLogo PNG (signal-wave glyph baked into the navy
+    // rounded-square). The iOS corner radius is already part of the bitmap,
+    // so we don't apply our own clip — that would double-round and leave a
+    // visible navy ring outside the iOS rounding.
+    Image(
+        painter = painterResource(id = R.drawable.aerio_logo),
+        contentDescription = null,
+        modifier = Modifier.size(96.dp),
+    )
 }
 
 @Composable

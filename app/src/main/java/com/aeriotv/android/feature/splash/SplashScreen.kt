@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.splash
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,10 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.LiveTv
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,11 +22,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.R
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import kotlinx.coroutines.delay
 
@@ -91,21 +89,13 @@ private fun SplashContent(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.Center,
         ) {
             // Brand block — matches the WelcomeScreen BrandLogo so the splash
-            // and the onboarding entry feel like the same surface.
-            Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.LiveTv,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
+            // and the onboarding entry feel like the same surface. The iOS
+            // rounded-square is baked into the PNG.
+            Image(
+                painter = painterResource(id = R.drawable.aerio_logo),
+                contentDescription = null,
+                modifier = Modifier.size(120.dp),
+            )
             Spacer(Modifier.height(24.dp))
             Text(
                 text = "AerioTV",
