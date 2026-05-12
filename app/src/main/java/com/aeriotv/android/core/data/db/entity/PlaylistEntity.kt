@@ -45,6 +45,14 @@ data class PlaylistEntity(
     val lastEpgRefreshedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val isActive: Boolean = true,
+    /**
+     * User-controlled order index for the Playlists list. Mirrors iOS
+     * `displayOrder` written by SettingsView's drag-reorder. New rows default
+     * to 0 so the row sorts to the top until the user touches the order.
+     * Pre-DB-v10 rows survive the destructive migration with displayOrder = 0
+     * and bunch together at the top until the user reorders.
+     */
+    val displayOrder: Int = 0,
 )
 // TODO Phase 9 (Block Store): move apiKey + password out of Room into Google Play
 // Block Store / EncryptedSharedPreferences. Room cleartext storage is acceptable for

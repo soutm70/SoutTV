@@ -40,6 +40,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.material.icons.filled.Menu
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -119,25 +123,56 @@ fun PlaylistsScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter,
         ) {
+        val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // Local working copy so the drag preview updates fluidly without
+        // hitting Room on every onMove frame. We commit the order to the
+        // repository on drag end (applyPlaylistOrder).
+        var workingOrder by remember(playlists) { mutableStateOf(playlists) }
+        androidx.compose.runtime.LaunchedEffect(playlists) {
+            workingOrder = playlists
+        }
+        val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
+            workingOrder = workingOrder.toMutableList().apply {
+                add(to.index, removeAt(from.index))
+            }
+        }
         LazyColumn(
+            state = lazyListState,
             modifier = Modifier.adaptiveFormWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(playlists, key = { it.id }) { pl ->
-                SwipeablePlaylistRow(
-                    playlist = pl,
-                    isActive = pl.id == activeId,
-                    onTap = {
-                        if (pl.id == activeId) {
-                            onOpenPlaylistDetail()
-                        } else {
-                            viewModel.switchToPlaylist(pl.id)
-                        }
-                    },
-                    onLongPress = { pendingDelete = pl },
-                    onSwipedToDelete = { pendingDelete = pl },
-                )
+            items(workingOrder, key = { it.id }) { pl ->
+                ReorderableItem(reorderState, key = pl.id) { isDragging ->
+                    SwipeablePlaylistRow(
+                        playlist = pl,
+                        isActive = pl.id == activeId,
+                        isDragging = isDragging,
+                        onTap = {
+                            if (pl.id == activeId) {
+                                onOpenPlaylistDetail()
+                            } else {
+                                viewModel.switchToPlaylist(pl.id)
+                            }
+                        },
+                        onLongPress = { pendingDelete = pl },
+                        onSwipedToDelete = { pendingDelete = pl },
+                        dragHandle = {
+                            Icon(
+                                imageVector = Icons.Filled.Menu,
+                                contentDescription = "Drag to reorder",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .draggableHandle(
+                                        onDragStopped = {
+                                            viewModel.applyPlaylistOrder(workingOrder.map { it.id })
+                                        },
+                                    )
+                                    .size(24.dp),
+                            )
+                        },
+                    )
+                }
             }
         }
         }
@@ -176,12 +211,19 @@ private fun PlaylistRow(
     isActive: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    dragHandle: @Composable (() -> Unit)? = null,
+    isDragging: Boolean = false,
 ) {
+    val elevation = if (isDragging) 6.dp else 0.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(elevation, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+            .background(
+                if (isDragging) MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+            )
             .combinedClickable(
                 onClick = onTap,
                 onLongClick = onLongPress,
@@ -189,6 +231,10 @@ private fun PlaylistRow(
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (dragHandle != null) {
+            dragHandle()
+            Spacer(Modifier.size(10.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = playlist.name,
@@ -234,9 +280,11 @@ private fun PlaylistRow(
 private fun SwipeablePlaylistRow(
     playlist: com.aeriotv.android.core.data.db.entity.PlaylistEntity,
     isActive: Boolean,
+    isDragging: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipedToDelete: () -> Unit,
+    dragHandle: @Composable () -> Unit,
 ) {
     val dismissState = androidx.compose.material3.rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -277,6 +325,8 @@ private fun SwipeablePlaylistRow(
         PlaylistRow(
             playlist = playlist,
             isActive = isActive,
+            isDragging = isDragging,
+            dragHandle = dragHandle,
             onTap = onTap,
             onLongPress = onLongPress,
         )

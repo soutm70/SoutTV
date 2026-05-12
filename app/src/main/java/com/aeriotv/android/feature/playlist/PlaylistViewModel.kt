@@ -417,6 +417,12 @@ class PlaylistViewModel @Inject constructor(
         }
     }
 
+    /** Persist a user-chosen ordering of playlists (top-to-bottom). Used by
+     * the Playlists drag-to-reorder UI. */
+    fun applyPlaylistOrder(orderedIds: List<String>) {
+        viewModelScope.launch { repository.applyPlaylistOrder(orderedIds) }
+    }
+
     /** Delete a saved playlist by id. If the deleted row was the active one,
      * fall back to the most-recent remaining playlist (or NeedsUrl if none). */
     fun deletePlaylist(playlistId: String) {

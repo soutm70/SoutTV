@@ -12,20 +12,33 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface PlaylistDao {
 
-    @Query("SELECT * FROM playlists WHERE isActive = 1 ORDER BY createdAt DESC")
+    @Query("SELECT * FROM playlists WHERE isActive = 1 ORDER BY displayOrder ASC, createdAt DESC")
     fun observeActive(): Flow<List<PlaylistEntity>>
 
-    @Query("SELECT * FROM playlists WHERE isActive = 1 ORDER BY createdAt DESC LIMIT 1")
+    @Query("SELECT * FROM playlists WHERE isActive = 1 ORDER BY displayOrder ASC, createdAt DESC LIMIT 1")
     suspend fun firstActive(): PlaylistEntity?
 
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun byId(id: String): PlaylistEntity?
 
-    @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
+    @Query("SELECT * FROM playlists ORDER BY displayOrder ASC, createdAt DESC")
     suspend fun allOnce(): List<PlaylistEntity>
 
-    @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
+    @Query("SELECT * FROM playlists ORDER BY displayOrder ASC, createdAt DESC")
     fun observeAll(): Flow<List<PlaylistEntity>>
+
+    @Query("UPDATE playlists SET displayOrder = :order WHERE id = :id")
+    suspend fun setDisplayOrder(id: String, order: Int)
+
+    /**
+     * Persist the user's new playlist order in one transaction. Caller passes
+     * the ids in their desired top-to-bottom order; we stamp displayOrder
+     * 0..n-1 across the set.
+     */
+    @androidx.room.Transaction
+    suspend fun applyDisplayOrder(orderedIds: List<String>) {
+        orderedIds.forEachIndexed { index, id -> setDisplayOrder(id, index) }
+    }
 
     /**
      * Mark a single playlist row active, deactivating every other row in one

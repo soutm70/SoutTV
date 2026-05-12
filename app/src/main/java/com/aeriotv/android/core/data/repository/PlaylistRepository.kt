@@ -202,6 +202,12 @@ class PlaylistRepository @Inject constructor(
         dao.deleteById(playlistId)
     }
 
+    /** Persist a user-chosen ordering of playlists. Sequence of ids is taken
+     * top-to-bottom and stamped onto displayOrder = 0..n-1 atomically. */
+    suspend fun applyPlaylistOrder(orderedIds: List<String>): Result<Unit> = runCatching {
+        dao.applyDisplayOrder(orderedIds)
+    }
+
     private fun deriveName(url: String): String =
         url.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Source" }
 
