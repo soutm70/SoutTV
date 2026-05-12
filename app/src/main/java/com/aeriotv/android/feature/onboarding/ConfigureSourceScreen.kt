@@ -21,14 +21,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CalendarToday
-import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.outlined.Hub
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Sell
-import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
@@ -105,18 +105,18 @@ fun ConfigureSourceScreen(
     val cardSubtitle: String
     when (sourceType) {
         SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
-            cardIcon = Icons.Outlined.Key
+            cardIcon = Icons.Filled.Key
             cardTitle = "Dispatcharr Direct Connect"
-            cardSubtitle = "Connect to Dispatcharr with your admin login or a personal API key. " +
-                    "AerioTV is not officially affiliated with the Dispatcharr project."
+            cardSubtitle = "Connect to Dispatcharr with your admin login or a personal API key " +
+                    "(*AerioTV is not officially affiliated with the Dispatcharr project)"
         }
         SourceType.XtreamCodes -> {
-            cardIcon = Icons.Outlined.Storage
+            cardIcon = Icons.Filled.LiveTv
             cardTitle = "Xtream Codes"
             cardSubtitle = "Xtream Codes API. Live TV, VOD movies & series."
         }
         SourceType.M3uUrl -> {
-            cardIcon = Icons.Outlined.Description
+            cardIcon = Icons.Filled.Description
             cardTitle = "M3U + EPG"
             cardSubtitle = "Any M3U playlist URL. Works with Dispatcharr, any IPTV provider."
         }
@@ -272,7 +272,7 @@ private fun DispatcharrFields(
                     value = state.apiKey,
                     onValueChange = viewModel::onApiKeyChange,
                     placeholder = "Paste your admin API key",
-                    leading = Icons.Outlined.Key,
+                    leading = Icons.Filled.Key,
                     visualTransformation = PasswordVisualTransformation(),
                     enabled = !state.isLoading,
                 )

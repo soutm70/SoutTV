@@ -16,9 +16,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -111,7 +111,7 @@ fun ChooseSourceTypeScreen(
                 if (rowLayout) {
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         SourceTypeCard(
-                            icon = Icons.Outlined.Key,
+                            icon = Icons.Filled.Key,
                             title = "Dispatcharr Direct Connect",
                             subtitle = "Connect with your admin login or a personal API key.",
                             modifier = Modifier
@@ -119,7 +119,7 @@ fun ChooseSourceTypeScreen(
                                 .tappable { onChoose(SourceType.DispatcharrApiKey) },
                         )
                         SourceTypeCard(
-                            icon = Icons.Outlined.Storage,
+                            icon = Icons.Filled.LiveTv,
                             title = "Xtream Codes",
                             subtitle = "Xtream Codes API. Live TV, VOD movies & series.",
                             modifier = Modifier
@@ -127,7 +127,7 @@ fun ChooseSourceTypeScreen(
                                 .tappable { onChoose(SourceType.XtreamCodes) },
                         )
                         SourceTypeCard(
-                            icon = Icons.Outlined.Description,
+                            icon = Icons.Filled.Description,
                             title = "M3U + EPG",
                             subtitle = "Any M3U playlist URL. Works with any IPTV provider.",
                             modifier = Modifier
@@ -137,20 +137,20 @@ fun ChooseSourceTypeScreen(
                     }
                 } else {
                     SourceTypeCard(
-                        icon = Icons.Outlined.Key,
+                        icon = Icons.Filled.Key,
                         title = "Dispatcharr Direct Connect",
                         subtitle = "Connect to Dispatcharr with your admin login or a personal API key " +
                                 "(*AerioTV is not officially affiliated with the Dispatcharr project)",
                         modifier = Modifier.tappable { onChoose(SourceType.DispatcharrApiKey) },
                     )
                     SourceTypeCard(
-                        icon = Icons.Outlined.Storage,
+                        icon = Icons.Filled.LiveTv,
                         title = "Xtream Codes",
                         subtitle = "Xtream Codes API. Live TV, VOD movies & series.",
                         modifier = Modifier.tappable { onChoose(SourceType.XtreamCodes) },
                     )
                     SourceTypeCard(
-                        icon = Icons.Outlined.Description,
+                        icon = Icons.Filled.Description,
                         title = "M3U + EPG",
                         subtitle = "Any M3U playlist URL. Works with Dispatcharr, any IPTV provider.",
                         modifier = Modifier.tappable { onChoose(SourceType.M3uUrl) },
