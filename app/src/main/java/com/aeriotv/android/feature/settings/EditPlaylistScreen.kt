@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -156,6 +157,10 @@ fun EditPlaylistScreen(
                             label = { Text("Name") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = aerioTextFieldKeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                            ),
                         )
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
@@ -173,6 +178,10 @@ fun EditPlaylistScreen(
                             },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = aerioTextFieldKeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                            ),
                         )
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
@@ -182,6 +191,10 @@ fun EditPlaylistScreen(
                             placeholder = { Text("http://192.168.1.10:9191") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = aerioTextFieldKeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                            ),
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -210,6 +223,9 @@ fun EditPlaylistScreen(
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = aerioTextFieldKeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                ),
                             )
                         }
                     }
@@ -231,6 +247,9 @@ fun EditPlaylistScreen(
                                     label = { Text("Username") },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth(),
+                                    keyboardOptions = aerioTextFieldKeyboardOptions(
+                                        imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                                    ),
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 OutlinedTextField(
@@ -240,6 +259,9 @@ fun EditPlaylistScreen(
                                     singleLine = true,
                                     visualTransformation = PasswordVisualTransformation(),
                                     modifier = Modifier.fillMaxWidth(),
+                                    keyboardOptions = aerioTextFieldKeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                    ),
                                 )
                             } else {
                                 OutlinedTextField(
@@ -263,6 +285,9 @@ fun EditPlaylistScreen(
                                 label = { Text("Username") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = aerioTextFieldKeyboardOptions(
+                                    imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                                ),
                             )
                             Spacer(Modifier.height(8.dp))
                             OutlinedTextField(
@@ -272,6 +297,9 @@ fun EditPlaylistScreen(
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = aerioTextFieldKeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                ),
                             )
                         }
                     }
@@ -293,6 +321,9 @@ fun EditPlaylistScreen(
                                 singleLine = true,
                                 placeholder = { Text("https://example.com/xmltv.xml") },
                                 modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = aerioTextFieldKeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                                ),
                             )
                         }
                     }

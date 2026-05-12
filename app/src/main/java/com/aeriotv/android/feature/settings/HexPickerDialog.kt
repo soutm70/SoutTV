@@ -105,7 +105,8 @@ fun HexPickerDialog(
                     },
                     label = { Text("Hex color (e.g. ${bucket.defaultHex})") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(
+                    keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
                         capitalization = KeyboardCapitalization.Characters,
                         imeAction = ImeAction.Done,
                     ),

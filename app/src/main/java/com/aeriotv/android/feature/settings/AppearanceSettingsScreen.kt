@@ -582,7 +582,8 @@ private fun AccentPickerDialog(
                     },
                     label = { Text("Hex color (e.g. 1AC4D8)") },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
                         capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters,
                         imeAction = androidx.compose.ui.text.input.ImeAction.Done,
                     ),

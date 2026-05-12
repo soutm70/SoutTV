@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -342,6 +343,9 @@ private fun CustomEntryDialog(
                     label = { Text("Match (substring, case-insensitive)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = aerioTextFieldKeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                    ),
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -365,6 +369,10 @@ private fun CustomEntryDialog(
                         label = { Text("Hex color") },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
+                        keyboardOptions = aerioTextFieldKeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Ascii,
+                            capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Characters,
+                        ),
                     )
                 }
             }

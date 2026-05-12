@@ -208,6 +208,9 @@ private fun MoviesSubScreen(
             placeholder = { Text("Search movies") },
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             shape = RoundedCornerShape(14.dp),
+            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+            ),
         )
 
         if (continueWatching.isNotEmpty() && state.searchQuery.isBlank()) {
@@ -302,6 +305,9 @@ private fun SeriesSubScreen(
             placeholder = { Text("Search series") },
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             shape = RoundedCornerShape(14.dp),
+            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+            ),
         )
 
         val countLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->

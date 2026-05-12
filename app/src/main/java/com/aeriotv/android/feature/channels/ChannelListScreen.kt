@@ -197,6 +197,9 @@ fun ChannelListScreen(
             placeholder = { Text("Search channels") },
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             shape = RoundedCornerShape(14.dp),
+            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+            ),
         )
 
         if (groups.size > 1) {

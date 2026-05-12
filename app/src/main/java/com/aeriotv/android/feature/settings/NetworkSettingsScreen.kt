@@ -394,6 +394,7 @@ private fun HomeWifiSection(
                     label = { Text("SSID name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(),
                 )
             },
             confirmButton = {

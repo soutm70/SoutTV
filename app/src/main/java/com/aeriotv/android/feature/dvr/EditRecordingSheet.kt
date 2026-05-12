@@ -90,6 +90,9 @@ fun EditRecordingSheet(
                 label = { Text("Title") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                ),
             )
 
             OutlinedTextField(
@@ -97,6 +100,7 @@ fun EditRecordingSheet(
                 onValueChange = { description = it },
                 label = { Text("Description") },
                 modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(),
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))

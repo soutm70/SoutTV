@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -416,6 +417,7 @@ private fun IconTextField(
     enabled: Boolean,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailing: @Composable (() -> Unit)? = null,
+    keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = aerioTextFieldKeyboardOptions(),
 ) {
     OutlinedTextField(
         value = value,
@@ -434,8 +436,10 @@ private fun IconTextField(
         trailingIcon = trailing,
         enabled = enabled,
         visualTransformation = visualTransformation,
+        keyboardOptions = keyboardOptions,
     )
 }
+
 
 @Composable
 private fun PasswordField(
