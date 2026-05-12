@@ -93,7 +93,14 @@ class PlaylistRepository @Inject constructor(
             password = request.password?.takeIf { it.isNotBlank() },
             channelCount = channels.size,
             lastRefreshedAt = System.currentTimeMillis(),
+            isActive = true,
         )
+        // New / re-loaded playlist becomes the active one — deactivate every
+        // other row first so the bootstrap invariant (≤1 active) holds. Skip
+        // when editing the already-active row.
+        if (existingId == null || dao.byId(existingId)?.isActive != true) {
+            dao.setAllInactive()
+        }
         dao.upsert(entity)
         entity to channels
     }
@@ -140,6 +147,33 @@ class PlaylistRepository @Inject constructor(
     }
 
     suspend fun clear() = dao.clear()
+
+    /** All stored playlists, observed for the multi-playlist switcher. */
+    fun observeAll(): kotlinx.coroutines.flow.Flow<List<PlaylistEntity>> = dao.observeAll()
+    suspend fun allOnce(): List<PlaylistEntity> = dao.allOnce()
+
+    /**
+     * Make [playlistId] the active row and load its channels + EPG. Returns
+     * the resolved entity + channel list, mirroring loadAndPersist's shape
+     * so callers can drop a switch into the same state-update flow.
+     */
+    suspend fun switchActive(playlistId: String): Result<Pair<PlaylistEntity, List<M3UChannel>>> = runCatching {
+        dao.switchActive(playlistId)
+        val entity = dao.byId(playlistId)
+            ?: throw IllegalStateException("Playlist $playlistId vanished after switch")
+        val channels = fetchChannelsFor(
+            sourceType = entity.resolvedSourceType(),
+            base = entity.urlString,
+            userEpgUrl = entity.epgUrl,
+            apiKey = entity.apiKey,
+        )
+        dao.update(entity.copy(channelCount = channels.size, lastRefreshedAt = System.currentTimeMillis()))
+        entity to channels
+    }
+
+    suspend fun deletePlaylist(playlistId: String): Result<Unit> = runCatching {
+        dao.deleteById(playlistId)
+    }
 
     private fun deriveName(url: String): String =
         url.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Source" }

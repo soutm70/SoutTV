@@ -31,6 +31,8 @@ import com.aeriotv.android.feature.livetv.LiveTVTabContent
 import com.aeriotv.android.feature.miniplayer.MiniPlayerRow
 import com.aeriotv.android.feature.miniplayer.MiniPlayerSession
 import com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel
+import com.aeriotv.android.feature.onboarding.ChooseSourceTypeScreen
+import com.aeriotv.android.feature.onboarding.ConfigureSourceScreen
 import com.aeriotv.android.feature.ondemand.OnDemandTabContent
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
@@ -199,8 +201,32 @@ private fun SettingsTabContent() {
     var addMoreOpen by remember { mutableStateOf(false) }
     var playlistDetailOpen by remember { mutableStateOf(false) }
     var editPlaylistOpen by remember { mutableStateOf(false) }
-    androidx.activity.compose.BackHandler(enabled = section != null || addMoreOpen || playlistDetailOpen || editPlaylistOpen) {
+    var playlistsOpen by remember { mutableStateOf(false) }
+    var addPlaylistStep by remember { mutableStateOf<AddPlaylistStep>(AddPlaylistStep.None) }
+    val playlistVm: PlaylistViewModel = hiltViewModel()
+    val playlistState by playlistVm.state.collectAsStateWithLifecycle()
+    // Watch for a playlist id flip while we're inside the Add Playlist flow;
+    // that means the user's onboarding Save succeeded and the new row was
+    // promoted active. Close the embedded flow.
+    val startId = remember(addPlaylistStep) {
+        if (addPlaylistStep != AddPlaylistStep.None) playlistState.playlist?.id else null
+    }
+    LaunchedEffect(playlistState.playlist?.id) {
+        if (addPlaylistStep != AddPlaylistStep.None &&
+            startId != null &&
+            playlistState.playlist?.id != startId
+        ) {
+            addPlaylistStep = AddPlaylistStep.None
+        }
+    }
+    androidx.activity.compose.BackHandler(
+        enabled = section != null || addMoreOpen || playlistDetailOpen ||
+            editPlaylistOpen || playlistsOpen || addPlaylistStep != AddPlaylistStep.None,
+    ) {
         when {
+            addPlaylistStep is AddPlaylistStep.Configure -> addPlaylistStep = AddPlaylistStep.ChooseType
+            addPlaylistStep is AddPlaylistStep.ChooseType -> addPlaylistStep = AddPlaylistStep.None
+            playlistsOpen -> playlistsOpen = false
             editPlaylistOpen -> editPlaylistOpen = false
             playlistDetailOpen -> playlistDetailOpen = false
             addMoreOpen -> addMoreOpen = false
@@ -208,6 +234,20 @@ private fun SettingsTabContent() {
         }
     }
     when {
+        addPlaylistStep is AddPlaylistStep.Configure -> ConfigureSourceScreen(
+            sourceType = (addPlaylistStep as AddPlaylistStep.Configure).sourceType,
+            onBack = { addPlaylistStep = AddPlaylistStep.ChooseType },
+            viewModel = playlistVm,
+        )
+        addPlaylistStep is AddPlaylistStep.ChooseType -> ChooseSourceTypeScreen(
+            onBack = { addPlaylistStep = AddPlaylistStep.None },
+            onChoose = { type -> addPlaylistStep = AddPlaylistStep.Configure(type) },
+        )
+        playlistsOpen -> com.aeriotv.android.feature.settings.PlaylistsScreen(
+            onBack = { playlistsOpen = false },
+            onAddPlaylist = { addPlaylistStep = AddPlaylistStep.ChooseType },
+            onOpenPlaylistDetail = { playlistDetailOpen = true },
+        )
         editPlaylistOpen -> com.aeriotv.android.feature.settings.EditPlaylistScreen(
             onBack = { editPlaylistOpen = false },
         )
@@ -219,6 +259,7 @@ private fun SettingsTabContent() {
         section == null -> SettingsScreen(
             onSectionClick = { section = it },
             onOpenPlaylistDetail = { playlistDetailOpen = true },
+            onOpenPlaylists = { playlistsOpen = true },
         )
         section == SettingsSection.Appearance -> AppearanceSettingsScreen(
             onBack = { section = null },
@@ -273,4 +314,11 @@ internal fun visibleTabs(
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
 interface MainScaffoldEntryPoint {
     fun mpvPlayerHolder(): MPVPlayerHolder
+}
+
+/** Two-step Add Playlist flow embedded in the Settings tab. None = closed. */
+private sealed interface AddPlaylistStep {
+    data object None : AddPlaylistStep
+    data object ChooseType : AddPlaylistStep
+    data class Configure(val sourceType: com.aeriotv.android.core.data.SourceType) : AddPlaylistStep
 }

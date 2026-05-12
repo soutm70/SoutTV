@@ -64,6 +64,7 @@ import java.util.Date
 fun SettingsScreen(
     onSectionClick: (SettingsSection) -> Unit,
     onOpenPlaylistDetail: () -> Unit = {},
+    onOpenPlaylists: () -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -106,7 +107,7 @@ fun SettingsScreen(
                 Spacer(Modifier.size(12.dp))
             }
             item {
-                SectionLabel("Playlist")
+                SectionLabel("Playlists")
                 Spacer(Modifier.size(8.dp))
                 val playlist = state.playlist
                 if (playlist != null) {
@@ -144,13 +145,24 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Spacer(Modifier.size(12.dp))
-                OutlinedButton(
-                    onClick = { confirmClear = true },
-                    enabled = playlist != null,
+                Spacer(Modifier.size(10.dp))
+                Row(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Change playlist")
+                    OutlinedButton(
+                        onClick = onOpenPlaylists,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Manage playlists")
+                    }
+                    OutlinedButton(
+                        onClick = { confirmClear = true },
+                        enabled = playlist != null,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Change playlist")
+                    }
                 }
             }
             item {

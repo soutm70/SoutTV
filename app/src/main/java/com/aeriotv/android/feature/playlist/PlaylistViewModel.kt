@@ -9,6 +9,7 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -373,6 +374,64 @@ class PlaylistViewModel @Inject constructor(
             repository.refresh(active)
                 .onSuccess { Log.i(TAG, "testConnection: ok (${it.size} channels)") }
                 .onFailure { Log.w(TAG, "testConnection failed", it) }
+        }
+    }
+
+    /**
+     * Observe the full set of saved playlists for the multi-playlist
+     * switcher in Settings.
+     */
+    val allPlaylists: Flow<List<PlaylistEntity>> = repository.observeAll()
+
+    /** Make [playlistId] active and load its channels. Mirrors the bootstrap
+     * load-and-render flow, but skipping the JWT exchange the first-load does
+     * for User+Pass since the apiKey is already cached on the row. */
+    fun switchToPlaylist(playlistId: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null) }
+            repository.switchActive(playlistId).fold(
+                onSuccess = { (entity, channels) ->
+                    _state.update {
+                        it.copy(
+                            phase = Phase.ChannelsReady,
+                            playlist = entity,
+                            channels = channels,
+                            isLoading = false,
+                            error = if (channels.isEmpty()) "No channels found." else null,
+                        )
+                    }
+                    loadEpgIfConfigured(entity)
+                },
+                onFailure = { t ->
+                    Log.w(TAG, "switchToPlaylist failed", t)
+                    _state.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Switch failed: ${t.message ?: t::class.simpleName}",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    /** Delete a saved playlist by id. If the deleted row was the active one,
+     * fall back to the most-recent remaining playlist (or NeedsUrl if none). */
+    fun deletePlaylist(playlistId: String) {
+        viewModelScope.launch {
+            val wasActive = repository.activePlaylist()?.id == playlistId
+            repository.deletePlaylist(playlistId)
+            if (wasActive) {
+                val remaining = repository.allOnce()
+                val next = remaining.firstOrNull()
+                if (next == null) {
+                    _state.update {
+                        it.copy(phase = Phase.NeedsUrl, playlist = null, channels = emptyList())
+                    }
+                } else {
+                    switchToPlaylist(next.id)
+                }
+            }
         }
     }
 

@@ -24,6 +24,30 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     suspend fun allOnce(): List<PlaylistEntity>
 
+    @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<PlaylistEntity>>
+
+    /**
+     * Mark a single playlist row active, deactivating every other row in one
+     * transaction. Used by the multi-playlist switcher. Without the wrapping
+     * transaction a partial failure could leave the table with zero active
+     * rows or two, both of which break the bootstrap path.
+     */
+    @androidx.room.Transaction
+    suspend fun switchActive(targetId: String) {
+        setAllInactive()
+        setActiveById(targetId)
+    }
+
+    @Query("UPDATE playlists SET isActive = 0")
+    suspend fun setAllInactive()
+
+    @Query("UPDATE playlists SET isActive = 1 WHERE id = :id")
+    suspend fun setActiveById(id: String)
+
+    @Query("DELETE FROM playlists WHERE id = :id")
+    suspend fun deleteById(id: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(playlist: PlaylistEntity)
 
