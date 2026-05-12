@@ -64,9 +64,24 @@ data class CategoryPaletteState(
      * iOS iOS-side weights (live=0.45, default=0.28). Focused isn't currently
      * piped through on Android — pre-press touch ripple covers that signal —
      * but the parameter is kept for parity with iOS callers if they port back.
+     *
+     * The optional [fallback] is consulted when [rawCategory] is blank or
+     * unmatched. Dispatcharr's bulk EPG grid intentionally omits `<category>`
+     * for perf (lazy enrichment happens in ProgramInfoSheet), so for the Live
+     * TV List + Guide we pass the channel's groupTitle here. Typical IPTV
+     * groupings ("Sports", "Movies HD", "Kids", "News") already match the
+     * built-in bucket aliases, so a missing program category still surfaces a
+     * tint without the per-channel `/api/epg/programs/<id>/` fetch.
      */
-    fun tintFor(rawCategory: String?, isLive: Boolean, isFocused: Boolean = false): Color? {
-        val base = resolveBaseColor(rawCategory) ?: return null
+    fun tintFor(
+        rawCategory: String?,
+        isLive: Boolean,
+        isFocused: Boolean = false,
+        fallback: String? = null,
+    ): Color? {
+        val base = resolveBaseColor(rawCategory)
+            ?: resolveBaseColor(fallback)
+            ?: return null
         val alpha = when {
             isFocused -> 0.55f
             isLive -> 0.45f

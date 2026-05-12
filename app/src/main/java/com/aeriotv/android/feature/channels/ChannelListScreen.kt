@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
@@ -371,7 +372,18 @@ internal fun ChannelRow(
     // programme has a recognised category and the user has Category Colors on.
     // Mirrors iPhone canon footer: "cards tint via gradient" — colours the
     // accent edge without flattening the surface.
-    val tint = palette.tintFor(nowProgramme?.category, isLive = true)
+    //
+    // Dispatcharr's bulk EPG grid drops `<category>` so nowProgramme.category
+    // is typically blank for Dispatcharr-sourced playlists; the channel's
+    // groupTitle ("Sports", "Movies HD", "Kids", "News" etc.) is passed as a
+    // fallback so the row still tints when the program-level category isn't
+    // available. The per-program lazy fetch in ProgramInfoSheet still wins
+    // when the user opens the detail sheet.
+    val tint = palette.tintFor(
+        rawCategory = nowProgramme?.category,
+        isLive = true,
+        fallback = channel.groupTitle,
+    )
     val baseSurface = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
     val cardBrush = if (tint != null) {
         Brush.horizontalGradient(listOf(tint, baseSurface))
@@ -410,18 +422,32 @@ internal fun ChannelRow(
                 }
                 Spacer(Modifier.width(8.dp))
 
+                // Channel logo — matches iOS ChannelListView.swift:1754-1758
+                // `CachedLogoImage(width: 38, height: 26)` on iPhone. The
+                // logo sits directly on the row's gradient surface with no
+                // background tile: tvg-logo art is already designed to be
+                // overlaid on dark surfaces (most ship transparent PNGs or
+                // tightly-cropped raster), and the iOS canon screenshot the
+                // user provided shows ESPN/NBC/NFL logos floating directly
+                // on the card. The container is wider than tall so wider
+                // logos like NBC Sports fit comfortably without cropping.
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.background),
+                        .width(50.dp)
+                        .height(32.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (channel.tvgLogo.isNotBlank()) {
                         AsyncImage(
                             model = channel.tvgLogo,
                             contentDescription = null,
-                            modifier = Modifier.size(40.dp),
+                            // Fit preserves aspect ratio and centers within
+                            // the 50x32 container, matching iOS SwiftUI's
+                            // default Image.resizable + scaledToFit() pair.
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .width(50.dp)
+                                .height(32.dp),
                         )
                     } else {
                         Text(
@@ -434,6 +460,23 @@ internal fun ChannelRow(
                 }
                 Spacer(Modifier.width(12.dp))
 
+                // Uniform-height channel-info column. iOS lets the description
+                // wrap 0-2 lines, which lets cards spring up and down by
+                // ~14 dp depending on EPG. The Android list ended up
+                // visually choppy in landscape on phones — every other row
+                // a different height — so we lock the slot heights:
+                //   * Channel name: always 1 line
+                //   * Program title: always 1 line (placeholder space when
+                //     no EPG so the column still occupies that slot)
+                //   * Description: always exactly 2 lines (minLines == max)
+                //   * Progress bar: always 2 dp tall (transparent spacer
+                //     when no EPG)
+                // Empty slots use a thin-space character so the Text node
+                // still measures its proper line height. Mirrors iOS
+                // intent (ChannelListView.swift:1782 comment "subtitle slot
+                // stays empty") but enforces measurement parity Android-
+                // side, which iOS gets for free from its SwiftUI VStack
+                // layout pass.
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = channel.name,
@@ -443,33 +486,29 @@ internal fun ChannelRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    Text(
+                        text = nowProgramme?.title ?: " ",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = nowProgramme?.description?.takeIf { it.isNotBlank() } ?: " ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        minLines = 2,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.size(4.dp))
                     if (nowProgramme != null) {
-                        Text(
-                            text = nowProgramme.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (nowProgramme.description.isNotBlank()) {
-                            Text(
-                                text = nowProgramme.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Spacer(Modifier.size(4.dp))
                         EpgProgressBar(nowProgramme)
-                    } else if (channel.groupTitle.isNotBlank()) {
-                        Text(
-                            text = channel.groupTitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    } else {
+                        // Transparent placeholder keeps the 2 dp progress-
+                        // bar slot reserved so all rows align even when
+                        // EPG hasn't loaded for this channel.
+                        Spacer(Modifier.height(2.dp))
                     }
                 }
 

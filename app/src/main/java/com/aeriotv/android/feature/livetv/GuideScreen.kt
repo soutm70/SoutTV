@@ -449,7 +449,15 @@ private fun ChannelGuideRow(
                         channelName = channel.name,
                         widthDp = wDp,
                         isLive = isLive,
-                        categoryTint = palette.tintFor(programme.category, isLive = isLive),
+                        // Dispatcharr bulk grid drops <category>; fall back
+                        // to the channel's group title so guide cells still
+                        // tint even before any per-program lazy enrichment
+                        // hits. Mirrors the same fallback in ChannelRow.
+                        categoryTint = palette.tintFor(
+                            rawCategory = programme.category,
+                            isLive = isLive,
+                            fallback = channel.groupTitle,
+                        ),
                         modifier = Modifier.offset(x = xDp),
                         onClick = { onProgrammeClick(programme) },
                         onRecord = { onProgrammeRecord(programme) },
