@@ -76,6 +76,16 @@ fun PlayerScreen(
         derivedStateOf { currentChannel?.let { epgByChannel[it.tvgID]?.nowPlaying() } }
     }
 
+    // Persist last-watched channel for the App Behaviors > Resume Last Channel
+    // toggle. Writes whenever the user flips to a new channel; AerioTVNavHost
+    // reads this once on cold boot to decide whether to auto-launch into the
+    // player.
+    LaunchedEffect(currentChannel?.id) {
+        currentChannel?.id?.takeIf { it.isNotBlank() }?.let { id ->
+            settingsVm.setLastWatchedChannelId(id)
+        }
+    }
+
     // Chrome + ad-hoc sub-modal state.
     var chromeVisible by remember { mutableStateOf(true) }
     var audioOnly by remember { mutableStateOf(false) }

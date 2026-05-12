@@ -93,6 +93,23 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * Last-played channel id. Written by PlayerScreen on every channel-flip
+     * and read once by AerioTVNavHost on cold boot. Empty string means
+     * "nothing to resume" (first launch / after Settings -> Change playlist).
+     */
+    val lastWatchedChannelId: Flow<String> = store.data.map { it[KEY_LAST_WATCHED_CHANNEL_ID] ?: "" }
+    suspend fun setLastWatchedChannelId(value: String) {
+        store.edit { prefs ->
+            if (value.isBlank()) prefs.remove(KEY_LAST_WATCHED_CHANNEL_ID)
+            else prefs[KEY_LAST_WATCHED_CHANNEL_ID] = value
+        }
+    }
+    suspend fun autoResumeLastChannelOnce(): Boolean =
+        store.data.first()[KEY_AUTO_RESUME_LAST_CHANNEL] ?: false
+    suspend fun lastWatchedChannelIdOnce(): String =
+        store.data.first()[KEY_LAST_WATCHED_CHANNEL_ID].orEmpty()
+
+    /**
      * iOS `defaultTab` parity. Stores the AppTab enum name. Empty string means
      * "follow iOS default" (Live TV). MainScaffold reads this once on the
      * first composition after bootstrap completes.
@@ -266,6 +283,7 @@ class AppPreferences @Inject constructor(
         val KEY_SKIP_LOADING_SCREEN = booleanPreferencesKey("app_behaviors_skip_loading_screen")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
         val KEY_AUTO_RESUME_LAST_CHANNEL = booleanPreferencesKey("app_behaviors_auto_resume_last_channel")
+        val KEY_LAST_WATCHED_CHANNEL_ID = stringPreferencesKey("last_watched_channel_id")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")

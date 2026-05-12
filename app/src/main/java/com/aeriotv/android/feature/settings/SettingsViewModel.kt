@@ -44,6 +44,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setAutoResumeLastChannel(value) }
     }
 
+    val lastWatchedChannelId: Flow<String> = prefs.lastWatchedChannelId
+    fun setLastWatchedChannelId(value: String) {
+        viewModelScope.launch { prefs.setLastWatchedChannelId(value) }
+    }
+
     val defaultTab: Flow<String> = prefs.defaultTab
     fun setDefaultTab(value: String) {
         viewModelScope.launch { prefs.setDefaultTab(value) }

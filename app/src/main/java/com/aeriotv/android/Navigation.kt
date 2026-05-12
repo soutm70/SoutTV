@@ -22,6 +22,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.main.MainScaffold
 import com.aeriotv.android.feature.onboarding.ChooseSourceTypeScreen
 import com.aeriotv.android.feature.onboarding.ConfigureSourceScreen
@@ -32,6 +33,21 @@ import com.aeriotv.android.feature.ondemand.SeriesDetailScreen
 import com.aeriotv.android.feature.player.PlayerScreen
 import com.aeriotv.android.feature.player.VODPlayerScreen
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+
+/**
+ * EntryPoint accessor so the bootstrap composable can read DataStore-backed
+ * preferences without forcing every screen to depend on AppPreferences via a
+ * hiltViewModel. Used once at cold-boot to decide whether to auto-resume the
+ * last-played channel.
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface NavEntryPoint {
+    fun appPreferences(): AppPreferences
+}
 
 object Routes {
     const val PLAYLIST_GRAPH = "playlist_graph"
@@ -70,6 +86,7 @@ fun AerioTVNavHost(
                 }
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
+                val context = androidx.compose.ui.platform.LocalContext.current
 
                 // Debug-only auto-load. --es url + --es apikey => Dispatcharr API-key flow.
                 // --es url + optional --es epg => M3U flow. Gated in MainActivity via
@@ -90,8 +107,29 @@ fun AerioTVNavHost(
                         PlaylistViewModel.Phase.NeedsUrl -> navController.navigate(Routes.WELCOME) {
                             popUpTo(Routes.BOOTSTRAP) { inclusive = true }
                         }
-                        PlaylistViewModel.Phase.ChannelsReady -> navController.navigate(Routes.MAIN) {
-                            popUpTo(Routes.BOOTSTRAP) { inclusive = true }
+                        PlaylistViewModel.Phase.ChannelsReady -> {
+                            // Resume Last Channel (App Behaviors). When the toggle is on
+                            // and we have a stored channel id that still exists in the
+                            // current playlist, navigate straight into the player. Falls
+                            // back to MAIN when the toggle is off or the saved channel is
+                            // missing (e.g. user switched playlists since last launch).
+                            val prefs = dagger.hilt.android.EntryPointAccessors
+                                .fromApplication(context.applicationContext, NavEntryPoint::class.java)
+                                .appPreferences()
+                            val resume = prefs.autoResumeLastChannelOnce()
+                            val resumeId = if (resume) prefs.lastWatchedChannelIdOnce() else ""
+                            val hasResumeTarget = resumeId.isNotBlank() &&
+                                state.channels.any { it.id == resumeId && it.url.isNotBlank() }
+                            if (hasResumeTarget) {
+                                navController.navigate(Routes.MAIN) {
+                                    popUpTo(Routes.BOOTSTRAP) { inclusive = true }
+                                }
+                                navController.navigate(Routes.player(resumeId))
+                            } else {
+                                navController.navigate(Routes.MAIN) {
+                                    popUpTo(Routes.BOOTSTRAP) { inclusive = true }
+                                }
+                            }
                         }
                     }
                 }

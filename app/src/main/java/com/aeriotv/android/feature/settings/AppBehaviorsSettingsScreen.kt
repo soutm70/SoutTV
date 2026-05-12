@@ -79,7 +79,7 @@ fun AppBehaviorsSettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SettingsGroup(header = "Launch", footer = "Skip loading screen may cause brief stutter while data hydrates. Resume last channel waits on the Android mini-player port.") {
+            SettingsGroup(header = "Launch", footer = "Skip loading screen may cause brief stutter while data hydrates. Resume last channel re-opens the player on launch if the saved channel still exists in your playlist.") {
                 ToggleRow(
                     title = "Skip loading screen",
                     subtitle = "Land on Live TV instantly; data hydrates in the background",
@@ -89,10 +89,9 @@ fun AppBehaviorsSettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                 ToggleRow(
                     title = "Resume last channel",
-                    subtitle = "Auto-start the last-played channel on launch. Lands with the mini-player port.",
+                    subtitle = "Auto-start the last-played channel on launch.",
                     checked = autoResumeLastChannel,
                     onCheckedChange = viewModel::setAutoResumeLastChannel,
-                    enabled = false,
                 )
             }
 
