@@ -1,6 +1,5 @@
 package com.aeriotv.android.feature.ondemand
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,7 +20,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,10 +33,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,13 +50,12 @@ import coil3.compose.AsyncImage
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 
 /**
- * On Demand tab. Mirrors iOS MoviesView (Aerio/Features/VOD/MoviesView.swift):
- * search bar + poster grid. Phase 10a Movies-first-page only; Series + the
- * "Continue Watching" rail land in Phase 10b/10c.
+ * On Demand tab shell. Mirrors iOS OnDemandView (Aerio/Features/VOD/OnDemandView.swift):
+ * "Movies" / "Series" pill segment selector above the active sub-view.
  *
- * Playback wiring (tap a poster -> VOD player route) is Phase 10b. Phase 10a
- * surfaces an informational Toast so the grid is verifiable end-to-end
- * without needing the player wiring first.
+ * Phase 10b ships Movies fully wired (browse + play). Series is a placeholder
+ * until Phase 10c lands the `/api/vod/series/` endpoint, episode picker, and
+ * WatchProgress.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,33 +64,108 @@ fun OnDemandTabContent(
     onMovieClick: (DispatcharrVODMovie) -> Unit = {},
     viewModel: OnDemandViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    var section by rememberSaveable { mutableStateOf(OnDemandSection.Movies) }
 
     Column(modifier = modifier.fillMaxSize()) {
         TopAppBar(
-            title = {
-                val count = state.totalCount.takeIf { it > 0 }
-                val titleText = if (count != null)
-                    "On Demand  •  ${state.movies.size} / $count"
-                else
-                    "On Demand"
-                Text(titleText, style = MaterialTheme.typography.titleMedium)
-            },
+            title = { Text("On Demand", style = MaterialTheme.typography.titleMedium) },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
             ),
         )
 
-        if (state.unsupportedSource) {
-            EmptyState(
-                title = "On Demand needs Dispatcharr",
-                body = "Switch to a Dispatcharr playlist in Settings to browse movies.",
-            )
-            return@Column
-        }
+        SegmentPills(
+            current = section,
+            onSelect = { section = it },
+        )
 
+        when (section) {
+            OnDemandSection.Movies -> MoviesSubScreen(
+                viewModel = viewModel,
+                onMovieClick = onMovieClick,
+            )
+            OnDemandSection.Series -> SeriesSubScreen()
+        }
+    }
+}
+
+@Composable
+private fun SegmentPills(
+    current: OnDemandSection,
+    onSelect: (OnDemandSection) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        OnDemandSection.entries.forEach { entry ->
+            SegmentPill(
+                label = entry.label,
+                icon = entry.icon,
+                selected = entry == current,
+                onClick = { onSelect(entry) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SegmentPill(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val bg = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = fg,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = fg,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun MoviesSubScreen(
+    viewModel: OnDemandViewModel,
+    onMovieClick: (DispatcharrVODMovie) -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
+    if (state.unsupportedSource) {
+        EmptyState(
+            title = "Movies needs Dispatcharr",
+            body = "Switch to a Dispatcharr playlist in Settings to browse movies.",
+        )
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = state.searchQuery,
             onValueChange = viewModel::setSearchQuery,
@@ -98,6 +177,18 @@ fun OnDemandTabContent(
             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             shape = RoundedCornerShape(14.dp),
         )
+
+        val countLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
+            "${state.movies.size} / $total"
+        }
+        if (countLabel != null) {
+            Text(
+                text = countLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
 
         if (state.isLoading && state.movies.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -145,6 +236,14 @@ fun OnDemandTabContent(
 }
 
 @Composable
+private fun SeriesSubScreen() {
+    EmptyState(
+        title = "Series",
+        body = "Episode picker, season grid, and WatchProgress land with Phase 10c.",
+    )
+}
+
+@Composable
 private fun MoviePoster(
     movie: DispatcharrVODMovie,
     onClick: () -> Unit,
@@ -158,7 +257,7 @@ private fun MoviePoster(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f) // standard movie-poster aspect
+                .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
             contentAlignment = Alignment.Center,
@@ -231,4 +330,9 @@ private fun EmptyState(title: String, body: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+private enum class OnDemandSection(val label: String, val icon: ImageVector) {
+    Movies(label = "Movies", icon = Icons.Outlined.Movie),
+    Series(label = "Series", icon = Icons.Outlined.Tv),
 }
