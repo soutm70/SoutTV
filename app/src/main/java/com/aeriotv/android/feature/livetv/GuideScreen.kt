@@ -64,6 +64,8 @@ import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.db.entity.reminderKey
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
+import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
+import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.reminders.RemindersViewModel
 import com.aeriotv.android.feature.settings.SettingsViewModel
@@ -111,6 +113,7 @@ fun GuideScreen(
     val favoriteIds = remember(favoritesList) { favoritesList.map { it.channelId }.toSet() }
     val settingsVm: SettingsViewModel = hiltViewModel()
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
+    val multiviewStore = rememberMultiviewStoreHandle()
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
@@ -282,6 +285,7 @@ fun GuideScreen(
                     isFavorite = channel.id in favoriteIds,
                     onToggleFavorite = { favoritesVm.toggle(channel) },
                     palette = palette,
+                    multiviewStore = multiviewStore,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
             }
@@ -317,7 +321,11 @@ private fun ChannelGuideRow(
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
     palette: CategoryPaletteState,
+    multiviewStore: MultiviewStoreHandle,
 ) {
+    val multiviewSelected by multiviewStore.selected.collectAsStateWithLifecycle()
+    val inMultiview = multiviewSelected.any { it.id == channel.id }
+    val atCap = multiviewSelected.size >= multiviewStore.maxTiles && !inMultiview
     val context = LocalContext.current
     var railMenuOpen by remember { mutableStateOf(false) }
 
@@ -394,6 +402,24 @@ private fun ChannelGuideRow(
                         onToggleFavorite()
                     },
                 )
+                if (channel.url.isNotBlank()) {
+                    DropdownMenuItem(
+                        enabled = !atCap,
+                        text = {
+                            Text(
+                                text = when {
+                                    inMultiview -> "Remove from Multiview"
+                                    atCap -> "Multiview full"
+                                    else -> "Add to Multiview"
+                                },
+                            )
+                        },
+                        onClick = {
+                            railMenuOpen = false
+                            if (!atCap || inMultiview) multiviewStore.toggle(channel)
+                        },
+                    )
+                }
             }
         }
 
@@ -427,6 +453,9 @@ private fun ChannelGuideRow(
                         modifier = Modifier.offset(x = xDp),
                         onClick = { onProgrammeClick(programme) },
                         onRecord = { onProgrammeRecord(programme) },
+                        canAddToMultiview = channel.url.isNotBlank() && (!atCap || inMultiview),
+                        inMultiview = inMultiview,
+                        onToggleMultiview = { multiviewStore.toggle(channel) },
                     )
                 }
                 // "Now" indicator - 2dp cyan line, only drawn when "now" falls inside the window.
@@ -456,6 +485,9 @@ private fun ProgrammeCell(
     modifier: Modifier,
     onClick: () -> Unit,
     onRecord: () -> Unit,
+    canAddToMultiview: Boolean,
+    inMultiview: Boolean,
+    onToggleMultiview: () -> Unit,
     remindersVm: RemindersViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -524,6 +556,17 @@ private fun ProgrammeCell(
                     }
                 },
             )
+            if (canAddToMultiview) {
+                DropdownMenuItem(
+                    text = {
+                        Text(if (inMultiview) "Remove from Multiview" else "Add to Multiview")
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onToggleMultiview()
+                    },
+                )
+            }
             if (programme.endMillis > System.currentTimeMillis()) {
                 val recordLabel = if (isLive) "Record from Now" else "Record"
                 DropdownMenuItem(

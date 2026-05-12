@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 class RemindersViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val dao: ReminderDao,
+    private val playlistDao: com.aeriotv.android.core.data.db.dao.PlaylistDao,
 ) : ViewModel() {
 
     val all: Flow<List<ReminderEntity>> = dao.observeAll()
@@ -52,6 +53,7 @@ class RemindersViewModel @Inject constructor(
                     startMillis = startMillis,
                     endMillis = endMillis,
                     alarmRequestCode = requestCode,
+                    playlistId = playlistDao.firstActive()?.id,
                 ),
             )
             scheduleAlarm(key, channelName, programTitle, triggerAt, requestCode)

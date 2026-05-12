@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.watchprogress
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.dao.WatchProgressDao
 import com.aeriotv.android.core.data.db.entity.WatchProgressEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -18,6 +19,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class WatchProgressViewModel @Inject constructor(
     private val dao: WatchProgressDao,
+    private val playlistDao: PlaylistDao,
 ) : ViewModel() {
 
     fun observe(videoId: String): Flow<WatchProgressEntity?> = dao.observe(videoId)
@@ -50,6 +52,7 @@ class WatchProgressViewModel @Inject constructor(
                     positionMs = positionMs,
                     durationMs = durationMs,
                     updatedAt = System.currentTimeMillis(),
+                    playlistId = playlistDao.firstActive()?.id,
                 ),
             )
         }

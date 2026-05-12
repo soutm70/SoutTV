@@ -62,6 +62,7 @@ class LocalRecordingService : Service() {
 
     @Inject lateinit var localRecordingDao: LocalRecordingDao
     @Inject lateinit var appPreferences: AppPreferences
+    @Inject lateinit var playlistDao: com.aeriotv.android.core.data.db.dao.PlaylistDao
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recordingJob: Job? = null
@@ -168,6 +169,7 @@ class LocalRecordingService : Service() {
                             endedAt = System.currentTimeMillis(),
                             byteSize = finalBytes,
                             status = status,
+                            playlistId = playlistDao.firstActive()?.id,
                         ),
                     )
                 }.onFailure { Log.w(TAG, "Couldn't persist local recording row", it) }
