@@ -75,4 +75,21 @@ class MultiviewStore @Inject constructor() {
             else -> focused
         }
     }
+
+    /**
+     * Replace the channel at [index] with [newChannel] in place. Mirrors iOS
+     * MultiviewStore.swapTileContent (commit cc28f18 + e627ca7) — the
+     * positional Tile composable preserves its AndroidView, the update
+     * callback notices the URL change, and calls MPVPlayerView.playFile
+     * which routes through `mpv_command loadfile` (default replace mode).
+     * No tile teardown, no black flash on channel-flip.
+     */
+    fun replaceTile(index: Int, newChannel: M3UChannel) {
+        val current = _selected.value
+        if (index !in current.indices) return
+        if (current[index].id == newChannel.id) return
+        val mutable = current.toMutableList()
+        mutable[index] = newChannel
+        _selected.value = mutable
+    }
 }

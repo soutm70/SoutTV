@@ -141,13 +141,13 @@ fun ChannelListScreen(
                 .toList()
             when (state.sortMode) {
                 SortMode.ByNumber -> byGroupAndSearch.sortedWith(
-                    compareBy({ it.channelNumber ?: Int.MAX_VALUE }, { it.name.lowercase() }),
+                    compareBy({ it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }, { it.name.lowercase() }),
                 )
                 SortMode.ByName -> byGroupAndSearch.sortedBy { it.name.lowercase() }
                 SortMode.FavoritesFirst -> byGroupAndSearch.sortedWith(
                     compareBy(
                         { it.id !in favoriteIds }, // false (favorited) sorts before true
-                        { it.channelNumber ?: Int.MAX_VALUE },
+                        { it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE },
                         { it.name.lowercase() },
                     ),
                 )

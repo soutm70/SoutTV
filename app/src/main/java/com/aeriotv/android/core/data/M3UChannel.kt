@@ -14,7 +14,14 @@ data class M3UChannel(
     val tvgID: String = "",
     val tvgName: String = "",
     val tvgLogo: String = "",
-    val channelNumber: Int? = null,
+    /**
+     * `tvg-chno` from the playlist, preserved verbatim (just trimmed). Mirrors
+     * iOS commit d1ac87a: prior versions parsed this as Int? and dropped any
+     * decimal-valued entry (Dispatcharr sub-channels like 2.1 / 11444.0).
+     * Keeping the raw String lets us render the user's exact identifier and
+     * still sort numerically via toDoubleOrNull() at sort sites.
+     */
+    val channelNumber: String? = null,
     val rawAttributes: Map<String, String> = emptyMap(),
     /**
      * Dispatcharr's primary-key integer for this channel, used when scheduling

@@ -60,7 +60,7 @@ object M3UParser {
                         tvgID = attrs["tvg-id"].orEmpty(),
                         tvgName = attrs["tvg-name"].orEmpty(),
                         tvgLogo = attrs["tvg-logo"].orEmpty(),
-                        channelNumber = attrs["tvg-chno"]?.toIntOrNull(),
+                        channelNumber = attrs["tvg-chno"]?.trim()?.takeIf { it.isNotBlank() },
                         rawAttributes = attrs.filterKeys { it != "name" },
                     )
                 }

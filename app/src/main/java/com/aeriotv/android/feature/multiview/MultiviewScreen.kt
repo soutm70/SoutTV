@@ -314,6 +314,12 @@ private fun Tile(
                 onLongClick = onLongPress,
             ),
     ) {
+        // Tracks the URL the held MPV instance is currently playing. Lets
+        // `update` distinguish a channel-flip (URL changed) from an aid-only
+        // recomposition, so we call playFile (libmpv loadfile, replace mode)
+        // only when needed. Mirrors iOS swapStreamIfChanged + the in-place
+        // tile-swap pattern from commits e627ca7 / b34fa82 / 8fb0d5a.
+        val currentUrlRef = remember { mutableStateOf("") }
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -332,12 +338,23 @@ private fun Tile(
                 }
                 view.initialize(configDir, cacheDir)
                 Log.i(TAG, "Tile MPV loading: ${channel.name}")
-                if (channel.url.isNotBlank()) view.playFile(channel.url)
+                if (channel.url.isNotBlank()) {
+                    view.playFile(channel.url)
+                    currentUrlRef.value = channel.url
+                }
                 // Initial audio focus state.
                 view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
                 view
             },
             update = { view ->
+                // In-place stream swap: when the positional Tile sees a new
+                // channel (via MultiviewStore.swap or replaceTile), don't
+                // teardown — just hand the new URL to the existing mpv handle.
+                if (channel.url.isNotBlank() && currentUrlRef.value != channel.url) {
+                    Log.i(TAG, "Tile MPV swap: ${currentUrlRef.value} -> ${channel.url}")
+                    view.playFile(channel.url)
+                    currentUrlRef.value = channel.url
+                }
                 view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
             },
             onRelease = { view ->

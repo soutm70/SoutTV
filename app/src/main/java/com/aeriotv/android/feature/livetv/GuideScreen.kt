@@ -157,7 +157,7 @@ fun GuideScreen(
                             it.groupTitle.equals(state.selectedGroup, ignoreCase = true)
                 }
                 .filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
-                .sortedWith(compareBy({ it.channelNumber ?: Int.MAX_VALUE }, { it.name.lowercase() }))
+                .sortedWith(compareBy({ it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }, { it.name.lowercase() }))
                 .toList()
         }
     }

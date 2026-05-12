@@ -232,7 +232,7 @@ class PlaylistRepository @Inject constructor(
                         tvgID = ch.tvgId.orEmpty(),
                         tvgName = ch.name,
                         tvgLogo = ch.logoId?.let { dispatcharrClient.logoUrl(base, it) }.orEmpty(),
-                        channelNumber = ch.channelNumber?.toInt(),
+                        channelNumber = ch.channelNumber?.formatChannelNumber(),
                         dispatcharrChannelId = ch.id,
                     )
                 }
@@ -273,3 +273,17 @@ private fun List<DispatcharrEpgEntry>.toProgrammes(): List<EPGProgramme> =
             category = "",
         )
     }
+
+/**
+ * Format a Dispatcharr-API channel-number Double back to a display string,
+ * trimming the trailing `.0` when the value is integer-valued. Matches the
+ * iOS commit d1ac87a behaviour: prefer "11444" over "11444.0", but preserve
+ * "2.1" / "1.10" verbatim.
+ */
+private fun Double.formatChannelNumber(): String {
+    return if (this == kotlin.math.floor(this) && !this.isInfinite()) {
+        this.toLong().toString()
+    } else {
+        this.toString()
+    }
+}
