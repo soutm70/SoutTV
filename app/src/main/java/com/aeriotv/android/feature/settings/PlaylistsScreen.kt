@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -113,7 +115,12 @@ fun PlaylistsScreen(
             return@Column
         }
 
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
         LazyColumn(
+            modifier = Modifier.adaptiveFormWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -131,6 +138,7 @@ fun PlaylistsScreen(
                     onLongPress = { pendingDelete = pl },
                 )
             }
+        }
         }
     }
 

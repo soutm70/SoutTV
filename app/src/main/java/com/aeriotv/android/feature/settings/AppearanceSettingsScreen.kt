@@ -48,7 +48,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.ProgramCategory
 import com.aeriotv.android.core.category.parseHex
+import com.aeriotv.android.ui.adaptive.rememberViewport
 import com.aeriotv.android.ui.theme.AppTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
 
 /**
  * Appearance sub-screen. Mirrors iOS Settings -> Appearance (project_aeriotv_ios_canon.md).
@@ -87,7 +90,16 @@ fun AppearanceSettingsScreen(
             ),
         )
 
+        val vp = rememberViewport()
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+        ) {
         LazyColumn(
+            modifier = if (vp.formMaxWidth != androidx.compose.ui.unit.Dp.Unspecified)
+                Modifier.widthIn(max = vp.formMaxWidth)
+            else
+                Modifier,
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -169,6 +181,7 @@ fun AppearanceSettingsScreen(
                     }
                 }
             }
+        }
         }
     }
 

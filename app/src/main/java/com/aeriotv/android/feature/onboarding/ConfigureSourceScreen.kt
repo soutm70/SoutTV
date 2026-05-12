@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -138,11 +139,19 @@ fun ConfigureSourceScreen(
             ),
         )
 
-        Column(
+        val vp = com.aeriotv.android.ui.adaptive.rememberViewport()
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = vp.gutter, vertical = 12.dp),
+            contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+        ) {
+        Column(
+            modifier = if (vp.formMaxWidth != androidx.compose.ui.unit.Dp.Unspecified)
+                Modifier.widthIn(max = vp.formMaxWidth).fillMaxWidth()
+            else
+                Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             SourceTypeCard(icon = cardIcon, title = cardTitle, subtitle = cardSubtitle)
@@ -215,6 +224,7 @@ fun ConfigureSourceScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+        }
         }
     }
 }

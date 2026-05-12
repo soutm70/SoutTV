@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -72,8 +74,13 @@ fun NetworkSettingsScreen(
             ),
         )
 
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
         Column(
             modifier = Modifier
+                .adaptiveFormWidth()
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -92,6 +99,7 @@ fun NetworkSettingsScreen(
                 homeSsids = homeSsids,
                 onUpdateSsids = viewModel::setHomeSsids,
             )
+        }
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.settings
 
+import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,8 +70,13 @@ fun MultiviewSettingsScreen(
             ),
         )
 
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+        ) {
         Column(
             modifier = Modifier
+                .adaptiveFormWidth()
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -106,6 +113,7 @@ fun MultiviewSettingsScreen(
                     onCheckedChange = viewModel::setMultiviewTileCornersRounded,
                 )
             }
+        }
         }
     }
 }

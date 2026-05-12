@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -137,7 +138,12 @@ fun EditPlaylistScreen(
             return@Column
         }
 
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+        ) {
         LazyColumn(
+            modifier = Modifier.adaptiveFormWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -292,6 +298,7 @@ fun EditPlaylistScreen(
                     }
                 }
             }
+        }
         }
     }
 }
