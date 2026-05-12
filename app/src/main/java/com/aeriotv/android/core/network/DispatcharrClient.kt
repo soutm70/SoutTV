@@ -323,6 +323,78 @@ class DispatcharrClient @Inject constructor() {
     }
 
     /**
+     * GET /api/vod/series/<id>/episodes/?page=N&page_size=100. Mirrors iOS
+     * DispatcharrAPI.fetchEpisodesPage (StreamingAPIs.swift:2086). Phase
+     * 10c-2 fetches page 1 only; long-running shows (One Piece etc.) will
+     * paginate properly in a later cut.
+     */
+    suspend fun getSeriesEpisodesFirstPage(
+        baseUrl: String,
+        apiKey: String,
+        seriesId: Int,
+    ): VODEpisodesPage {
+        val url = "${baseUrl.trimEnd('/')}/api/vod/series/$seriesId/episodes/?page=1&page_size=100"
+        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException("Series episodes fetch failed: HTTP ${response.status.value}")
+        }
+        val raw: JsonElement = response.body()
+        return when {
+            raw is JsonArray -> VODEpisodesPage(
+                count = raw.size,
+                next = null,
+                results = raw.map { json.decodeFromJsonElement(serializer<DispatcharrVODEpisode>(), it) },
+            )
+            raw is JsonObject -> {
+                val results = (raw["results"] as? JsonArray)?.map {
+                    json.decodeFromJsonElement(serializer<DispatcharrVODEpisode>(), it)
+                } ?: emptyList()
+                val count = (raw["count"]?.toString()?.toIntOrNull()) ?: results.size
+                val next = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                VODEpisodesPage(count = count, next = next, results = results)
+            }
+            else -> throw IllegalStateException("Unexpected episodes response shape: ${raw::class.simpleName}")
+        }
+    }
+
+    /**
+     * Resolves the redirect-bound proxy URL to the session-bound playback URL
+     * for an episode. Same mechanism as [resolveVODStreamUrl] — Dispatcharr
+     * emits a 301 to a one-time `/proxy/vod/episode/<uuid>/vod_<session>`
+     * path that libmpv on Android can't follow itself.
+     */
+    suspend fun resolveVODEpisodeStreamUrl(
+        baseUrl: String,
+        apiKey: String,
+        episodeUuid: String,
+        streamId: Int? = null,
+    ): String = withContext(Dispatchers.IO) {
+        val base = "${baseUrl.trimEnd('/')}/proxy/vod/episode/$episodeUuid"
+        val entry = if (streamId != null) "$base?stream_id=$streamId" else base
+        val request = Request.Builder()
+            .url(entry)
+            .header("X-API-Key", apiKey)
+            .header("Authorization", "ApiKey $apiKey")
+            .header("Accept", "*/*")
+            .build()
+        noRedirectOkHttp.newCall(request).execute().use { response ->
+            val code = response.code
+            if (code in 300..399) {
+                val location = response.header("Location") ?: return@use entry
+                if (location.startsWith("http://") || location.startsWith("https://")) {
+                    location
+                } else {
+                    val originRoot = Regex("(https?://[^/]+)").find(baseUrl)?.value
+                        ?: baseUrl.trimEnd('/')
+                    originRoot + location
+                }
+            } else {
+                entry
+            }
+        }
+    }
+
+    /**
      * Returns the unresolved Dispatcharr VOD entry URL for a movie. Mirrors
      * iOS DispatcharrAPI.proxyMovieURL (StreamingAPIs.swift:2105).
      *
@@ -466,6 +538,37 @@ data class VODSeriesPage(
     val next: String?,
     val results: List<DispatcharrVODSeries>,
 )
+
+@Serializable
+data class VODEpisodesPage(
+    val count: Int,
+    val next: String?,
+    val results: List<DispatcharrVODEpisode>,
+)
+
+@Serializable
+data class DispatcharrVODEpisode(
+    val id: Int,
+    val uuid: String = "",
+    val title: String = "",
+    val name: String? = null,
+    @SerialName("season_number")
+    val seasonNumber: Int? = null,
+    @SerialName("episode_number")
+    val episodeNumber: Int? = null,
+    val plot: String? = null,
+    val overview: String? = null,
+    @SerialName("air_date")
+    val airDate: String? = null,
+    val rating: String? = null,
+    @SerialName("duration_secs")
+    val durationSecs: Int? = null,
+    val streams: List<DispatcharrVODStreamOption> = emptyList(),
+) {
+    val displayName: String get() = title.ifBlank { name.orEmpty() }
+    val effectivePlot: String? get() = plot ?: overview
+    val firstStreamId: Int? get() = streams.firstOrNull()?.streamId
+}
 
 @Serializable
 data class DispatcharrVODSeries(

@@ -27,6 +27,7 @@ import com.aeriotv.android.feature.onboarding.ChooseSourceTypeScreen
 import com.aeriotv.android.feature.onboarding.ConfigureSourceScreen
 import com.aeriotv.android.feature.onboarding.WelcomeScreen
 import com.aeriotv.android.feature.ondemand.OnDemandViewModel
+import com.aeriotv.android.feature.ondemand.SeriesDetailScreen
 import com.aeriotv.android.feature.player.PlayerScreen
 import com.aeriotv.android.feature.player.VODPlayerScreen
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -40,10 +41,14 @@ object Routes {
     const val MAIN = "main"
     const val PLAYER = "player/{channelId}"
     const val VOD_PLAYER = "vod_player/{movieUuid}"
+    const val SERIES_DETAIL = "series_detail/{seriesId}"
+    const val VOD_EPISODE_PLAYER = "vod_episode_player/{episodeUuid}"
 
     fun configure(type: SourceType) = "configure/${type.name}"
     fun player(channelId: String) = "player/${Uri.encode(channelId)}"
     fun vodPlayer(movieUuid: String) = "vod_player/${Uri.encode(movieUuid)}"
+    fun seriesDetail(seriesId: Int) = "series_detail/$seriesId"
+    fun vodEpisodePlayer(episodeUuid: String) = "vod_episode_player/${Uri.encode(episodeUuid)}"
 }
 
 @Composable
@@ -179,12 +184,8 @@ fun AerioTVNavHost(
                     onMovieClick = { movieUuid ->
                         navController.navigate(Routes.vodPlayer(movieUuid))
                     },
-                    onSeriesClick = {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Series detail + episode picker land with Phase 10c-2.",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                    onSeriesClick = { seriesId ->
+                        navController.navigate(Routes.seriesDetail(seriesId))
                     },
                 )
             }
@@ -219,6 +220,73 @@ fun AerioTVNavHost(
                     httpHeaders = headers,
                     epgByChannel = state.epgByChannel,
                     onClose = { navController.popBackStack() },
+                )
+            }
+
+            composable(
+                route = Routes.SERIES_DETAIL,
+                arguments = listOf(navArgument("seriesId") { type = NavType.IntType }),
+            ) { entry ->
+                val seriesId = entry.arguments?.getInt("seriesId") ?: 0
+                SeriesDetailScreen(
+                    seriesId = seriesId,
+                    onBack = { navController.popBackStack() },
+                    onEpisodeClick = { episode ->
+                        navController.navigate(Routes.vodEpisodePlayer(episode.uuid))
+                    },
+                )
+            }
+
+            composable(
+                route = Routes.VOD_EPISODE_PLAYER,
+                arguments = listOf(navArgument("episodeUuid") { type = NavType.StringType }),
+            ) { entry ->
+                val parent = remember(entry) {
+                    navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
+                }
+                val playlistVm: PlaylistViewModel = hiltViewModel(parent)
+                val playlistState by playlistVm.state.collectAsStateWithLifecycle()
+                val onDemandVm: OnDemandViewModel = hiltViewModel()
+
+                val episodeUuid = Uri.decode(entry.arguments?.getString("episodeUuid").orEmpty())
+
+                val apiKey = playlistState.playlist?.apiKey
+                val headers = remember(apiKey, playlistState.playlist?.sourceType) {
+                    val pl = playlistState.playlist
+                    val key = pl?.apiKey?.takeIf { it.isNotBlank() }
+                    val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
+                            pl?.sourceType == SourceType.DispatcharrUserPass.name
+                    if (isDispatcharr && key != null) {
+                        mapOf(
+                            "X-API-Key" to key,
+                            "Authorization" to "ApiKey $key",
+                        )
+                    } else emptyMap()
+                }
+
+                // Look up the episode across all cached series for stream-id +
+                // title. Cache miss falls back to an untitled play.
+                val episode = onDemandVm.state.collectAsStateWithLifecycle().value
+                    .episodesBySeries.values
+                    .asSequence()
+                    .flatten()
+                    .firstOrNull { it.uuid == episodeUuid }
+
+                var resolvedUrl by remember(episodeUuid) { mutableStateOf<String?>(null) }
+                var resolveError by remember(episodeUuid) { mutableStateOf<String?>(null) }
+                LaunchedEffect(episodeUuid) {
+                    onDemandVm.resolveEpisodeUrl(episodeUuid, episode?.firstStreamId).fold(
+                        onSuccess = { resolvedUrl = it },
+                        onFailure = { resolveError = it.message ?: it::class.simpleName },
+                    )
+                }
+
+                VODPlayerScreen(
+                    streamUrl = resolvedUrl.orEmpty(),
+                    title = episode?.displayName ?: "Episode",
+                    httpHeaders = headers,
+                    onClose = { navController.popBackStack() },
+                    loadingMessage = resolveError ?: if (resolvedUrl == null) "Loading…" else null,
                 )
             }
 

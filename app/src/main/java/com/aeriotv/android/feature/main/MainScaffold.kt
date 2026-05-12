@@ -44,7 +44,7 @@ import com.aeriotv.android.feature.settings.SettingsViewModel
 fun MainScaffold(
     onChannelClick: (M3UChannel) -> Unit,
     onMovieClick: (String) -> Unit = {},
-    onSeriesClick: (String) -> Unit = {},
+    onSeriesClick: (Int) -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -128,7 +128,7 @@ fun MainScaffold(
             AppTab.OnDemand -> OnDemandTabContent(
                 modifier = Modifier.padding(padding),
                 onMovieClick = { movie -> onMovieClick(movie.uuid) },
-                onSeriesClick = { series -> onSeriesClick(series.uuid) },
+                onSeriesClick = { series -> onSeriesClick(series.id) },
             )
             AppTab.Settings -> SettingsTabContent()
         }

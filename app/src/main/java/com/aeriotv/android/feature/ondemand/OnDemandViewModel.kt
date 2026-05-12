@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.network.DispatcharrClient
+import com.aeriotv.android.core.network.DispatcharrVODEpisode
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODSeries
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,6 +46,12 @@ class OnDemandViewModel @Inject constructor(
         val series: List<DispatcharrVODSeries> = emptyList(),
         val seriesTotalCount: Int = 0,
         val seriesSearchQuery: String = "",
+        // Episode cache: each series gets a lazy-loaded slot. The detail
+        // screen reads its slot and shows a spinner while episodesLoadingFor
+        // contains the seriesId.
+        val episodesBySeries: Map<Int, List<DispatcharrVODEpisode>> = emptyMap(),
+        val episodesLoadingFor: Set<Int> = emptySet(),
+        val episodesErrorFor: Map<Int, String> = emptyMap(),
     ) {
         val visible: List<DispatcharrVODMovie> get() {
             val q = searchQuery.trim()
@@ -134,6 +141,66 @@ class OnDemandViewModel @Inject constructor(
                     Log.w(TAG, "getVODSeries failed", t)
                     _state.update { it.copy(isLoadingSeries = false, seriesError = t.message ?: t::class.simpleName) }
                 },
+            )
+        }
+    }
+
+    fun seriesById(id: Int): DispatcharrVODSeries? =
+        _state.value.series.firstOrNull { it.id == id }
+
+    /** Lazy-load (idempotent within session) episodes for a series. */
+    fun loadEpisodes(seriesId: Int) {
+        val current = _state.value
+        if (current.episodesBySeries.containsKey(seriesId) ||
+            current.episodesLoadingFor.contains(seriesId)) {
+            return
+        }
+        viewModelScope.launch {
+            val playlist = playlistRepository.activePlaylist()
+                ?: return@launch
+            val key = playlist.apiKey
+            if (key.isNullOrBlank()) return@launch
+            _state.update { it.copy(episodesLoadingFor = it.episodesLoadingFor + seriesId) }
+            runCatching {
+                dispatcharrClient.getSeriesEpisodesFirstPage(playlist.urlString, key, seriesId)
+            }.fold(
+                onSuccess = { page ->
+                    _state.update { st ->
+                        st.copy(
+                            episodesBySeries = st.episodesBySeries + (seriesId to page.results),
+                            episodesLoadingFor = st.episodesLoadingFor - seriesId,
+                            episodesErrorFor = st.episodesErrorFor - seriesId,
+                        )
+                    }
+                },
+                onFailure = { t ->
+                    Log.w(TAG, "getSeriesEpisodes($seriesId) failed", t)
+                    _state.update { st ->
+                        st.copy(
+                            episodesLoadingFor = st.episodesLoadingFor - seriesId,
+                            episodesErrorFor = st.episodesErrorFor +
+                                    (seriesId to (t.message ?: t::class.simpleName.orEmpty())),
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    /** Same pattern as resolveMovieUrl but for an episode proxy URL. */
+    suspend fun resolveEpisodeUrl(episodeUuid: String, streamId: Int?): Result<String> {
+        val playlist = playlistRepository.activePlaylist()
+            ?: return Result.failure(IllegalStateException("No playlist loaded."))
+        val key = playlist.apiKey
+        if (key.isNullOrBlank()) {
+            return Result.failure(IllegalStateException("Active source is not Dispatcharr-backed."))
+        }
+        return runCatching {
+            dispatcharrClient.resolveVODEpisodeStreamUrl(
+                baseUrl = playlist.urlString,
+                apiKey = key,
+                episodeUuid = episodeUuid,
+                streamId = streamId,
             )
         }
     }
