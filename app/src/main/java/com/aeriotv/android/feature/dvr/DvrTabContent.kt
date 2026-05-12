@@ -26,7 +26,9 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -378,7 +380,6 @@ private fun RecordingRow(
     onRemoveCommercials: () -> Unit,
     onStopRecording: () -> Unit,
 ) {
-    val sourceTag = if (rec.source == DvrViewModel.Source.Local) "Local" else "Server"
     val statusColor = when (rec.status) {
         DvrViewModel.Recording.Status.Recording -> Color(0xFFFF4757)
         DvrViewModel.Recording.Status.Completed -> MaterialTheme.colorScheme.primary
@@ -444,11 +445,7 @@ private fun RecordingRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    text = sourceTag,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                DestinationBadge(source = rec.source)
             }
             Spacer(Modifier.size(8.dp))
             Text(
@@ -468,6 +465,47 @@ private fun RecordingRow(
             onSaveToDevice = onSaveToDevice,
             onRemoveCommercials = onRemoveCommercials,
             onStopRecording = onStopRecording,
+        )
+    }
+}
+
+/**
+ * Storage-destination indicator beneath each recording row. Mirrors iOS
+ * MyRecordingsView line 708-717:
+ *   Server → server.rack glyph + accentPrimary cyan
+ *   Local  → internaldrive glyph + system green
+ * The cyan/green color split is intentional — it lets the user scan a long
+ * mixed list and see at a glance which rows would survive if their server
+ * went offline. The Material `Storage` icon is the closest SF-Symbols
+ * `server.rack` equivalent (stack of horizontal rectangles); `Smartphone`
+ * stands in for `internaldrive` since the local recording physically lives
+ * on this device.
+ */
+@Composable
+private fun DestinationBadge(source: DvrViewModel.Source) {
+    val isLocal = source == DvrViewModel.Source.Local
+    val icon = if (isLocal) Icons.Outlined.Smartphone else Icons.Outlined.Storage
+    val label = if (isLocal) "Local" else "Server"
+    // iOS uses `Color.green` for local rows — system green (#34C759). Server
+    // rows pull the active theme accent so the badge stays brand-coherent
+    // when a custom accent is set in Appearance.
+    val tint = if (isLocal) Color(0xFF34C759) else MaterialTheme.colorScheme.primary
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.padding(top = 2.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            fontWeight = FontWeight.Medium,
         )
     }
 }
