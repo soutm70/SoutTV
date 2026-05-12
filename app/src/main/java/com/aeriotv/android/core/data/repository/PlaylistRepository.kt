@@ -29,7 +29,10 @@ import javax.inject.Singleton
  *  - M3uUrl: use [PlaylistEntity.urlString] directly + optional [PlaylistEntity.epgUrl].
  *  - DispatcharrApiKey: M3U = `${urlString}/output/m3u`, EPG = `${urlString}/output/epg`,
  *    headers = `{X-API-Key: ${apiKey}, Accept: application/json}` (Phase 4a).
- *  - DispatcharrUserPass: TODO Phase 4b (JWT flow).
+ *  - DispatcharrUserPass: log in to /api/auth/token/, exchange the JWT access
+ *    token for the user's API key via /api/accounts/users/me/, then proceed
+ *    exactly like DispatcharrApiKey. Mirrors iOS DispatcharrDirectConnect's
+ *    silent-rebootstrap pattern.
  *  - XtreamCodes: TODO Phase 4c (player_api.php enumeration -> get.php m3u_plus).
  */
 @Singleton
@@ -221,7 +224,12 @@ class PlaylistRepository @Inject constructor(
             val bytes = fetcher.fetchBytes(base)
             M3UParser.parseBytes(bytes)
         }
-        SourceType.DispatcharrApiKey -> {
+        // Both Dispatcharr modes converge here. UserPass calls in with a key
+        // that was resolved via JWT login + /api/accounts/users/me/ earlier in
+        // loadAndPersist; ApiKey calls in with the user-supplied key. Subsequent
+        // refreshes / switchActive use the persisted key on the row regardless
+        // of which auth mode originally produced it.
+        SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
             val key = apiKey?.takeIf { it.isNotBlank() }
                 ?: throw IllegalArgumentException("Dispatcharr API key is required")
             val groups = dispatcharrClient.listGroups(base, key)
@@ -246,8 +254,6 @@ class PlaylistRepository @Inject constructor(
                     )
                 }
         }
-        SourceType.DispatcharrUserPass ->
-            error("DispatcharrUserPass must be resolved to an api_key before fetch")
         SourceType.XtreamCodes -> error("$sourceType is not implemented yet")
     }
 }
