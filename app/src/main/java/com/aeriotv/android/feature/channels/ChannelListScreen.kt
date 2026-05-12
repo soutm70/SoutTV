@@ -104,13 +104,19 @@ fun ChannelListScreen(
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var manageGroupsOpen by remember { mutableStateOf(false) }
 
+    // Preserve the order groups appear in the source channel list. iOS does
+    // this on the parse step (HomeView.swift `fetchM3U` lines 1869-1872) — an
+    // empty array seeded with the first-seen groupTitle per channel and
+    // `firstIndex(of:)` mapped onto each ChannelDisplayItem.categoryOrder.
+    // Earlier Android revisions sorted alphabetically, which scrambled
+    // Dispatcharr's curated group ordering. Sequence.distinct() preserves
+    // encounter order so dropping the .sortedBy gets us iOS-matching behavior.
     val allGroupsRaw by remember(state.channels) {
         derivedStateOf {
             state.channels.asSequence()
                 .map { it.groupTitle }
                 .filter { it.isNotBlank() }
                 .distinct()
-                .sortedBy { it.lowercase() }
                 .toList()
         }
     }
@@ -158,10 +164,15 @@ fun ChannelListScreen(
     Column(modifier = modifierWrap.fillMaxSize()) {
         TopAppBar(
             title = {
-                val playlistName = state.playlist?.name?.takeIf { it.isNotBlank() } ?: "Live TV"
+                // iOS ChannelListView line 190 sets `.navigationTitle("Live TV")`
+                // regardless of which server / playlist is active. Server name
+                // and channel count belong on the Settings -> Playlists detail
+                // surface (and the count surfaces back into Live TV via the
+                // visible row count in the LazyColumn).
                 Text(
-                    text = "$playlistName  •  ${filtered.size} / ${state.channels.size}",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "Live TV",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
                 )
             },
             actions = {
