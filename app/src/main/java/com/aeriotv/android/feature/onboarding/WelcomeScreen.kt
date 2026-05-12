@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,12 +44,31 @@ import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
 
 /**
  * Cold-start welcome surface. Mirrors iOS App Store screenshot IMG_1076: AerioTV
- * brand block at top, supported source types listed, Sync + Detect-Home-WiFi
- * cards (placeholders for Phase 9/10 here), "Connect a Server" CTA, "Skip for
- * now" link.
+ * brand block + supported source types + Sync / Detect-Home-WiFi info cards +
+ * "Connect a Server" CTA + "Skip for now" link.
+ *
+ * Layout adapts to viewport: a short-but-wide screen (Android TV at 960dp x
+ * 540dp, tablets in landscape, foldables unfolded) switches to a two-column
+ * presentation so the CTA stays above the fold and the user can reach it with
+ * a D-pad without scrolling. Portrait phones get the original vertical stack.
  */
 @Composable
 fun WelcomeScreen(
+    onConnectServer: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    val config = LocalConfiguration.current
+    // Two-column when the viewport is meaningfully wider than tall. Threshold
+    // chosen so Pixel Tablet portrait stays single-column (it's >=600w but also
+    // >=800h) while TV landscape and foldable-unfolded tip into two-column.
+    val twoColumn = config.screenWidthDp >= 720 && config.screenHeightDp < 720
+
+    if (twoColumn) WelcomeTwoColumn(onConnectServer, onSkip)
+    else WelcomeSingleColumn(onConnectServer, onSkip)
+}
+
+@Composable
+private fun WelcomeSingleColumn(
     onConnectServer: () -> Unit,
     onSkip: () -> Unit,
 ) {
@@ -59,6 +81,67 @@ fun WelcomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(36.dp))
+        BrandBlock()
+        Spacer(Modifier.height(28.dp))
+        SupportedTypesGroup()
+        Spacer(Modifier.height(20.dp))
+        InfoCardsGroup()
+        Spacer(Modifier.height(28.dp))
+        ActionButtons(onConnectServer = onConnectServer, onSkip = onSkip)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun WelcomeTwoColumn(
+    onConnectServer: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 48.dp, vertical = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(40.dp),
+    ) {
+        // Left column: brand + supported source types. Centered vertically.
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.Start,
+        ) {
+            BrandBlock(alignStart = true)
+            Spacer(Modifier.height(20.dp))
+            SupportedTypesGroup()
+        }
+        // Right column: info cards + CTAs. The Connect button sits in the
+        // viewport center on TV so the focus ring lands on it at cold start,
+        // which is what a remote-driven flow wants.
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .widthIn(max = 540.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            InfoCardsGroup()
+            Spacer(Modifier.height(20.dp))
+            ActionButtons(onConnectServer = onConnectServer, onSkip = onSkip)
+        }
+    }
+}
+
+@Composable
+private fun BrandBlock(alignStart: Boolean = false) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (alignStart) Alignment.Start else Alignment.CenterHorizontally,
+    ) {
         BrandLogo()
         Spacer(Modifier.height(20.dp))
         Text(
@@ -79,19 +162,21 @@ fun WelcomeScreen(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
 
-        Spacer(Modifier.height(28.dp))
-
+@Composable
+private fun SupportedTypesGroup() {
+    Column(modifier = Modifier.fillMaxWidth()) {
         SupportedTypeRow(icon = Icons.Outlined.Key, label = "Dispatcharr Server Credentials")
         SupportedTypeRow(icon = Icons.Outlined.Storage, label = "Xtream Codes")
         SupportedTypeRow(icon = Icons.Outlined.Description, label = "M3U + EPG")
+    }
+}
 
-        Spacer(Modifier.height(20.dp))
-
-        // Cloud-sync + Home-WiFi tiles surface the corresponding feature
-        // entry points. The actual configuration screens live in Settings;
-        // these tiles are info cards on first launch so the user knows the
-        // capabilities exist.
+@Composable
+private fun InfoCardsGroup() {
+    Column(modifier = Modifier.fillMaxWidth()) {
         SourceTypeCard(
             icon = Icons.Filled.CloudOff,
             title = "Sync via Google Account",
@@ -103,9 +188,18 @@ fun WelcomeScreen(
             title = "Detect Home WiFi",
             subtitle = "After setup, add a LAN URL to your playlist in Settings and AerioTV will switch to it automatically when you're on your home network.",
         )
+    }
+}
 
-        Spacer(Modifier.height(28.dp))
-
+@Composable
+private fun ActionButtons(
+    onConnectServer: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Button(
             onClick = onConnectServer,
             modifier = Modifier
@@ -124,7 +218,6 @@ fun WelcomeScreen(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onSkip) {
             Text(
@@ -133,7 +226,6 @@ fun WelcomeScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
