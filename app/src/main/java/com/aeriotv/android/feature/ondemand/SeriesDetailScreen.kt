@@ -300,11 +300,12 @@ private fun SeriesHeroSection(series: DispatcharrVODSeries, info: DispatcharrVOD
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
+                // iOS VODDetailView line 312 sets the title to `item.name`
+                // without appending the year; the year already shows on the
+                // meta strip below. Dispatcharr often serves titles that
+                // already embed "(YYYY)" so appending duplicates it.
                 Text(
-                    text = buildString {
-                        append(series.displayName.ifBlank { "Untitled" })
-                        if (!displayYear.isNullOrBlank()) append(" ($displayYear)")
-                    },
+                    text = series.displayName.ifBlank { "Untitled" },
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                     fontWeight = FontWeight.Bold,

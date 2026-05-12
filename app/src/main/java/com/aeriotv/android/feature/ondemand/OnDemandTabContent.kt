@@ -31,9 +31,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -80,9 +80,17 @@ fun OnDemandTabContent(
 
     WithDisplayScale(scale = scale) {
     Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("On Demand", style = MaterialTheme.typography.titleMedium) },
-            colors = TopAppBarDefaults.topAppBarColors(
+        // Match the Live TV tab header style (Phase 50): centered title in
+        // titleLarge + bold so every tab top reads as a consistent surface.
+        CenterAlignedTopAppBar(
+            title = {
+                Text(
+                    text = "On Demand",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
             ),

@@ -40,7 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -98,9 +98,15 @@ fun DvrTabContent(
     var pendingEdit by remember { mutableStateOf<DvrViewModel.Recording?>(null) }
 
     Column(modifier = modifier.fillMaxSize()) {
-        TopAppBar(
-            title = { Text("My Recordings", style = MaterialTheme.typography.titleMedium) },
-            colors = TopAppBarDefaults.topAppBarColors(
+        CenterAlignedTopAppBar(
+            title = {
+                Text(
+                    text = "My Recordings",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
                 titleContentColor = MaterialTheme.colorScheme.onBackground,
             ),

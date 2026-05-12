@@ -214,11 +214,13 @@ private fun HeroSection(
             }
 
             Column(modifier = Modifier.weight(1f)) {
+                // iOS VODDetailView line 312 sets the title directly to
+                // `item.name` without appending the year; the year already
+                // shows on the meta strip below. Dispatcharr often serves
+                // titles that already embed "(YYYY)" — appending the
+                // resolved year on top of that gives "'Til Death (2006) (2006)".
                 Text(
-                    text = buildString {
-                        append(movie.displayName)
-                        if (!displayYear.isNullOrBlank()) append(" ($displayYear)")
-                    },
+                    text = movie.displayName,
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                     fontWeight = FontWeight.Bold,
