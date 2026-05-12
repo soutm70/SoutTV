@@ -123,6 +123,8 @@ dependencies {
     implementation(libs.androidx.credentials.playservices)
     implementation(libs.google.identity.googleid)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     debugImplementation(libs.androidx.ui.tooling)
 }

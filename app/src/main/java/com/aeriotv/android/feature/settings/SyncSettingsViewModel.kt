@@ -1,12 +1,15 @@
 package com.aeriotv.android.feature.settings
 
 import android.app.Activity
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.core.sync.DriveSyncManager
+import com.aeriotv.android.core.sync.DriveSyncWorker
 import com.aeriotv.android.core.sync.SyncCategory
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,13 +23,18 @@ import kotlinx.coroutines.launch
  */
 @HiltViewModel
 class SyncSettingsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val prefs: AppPreferences,
     private val sync: DriveSyncManager,
 ) : ViewModel() {
 
     val masterEnabled: Flow<Boolean> = prefs.syncMasterEnabled
     fun setMasterEnabled(value: Boolean) {
-        viewModelScope.launch { prefs.setSyncMasterEnabled(value) }
+        viewModelScope.launch {
+            prefs.setSyncMasterEnabled(value)
+            if (value) DriveSyncWorker.enqueuePeriodic(context)
+            else DriveSyncWorker.cancel(context)
+        }
     }
 
     val accountEmail: Flow<String> = prefs.syncAccountEmail
@@ -52,7 +60,10 @@ class SyncSettingsViewModel @Inject constructor(
     }
 
     fun signOut() {
-        viewModelScope.launch { sync.signOut() }
+        viewModelScope.launch {
+            sync.signOut()
+            DriveSyncWorker.cancel(context)
+        }
     }
 
     suspend fun clearRemote(): Boolean {
