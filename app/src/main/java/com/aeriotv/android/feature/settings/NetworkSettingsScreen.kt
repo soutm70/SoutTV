@@ -28,6 +28,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +53,7 @@ fun NetworkSettingsScreen(
     val timeoutSecs by viewModel.networkTimeoutSecs.collectAsStateWithLifecycle(initialValue = 15.0)
     val maxRetries by viewModel.maxRetries.collectAsStateWithLifecycle(initialValue = 3)
     val bufferSize by viewModel.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
+    val homeSsids by viewModel.homeSsids.collectAsStateWithLifecycle(initialValue = emptySet<String>())
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -83,6 +87,10 @@ fun NetworkSettingsScreen(
             BufferSizeSection(
                 current = bufferSize,
                 onSelect = viewModel::setStreamBufferSize,
+            )
+            HomeWifiSection(
+                homeSsids = homeSsids,
+                onUpdateSsids = viewModel::setHomeSsids,
             )
         }
     }
@@ -258,3 +266,142 @@ internal val BUFFER_OPTIONS: List<BufferOption> = listOf(
 
 internal fun bufferMillisFor(id: String): Int =
     BUFFER_OPTIONS.firstOrNull { it.id == id }?.cachingMs ?: 1_000
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeWifiSection(
+    homeSsids: Set<String>,
+    onUpdateSsids: (Set<String>) -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var detectedSsid by remember { mutableStateOf(com.aeriotv.android.core.wifi.WifiSsidProbe.currentSsid(context)) }
+    var permissionGranted by remember { mutableStateOf(com.aeriotv.android.core.wifi.WifiSsidProbe.hasPermission(context)) }
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        permissionGranted = granted
+        if (granted) detectedSsid = com.aeriotv.android.core.wifi.WifiSsidProbe.currentSsid(context)
+    }
+    var adding by remember { mutableStateOf(false) }
+    var manualSsid by remember { mutableStateOf("") }
+
+    SettingsCard(
+        header = "Home WiFi",
+        footer = "When connected to one of your home SSIDs, playlists with a LAN URL set route through it instead of the remote URL. Add the LAN URL in Edit Playlist.",
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Detected network",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = detectedSsid ?: if (permissionGranted) "Not connected to WiFi" else "Permission needed",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (detectedSsid != null && detectedSsid in homeSsids)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                if (!permissionGranted) {
+                    androidx.compose.material3.TextButton(onClick = {
+                        com.aeriotv.android.core.wifi.WifiSsidProbe.requiredPermission()?.let {
+                            permissionLauncher.launch(it)
+                        }
+                    }) { Text("Grant", color = MaterialTheme.colorScheme.primary) }
+                }
+                androidx.compose.material3.TextButton(onClick = {
+                    detectedSsid = com.aeriotv.android.core.wifi.WifiSsidProbe.currentSsid(context)
+                }) { Text("Refresh", color = MaterialTheme.colorScheme.primary) }
+            }
+
+            if (detectedSsid != null && detectedSsid !in homeSsids) {
+                Spacer(Modifier.size(8.dp))
+                androidx.compose.material3.TextButton(onClick = {
+                    onUpdateSsids(homeSsids + detectedSsid!!)
+                }) {
+                    Text(
+                        text = "Mark \"$detectedSsid\" as home",
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            Text(
+                text = "Saved networks",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (homeSsids.isEmpty()) {
+                Text(
+                    text = "None yet. Mark the network above as home, or add one manually.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            } else {
+                homeSsids.sorted().forEach { ssid ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = ssid,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.weight(1f),
+                        )
+                        androidx.compose.material3.TextButton(onClick = {
+                            onUpdateSsids(homeSsids - ssid)
+                        }) {
+                            Text("Remove", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.size(6.dp))
+            androidx.compose.material3.TextButton(onClick = { adding = true }) {
+                Text("Add network manually", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+
+    if (adding) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { adding = false; manualSsid = "" },
+            title = { Text("Add home SSID") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = manualSsid,
+                    onValueChange = { manualSsid = it },
+                    label = { Text("SSID name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val name = manualSsid.trim()
+                    if (name.isNotEmpty()) onUpdateSsids(homeSsids + name)
+                    manualSsid = ""
+                    adding = false
+                }) { Text("Add") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    manualSsid = ""
+                    adding = false
+                }) { Text("Cancel") }
+            },
+        )
+    }
+}

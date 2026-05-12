@@ -22,6 +22,14 @@ data class PlaylistEntity(
      * [PlaylistRepository], NOT in the entity.
      */
     val urlString: String,
+    /**
+     * Optional LAN-side URL for this server (e.g. `http://192.168.1.10:9191`).
+     * When the device is connected to one of the user's saved home SSIDs
+     * (AppPreferences.homeSsids) and this is non-null, network calls + stream
+     * playback route through this URL instead of [urlString]. Mirrors iOS
+     * Settings > Home WiFi LAN switching.
+     */
+    val lanUrlString: String? = null,
     /** Optional XMLTV URL when [sourceType] is [SourceType.M3uUrl]; ignored otherwise. */
     val epgUrl: String? = null,
     /** Source type as enum NAME (`M3uUrl`, `DispatcharrApiKey`, etc.). */

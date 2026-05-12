@@ -124,6 +124,29 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * SSIDs the user has flagged as "home network". When the device is on
+     * one of these networks, [PlaylistEntity.lanUrlString] is used instead
+     * of the remote [PlaylistEntity.urlString] for outbound requests. Stored
+     * newline-delimited since SSIDs can contain commas + semicolons.
+     */
+    val homeSsids: Flow<Set<String>> = store.data.map { prefs ->
+        val raw = prefs[KEY_HOME_SSIDS] ?: ""
+        if (raw.isBlank()) emptySet()
+        else raw.split('\n').mapNotNull { it.trim().takeIf(String::isNotBlank) }.toSet()
+    }
+    suspend fun setHomeSsids(ssids: Set<String>) {
+        store.edit { prefs ->
+            if (ssids.isEmpty()) prefs.remove(KEY_HOME_SSIDS)
+            else prefs[KEY_HOME_SSIDS] = ssids.joinToString("\n")
+        }
+    }
+    suspend fun homeSsidsOnce(): Set<String> {
+        val raw = store.data.first()[KEY_HOME_SSIDS] ?: ""
+        return if (raw.isBlank()) emptySet()
+        else raw.split('\n').mapNotNull { it.trim().takeIf(String::isNotBlank) }.toSet()
+    }
+
+    /**
      * Hidden group titles from Manage Groups. Newline-delimited list since
      * group names can include any character except newline. Empty string =
      * "no groups hidden", which is the default and matches iOS canon (all
@@ -400,6 +423,7 @@ class AppPreferences @Inject constructor(
         val KEY_AUTO_RESUME_LAST_CHANNEL = booleanPreferencesKey("app_behaviors_auto_resume_last_channel")
         val KEY_LAST_WATCHED_CHANNEL_ID = stringPreferencesKey("last_watched_channel_id")
         val KEY_HIDDEN_GROUPS = stringPreferencesKey("hidden_groups")
+        val KEY_HOME_SSIDS = stringPreferencesKey("home_ssids")
         val KEY_DISPLAY_SCALE_MOVIES = doublePreferencesKey("display_scale_movies")
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")

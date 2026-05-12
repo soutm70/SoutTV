@@ -62,6 +62,7 @@ fun EditPlaylistScreen(
 
     var name by remember(playlist?.id) { mutableStateOf(playlist?.name.orEmpty()) }
     var url by remember(playlist?.id) { mutableStateOf(playlist?.urlString.orEmpty()) }
+    var lanUrl by remember(playlist?.id) { mutableStateOf(playlist?.lanUrlString.orEmpty()) }
     var epgUrl by remember(playlist?.id) { mutableStateOf(playlist?.epgUrl.orEmpty()) }
     var apiKey by remember(playlist?.id) { mutableStateOf(playlist?.apiKey.orEmpty()) }
     var username by remember(playlist?.id) { mutableStateOf(playlist?.username.orEmpty()) }
@@ -92,6 +93,7 @@ fun EditPlaylistScreen(
                         viewModel.saveEdits(
                             name = name,
                             url = url,
+                            lanUrl = lanUrl,
                             epgUrl = if (sourceType == SourceType.M3uUrl) epgUrl else null,
                             apiKey = when {
                                 sourceType == SourceType.DispatcharrApiKey -> apiKey
@@ -165,6 +167,21 @@ fun EditPlaylistScreen(
                             },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = lanUrl,
+                            onValueChange = { lanUrl = it },
+                            label = { Text("LAN URL (optional)") },
+                            placeholder = { Text("http://192.168.1.10:9191") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Used when connected to a home SSID configured in Network > Home WiFi.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(

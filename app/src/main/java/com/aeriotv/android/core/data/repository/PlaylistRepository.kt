@@ -5,11 +5,15 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import android.content.Context
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrEpgEntry
 import com.aeriotv.android.core.network.PlaylistFetcher
 import com.aeriotv.android.core.parser.M3UParser
 import com.aeriotv.android.core.parser.XMLTVParser
+import com.aeriotv.android.core.preferences.AppPreferences
+import com.aeriotv.android.core.wifi.WifiSsidProbe
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
@@ -30,16 +34,34 @@ import javax.inject.Singleton
  */
 @Singleton
 class PlaylistRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val dao: PlaylistDao,
     private val fetcher: PlaylistFetcher,
     private val dispatcharrClient: DispatcharrClient,
+    private val appPreferences: AppPreferences,
 ) {
+
+    /**
+     * Returns [PlaylistEntity.lanUrlString] when the device is connected to
+     * one of the user's saved home SSIDs and the playlist has a LAN URL set;
+     * otherwise [PlaylistEntity.urlString]. Reads the SSID via WifiSsidProbe
+     * on every call so a network change since the last read is reflected
+     * immediately.
+     */
+    suspend fun effectiveBaseUrl(playlist: PlaylistEntity): String {
+        val lan = playlist.lanUrlString?.takeIf { it.isNotBlank() } ?: return playlist.urlString
+        val homeSsids = appPreferences.homeSsidsOnce()
+        if (homeSsids.isEmpty()) return playlist.urlString
+        val ssid = WifiSsidProbe.currentSsid(context) ?: return playlist.urlString
+        return if (ssid in homeSsids) lan else playlist.urlString
+    }
 
     /** Inputs for creating or updating a playlist row. */
     data class SaveRequest(
         val sourceType: SourceType,
         val name: String?,
         val url: String,
+        val lanUrl: String? = null,
         val epgUrl: String? = null,
         val apiKey: String? = null,
         val username: String? = null,
@@ -86,6 +108,7 @@ class PlaylistRepository @Inject constructor(
             id = existingId ?: UUID.randomUUID().toString(),
             name = request.name?.takeIf { it.isNotBlank() } ?: deriveName(normalisedBase),
             urlString = normalisedBase,
+            lanUrlString = request.lanUrl?.trimEnd('/')?.takeIf { it.isNotBlank() },
             epgUrl = request.epgUrl?.takeIf { it.isNotBlank() },
             sourceType = sourceType.name,
             apiKey = resolvedApiKey?.takeIf { it.isNotBlank() },
@@ -113,7 +136,7 @@ class PlaylistRepository @Inject constructor(
         val sourceType = playlist.resolvedSourceType()
         val channels = fetchChannelsFor(
             sourceType = sourceType,
-            base = playlist.urlString,
+            base = effectiveBaseUrl(playlist),
             userEpgUrl = playlist.epgUrl,
             apiKey = playlist.apiKey,
         )
@@ -128,6 +151,7 @@ class PlaylistRepository @Inject constructor(
 
     suspend fun loadEpg(playlist: PlaylistEntity): Result<List<EPGProgramme>> = runCatching {
         val sourceType = playlist.resolvedSourceType()
+        val base = effectiveBaseUrl(playlist)
         val programmes = when (sourceType) {
             SourceType.M3uUrl -> {
                 val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
@@ -137,7 +161,7 @@ class PlaylistRepository @Inject constructor(
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
                 val key = playlist.apiKey?.takeIf { it.isNotBlank() }
                     ?: return@runCatching emptyList()
-                dispatcharrClient.getEpgGrid(playlist.urlString, key)
+                dispatcharrClient.getEpgGrid(base, key)
                     .toProgrammes()
             }
             SourceType.XtreamCodes -> return@runCatching emptyList()
@@ -163,7 +187,7 @@ class PlaylistRepository @Inject constructor(
             ?: throw IllegalStateException("Playlist $playlistId vanished after switch")
         val channels = fetchChannelsFor(
             sourceType = entity.resolvedSourceType(),
-            base = entity.urlString,
+            base = effectiveBaseUrl(entity),
             userEpgUrl = entity.epgUrl,
             apiKey = entity.apiKey,
         )

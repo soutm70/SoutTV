@@ -318,6 +318,7 @@ class PlaylistViewModel @Inject constructor(
     fun saveEdits(
         name: String,
         url: String,
+        lanUrl: String?,
         epgUrl: String?,
         apiKey: String?,
         username: String?,
@@ -332,6 +333,7 @@ class PlaylistViewModel @Inject constructor(
                 sourceType = sourceType,
                 name = name.ifBlank { null },
                 url = url.trim(),
+                lanUrl = lanUrl?.trim()?.ifBlank { null },
                 epgUrl = epgUrl?.trim()?.ifBlank { null },
                 apiKey = apiKey?.trim()?.ifBlank { null },
                 username = username?.trim()?.ifBlank { null },

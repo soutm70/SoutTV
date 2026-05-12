@@ -43,6 +43,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setHiddenGroups(groups) }
     }
 
+    val homeSsids: Flow<Set<String>> = prefs.homeSsids
+    fun setHomeSsids(ssids: Set<String>) {
+        viewModelScope.launch { prefs.setHomeSsids(ssids) }
+    }
+
     // App Behaviors
     val skipLoadingScreen: Flow<Boolean> = prefs.skipLoadingScreen
     fun setSkipLoadingScreen(value: Boolean) {
