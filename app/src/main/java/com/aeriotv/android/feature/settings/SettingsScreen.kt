@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.PlayCircle
@@ -369,11 +369,11 @@ private fun PlaylistRow(
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Active marker — filled cyan check on the active row, empty
-            // ring on the rest. iOS uses the same shape (SettingsView footer
-            // "Tap ○ to set the active playlist").
+            // Radio-button active marker — filled cyan dot inside a ring on
+            // the active row, empty ring on the rest. Matches the iOS
+            // SettingsView footer hint "Tap ○ to set the active playlist".
             Icon(
-                imageVector = if (isActive) Icons.Filled.Check else Icons.Outlined.RadioButtonUnchecked,
+                imageVector = if (isActive) Icons.Filled.RadioButtonChecked else Icons.Outlined.RadioButtonUnchecked,
                 contentDescription = if (isActive) "Active" else "Set active",
                 tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),
