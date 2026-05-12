@@ -182,7 +182,6 @@ fun AerioTVNavHost(
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
                 val channelId = Uri.decode(entry.arguments?.getString("channelId").orEmpty())
-                val channel = state.channels.firstOrNull { it.id == channelId }
                 val headers = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
                     val pl = state.playlist
                     val key = pl?.apiKey?.takeIf { it.isNotBlank() }
@@ -195,13 +194,13 @@ fun AerioTVNavHost(
                         )
                     } else emptyMap()
                 }
-                val programmes = channel?.let { state.epgByChannel[it.tvgID].orEmpty() } ?: emptyList()
+                val playableChannels = state.channels.filter { it.url.isNotBlank() }
                 PlayerScreen(
-                    channel = channel,
-                    streamUrl = channel?.url.orEmpty(),
+                    channels = playableChannels,
+                    initialChannelId = channelId,
                     isLive = true,
                     httpHeaders = headers,
-                    programmes = programmes,
+                    epgByChannel = state.epgByChannel,
                     onClose = { navController.popBackStack() },
                 )
             }

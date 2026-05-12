@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,11 +13,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aeriotv.android.core.data.EPGProgramme
@@ -29,23 +33,42 @@ import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.delay
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val TAG = "PlayerScreen"
 private const val AUTO_HIDE_MS = 4_000L
+private const val SWIPE_THRESHOLD_PX = 120f
 
+/**
+ * Live-stream player screen. Hosts the MPV view + chrome overlay. Tap toggles
+ * chrome. While chrome is visible, vertical swipe flips to the next/previous
+ * channel without leaving the screen, mirroring iOS PlayerView.swift line 686
+ * (`appleTVChannelFlip`).
+ */
 @Composable
 fun PlayerScreen(
-    channel: M3UChannel?,
-    streamUrl: String,
+    channels: List<M3UChannel>,
+    initialChannelId: String,
     isLive: Boolean = true,
     httpHeaders: Map<String, String> = emptyMap(),
-    programmes: List<EPGProgramme> = emptyList(),
+    epgByChannel: Map<String, List<EPGProgramme>> = emptyMap(),
     onClose: () -> Unit = {},
 ) {
     val context = LocalContext.current
 
-    // Surface state — overlay visibility + ad-hoc menu hosts.
+    // Channel-flip state. The MPV view stays alive across flips; only the
+    // current channel index changes and we call playFile again with the new URL.
+    val initialIndex = remember(channels, initialChannelId) {
+        channels.indexOfFirst { it.id == initialChannelId }.coerceAtLeast(0)
+    }
+    var currentIndex by remember(channels) { mutableIntStateOf(initialIndex) }
+    val currentChannel = channels.getOrNull(currentIndex)
+    val nowProgramme by remember(epgByChannel, currentChannel) {
+        derivedStateOf { currentChannel?.let { epgByChannel[it.tvgID]?.nowPlaying() } }
+    }
+
+    // Chrome + ad-hoc sub-modal state.
     var chromeVisible by remember { mutableStateOf(true) }
     var audioOnly by remember { mutableStateOf(false) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
@@ -56,10 +79,9 @@ fun PlayerScreen(
     var sleepEndsAt by remember { mutableStateOf<Long?>(null) }
     var sleepRemainingMillis by remember { mutableStateOf<Long?>(null) }
 
-    // MPV handle the overlay reads from to pull property snapshots on demand.
     var mpvView by remember { mutableStateOf<MPVPlayerView?>(null) }
 
-    val nowProgramme = remember(programmes) { programmes.nowPlaying() }
+    val streamUrl = currentChannel?.url.orEmpty()
 
     Box(
         modifier = Modifier
@@ -115,7 +137,7 @@ fun PlayerScreen(
                     }
                 })
 
-                Log.i(TAG, "Loading stream: $streamUrl")
+                Log.i(TAG, "Loading initial stream: $streamUrl")
                 if (streamUrl.isNotBlank()) view.playFile(streamUrl)
                 mpvView = view
                 view
@@ -127,19 +149,52 @@ fun PlayerScreen(
             },
         )
 
-        // Transparent tap-target above the video to toggle chrome. MPV draws on
-        // a SurfaceView under this Box so the clickable doesn't fight focus.
+        // Channel-flip side effect — when currentIndex changes (e.g. via swipe),
+        // hand the new URL to the live MPV instance. Keeping the instance alive
+        // avoids the multi-second native-init cost of recreating it per channel.
+        LaunchedEffect(currentIndex) {
+            val view = mpvView
+            val url = currentChannel?.url
+            if (view != null && !url.isNullOrBlank() && currentIndex != initialIndex) {
+                Log.i(TAG, "Channel flip -> $url")
+                view.playFile(url)
+            }
+        }
+
+        // Transparent tap-target above the video to toggle chrome. Vertical drag
+        // on the same layer (while chrome is visible) flips to next/prev channel.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                ) { chromeVisible = !chromeVisible },
+                ) { chromeVisible = !chromeVisible }
+                .pointerInput(channels.size, chromeVisible) {
+                    if (!chromeVisible || channels.size < 2) return@pointerInput
+                    var totalDy = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { totalDy = 0f },
+                        onDragEnd = {
+                            val abs = abs(totalDy)
+                            if (abs > SWIPE_THRESHOLD_PX) {
+                                val direction = if (totalDy < 0f) +1 else -1
+                                val next = (currentIndex + direction)
+                                    .coerceIn(0, channels.lastIndex)
+                                if (next != currentIndex) {
+                                    currentIndex = next
+                                    chromeVisible = true
+                                }
+                            }
+                            totalDy = 0f
+                        },
+                        onVerticalDrag = { _, dy -> totalDy += dy },
+                    )
+                },
         )
 
         PlayerChromeOverlay(
-            channel = channel,
+            channel = currentChannel,
             nowProgramme = nowProgramme,
             chromeVisible = chromeVisible,
             onClose = onClose,
@@ -178,8 +233,6 @@ fun PlayerScreen(
         )
     }
 
-    // Auto-hide chrome after 4s of stillness. The user tapping the video resets
-    // it via the `chromeVisible = !chromeVisible` toggle above.
     LaunchedEffect(chromeVisible) {
         if (chromeVisible) {
             delay(AUTO_HIDE_MS)
@@ -187,7 +240,6 @@ fun PlayerScreen(
         }
     }
 
-    // Sleep timer tick: every second compute remaining and fire onClose when due.
     LaunchedEffect(sleepEndsAt) {
         val target = sleepEndsAt
         if (target == null) {
@@ -240,11 +292,6 @@ private data class SubtitlesState(
     val tracks: List<SubtitleTrack>,
     val currentSid: Int?,
 )
-
-// ──────────────────────────────────────────────────────────────────────────
-// MPV property helpers. Pulled out as MPVPlayerView extensions so they live
-// alongside the player and are unit-test-able.
-// ──────────────────────────────────────────────────────────────────────────
 
 private fun MPVPlayerView.captureStreamInfo(): StreamInfoSnapshot {
     val m = mpv
@@ -331,6 +378,5 @@ private fun MPVPlayerView.readCurrentSid(): Int? {
     return raw.toIntOrNull()
 }
 
-private fun String?.orEmpty(): String = this ?: ""
 private fun String?.orZero(): String = if (this.isNullOrBlank()) "" else this
 private fun Double.roundToOneDecimal(): String = String.format(Locale.US, "%.1f", this)

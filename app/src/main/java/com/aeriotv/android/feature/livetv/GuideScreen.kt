@@ -1,8 +1,11 @@
 package com.aeriotv.android.feature.livetv
 
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -45,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,6 +103,7 @@ fun GuideScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
+    var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
 
     // Tick "now" forward every 30s so the indicator + currently-airing tinting stay
     // accurate without forcing the whole tree to recompose on every frame.
@@ -259,6 +266,9 @@ fun GuideScreen(
                     onProgrammeClick = { programme ->
                         programInfoTarget = programme.toInfoTarget(channel.name)
                     },
+                    onProgrammeRecord = { programme ->
+                        recordTarget = programme.toInfoTarget(channel.name)
+                    },
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
             }
@@ -271,8 +281,15 @@ fun GuideScreen(
             onDismiss = { programInfoTarget = null },
         )
     }
+    recordTarget?.let { target ->
+        RecordProgramSheet(
+            target = target,
+            onDismiss = { recordTarget = null },
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelGuideRow(
     channel: M3UChannel,
@@ -283,20 +300,28 @@ private fun ChannelGuideRow(
     horizontalScrollState: androidx.compose.foundation.ScrollState,
     onChannelClick: () -> Unit,
     onProgrammeClick: (EPGProgramme) -> Unit,
+    onProgrammeRecord: (EPGProgramme) -> Unit,
 ) {
+    val context = LocalContext.current
+    var railMenuOpen by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(GuideMetrics.ROW_HEIGHT),
     ) {
-        // Sticky-left channel rail. Tappable to play the channel (matches iOS
-        // tap-channel-name shortcut).
+        // Sticky-left channel rail. Tap plays the channel; long-press opens the
+        // favorites toggle. Mirrors iOS EPGGuideView channel-rail .contextMenu
+        // (EPGGuideView.swift:2823).
         Row(
             modifier = Modifier
                 .width(GuideMetrics.RAIL_WIDTH)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
-                .clickable(onClick = onChannelClick)
+                .combinedClickable(
+                    onClick = onChannelClick,
+                    onLongClick = { railMenuOpen = true },
+                )
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -339,6 +364,23 @@ private fun ChannelGuideRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            DropdownMenu(
+                expanded = railMenuOpen,
+                onDismissRequest = { railMenuOpen = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Add to Favorites") },
+                    onClick = {
+                        railMenuOpen = false
+                        Toast.makeText(
+                            context,
+                            "Favorites store lands with the conditional-tab work.",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                )
+            }
         }
 
         // Programme strip - horizontally scrolled with the header.
@@ -364,10 +406,12 @@ private fun ChannelGuideRow(
                     val isLive = programme.startMillis <= nowMillis && programme.endMillis > nowMillis
                     ProgrammeCell(
                         programme = programme,
+                        channelName = channel.name,
                         widthDp = wDp,
                         isLive = isLive,
                         modifier = Modifier.offset(x = xDp),
                         onClick = { onProgrammeClick(programme) },
+                        onRecord = { onProgrammeRecord(programme) },
                     )
                 }
                 // "Now" indicator - 2dp cyan line, only drawn when "now" falls inside the window.
@@ -386,14 +430,19 @@ private fun ChannelGuideRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProgrammeCell(
     programme: EPGProgramme,
+    channelName: String,
     widthDp: androidx.compose.ui.unit.Dp,
     isLive: Boolean,
     modifier: Modifier,
     onClick: () -> Unit,
+    onRecord: () -> Unit,
 ) {
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
     val bg = if (isLive)
         MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
     else
@@ -414,10 +463,47 @@ private fun ProgrammeCell(
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
             .border(0.5.dp, borderColor, RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { menuOpen = true },
+            )
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.Top,
     ) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            DropdownMenuItem(
+                text = { Text("Program Info") },
+                onClick = {
+                    menuOpen = false
+                    onClick()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Set Reminder") },
+                onClick = {
+                    menuOpen = false
+                    Toast.makeText(
+                        context,
+                        "Reminders land in a future phase.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+            )
+            if (programme.endMillis > System.currentTimeMillis()) {
+                val recordLabel = if (isLive) "Record from Now" else "Record"
+                DropdownMenuItem(
+                    text = { Text(recordLabel) },
+                    onClick = {
+                        menuOpen = false
+                        onRecord()
+                    },
+                )
+            }
+        }
         Text(
             text = programme.title.ifBlank { "—" },
             style = MaterialTheme.typography.labelMedium,

@@ -564,6 +564,7 @@ private fun UpcomingProgrammeRow(
     onTap: () -> Unit,
     onShowRecord: () -> Unit,
 ) {
+    val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
 
     Box {
@@ -613,6 +614,17 @@ private fun UpcomingProgrammeRow(
                 onClick = {
                     menuOpen = false
                     onTap()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Set Reminder") },
+                onClick = {
+                    menuOpen = false
+                    Toast.makeText(
+                        context,
+                        "Reminders land in a future phase.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 },
             )
             DropdownMenuItem(
