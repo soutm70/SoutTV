@@ -134,6 +134,14 @@ fun DvrTabContent(
             items(items = state.visible, key = { it.id }) { rec ->
                 RecordingRow(rec)
             }
+            if (state.visible.isEmpty()) {
+                item {
+                    EmptyState(
+                        title = "Nothing here yet",
+                        body = "Schedule a recording from the TV guide or hit Record from Now in the player.",
+                    )
+                }
+            }
         }
     }
 }
@@ -186,6 +194,7 @@ private fun EmptyState(title: String, body: String) {
 
 @Composable
 private fun RecordingRow(rec: DvrViewModel.Recording) {
+    val sourceTag = if (rec.source == DvrViewModel.Source.Local) "Local" else "Server"
     val statusColor = when (rec.status) {
         DvrViewModel.Recording.Status.Recording -> Color(0xFFFF4757)
         DvrViewModel.Recording.Status.Completed -> MaterialTheme.colorScheme.primary
@@ -244,6 +253,11 @@ private fun RecordingRow(rec: DvrViewModel.Recording) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Text(
+                text = sourceTag,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(Modifier.size(8.dp))
         Text(

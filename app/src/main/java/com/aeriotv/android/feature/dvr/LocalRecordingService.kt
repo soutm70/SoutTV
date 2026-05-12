@@ -14,6 +14,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.aeriotv.android.MainActivity
 import com.aeriotv.android.R
+import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
+import com.aeriotv.android.core.data.db.entity.LocalRecordingEntity
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import java.text.SimpleDateFormat
@@ -55,8 +57,11 @@ import java.util.concurrent.TimeUnit
 @AndroidEntryPoint
 class LocalRecordingService : Service() {
 
+    @Inject lateinit var localRecordingDao: LocalRecordingDao
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recordingJob: Job? = null
+    private var currentChannelName: String = ""
 
     private val okHttp: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -74,8 +79,10 @@ class LocalRecordingService : Service() {
             ACTION_START -> {
                 val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
+                val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
                 val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
                 val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 60 * 60 * 1000L)
+                currentChannelName = channelName
                 startRecording(streamUrl, title, apiKey, durationMs)
             }
             ACTION_STOP -> {
@@ -99,8 +106,10 @@ class LocalRecordingService : Service() {
             val safeTitle = title.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40)
             val outDir = File(getExternalFilesDir(null), "Recordings").apply { mkdirs() }
             val outFile = File(outDir, "$ts-$safeTitle.ts")
-            val deadline = System.currentTimeMillis() + durationMs
+            val startedAt = System.currentTimeMillis()
+            val deadline = startedAt + durationMs
             Log.i(TAG, "Recording -> $outFile until ${Date(deadline)}")
+            var status = "failed"
             runCatching {
                 val request = Request.Builder()
                     .url(streamUrl)
@@ -124,9 +133,27 @@ class LocalRecordingService : Service() {
                         }
                     }
                 }
-                Log.i(TAG, "Recording complete: ${outFile.length()} bytes")
+                status = if (System.currentTimeMillis() >= deadline) "completed" else "stopped"
+                Log.i(TAG, "Recording $status: ${outFile.length()} bytes")
             }.onFailure { t ->
                 Log.w(TAG, "Recording aborted", t)
+            }
+            // Persist the row so the DVR tab can surface it. Skip persistence
+            // if no bytes were written (file would mislead the user).
+            if (outFile.exists() && outFile.length() > 0L) {
+                runCatching {
+                    localRecordingDao.insert(
+                        LocalRecordingEntity(
+                            channelName = currentChannelName.ifBlank { title },
+                            title = title,
+                            filePath = outFile.absolutePath,
+                            startedAt = startedAt,
+                            endedAt = System.currentTimeMillis(),
+                            byteSize = outFile.length(),
+                            status = status,
+                        ),
+                    )
+                }.onFailure { Log.w(TAG, "Couldn't persist local recording row", it) }
             }
             stopSelf()
         }
@@ -223,6 +250,7 @@ class LocalRecordingService : Service() {
         const val ACTION_STOP = "com.aeriotv.android.RECORDING_STOP"
         const val EXTRA_STREAM_URL = "streamUrl"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_CHANNEL_NAME = "channelName"
         const val EXTRA_API_KEY = "apiKey"
         const val EXTRA_DURATION_MS = "durationMs"
 
@@ -230,6 +258,7 @@ class LocalRecordingService : Service() {
             context: Context,
             streamUrl: String,
             title: String,
+            channelName: String,
             apiKey: String,
             durationMs: Long,
         ) {
@@ -237,6 +266,7 @@ class LocalRecordingService : Service() {
                 action = ACTION_START
                 putExtra(EXTRA_STREAM_URL, streamUrl)
                 putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
                 putExtra(EXTRA_API_KEY, apiKey)
                 putExtra(EXTRA_DURATION_MS, durationMs)
             }

@@ -4,6 +4,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
+import com.aeriotv.android.core.data.db.entity.LocalRecordingEntity
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrRecording
@@ -31,13 +33,15 @@ import kotlinx.coroutines.launch
 class DvrViewModel @Inject constructor(
     private val playlistRepository: PlaylistRepository,
     private val dispatcharrClient: DispatcharrClient,
+    private val localRecordingDao: LocalRecordingDao,
 ) : ViewModel() {
 
     enum class Filter { Scheduled, Recording, Completed }
+    enum class Source { Server, Local }
 
     data class Recording(
-        val id: Int,
-        val channelId: Int?,
+        val id: String,
+        val source: Source,
         val title: String,
         val description: String,
         val startMillis: Long,
@@ -79,6 +83,16 @@ class DvrViewModel @Inject constructor(
 
     init {
         refresh()
+        viewModelScope.launch {
+            localRecordingDao.observeAll().collect { rows ->
+                val mapped = rows.map { it.toRecording() }
+                _state.update { st ->
+                    val merged = (st.recordings.filter { it.source == Source.Server } + mapped)
+                        .sortedBy { it.startMillis }
+                    st.copy(recordings = merged)
+                }
+            }
+        }
     }
 
     fun setFilter(filter: Filter) {
@@ -100,10 +114,12 @@ class DvrViewModel @Inject constructor(
                 dispatcharrClient.listRecordings(playlist.urlString, playlist.apiKey!!)
             }.fold(
                 onSuccess = { remote ->
-                    _state.update {
-                        it.copy(
+                    _state.update { st ->
+                        val server = remote.map { it.toRecording() }
+                        val local = st.recordings.filter { it.source == Source.Local }
+                        st.copy(
                             isLoading = false,
-                            recordings = remote.map { it.toRecording() }.sortedBy { it.startMillis },
+                            recordings = (server + local).sortedBy { it.startMillis },
                             error = null,
                         )
                     }
@@ -168,14 +184,33 @@ private fun DispatcharrRecording.toRecording(): DvrViewModel.Recording {
         else -> DvrViewModel.Recording.Status.Unknown
     }
     return DvrViewModel.Recording(
-        id = id,
-        channelId = channel,
+        id = "server-$id",
+        source = DvrViewModel.Source.Server,
         title = title.ifBlank { "Recording $id" },
         description = description,
         startMillis = start,
         endMillis = end,
         status = status,
         fileSizeBytes = fileSize ?: 0L,
+    )
+}
+
+private fun LocalRecordingEntity.toRecording(): DvrViewModel.Recording {
+    val status = when (this.status.lowercase()) {
+        "completed" -> DvrViewModel.Recording.Status.Completed
+        "stopped" -> DvrViewModel.Recording.Status.Stopped
+        "failed", "error" -> DvrViewModel.Recording.Status.Failed
+        else -> DvrViewModel.Recording.Status.Unknown
+    }
+    return DvrViewModel.Recording(
+        id = "local-$id",
+        source = DvrViewModel.Source.Local,
+        title = title.ifBlank { channelName },
+        description = "",
+        startMillis = startedAt,
+        endMillis = endedAt,
+        status = status,
+        fileSizeBytes = byteSize,
     )
 }
 

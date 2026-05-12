@@ -144,6 +144,7 @@ fun RecordProgramSheet(
                                     context = context,
                                     streamUrl = streamUrl,
                                     title = target.title.ifBlank { target.channelName },
+                                    channelName = target.channelName,
                                     apiKey = apiKey.orEmpty(),
                                     durationMs = durationMs.coerceAtLeast(60_000L),
                                 )

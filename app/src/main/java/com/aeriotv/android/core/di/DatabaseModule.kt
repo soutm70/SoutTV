@@ -3,6 +3,7 @@ package com.aeriotv.android.core.di
 import android.content.Context
 import androidx.room.Room
 import com.aeriotv.android.core.data.db.AerioDatabase
+import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.dao.WatchProgressDao
 import dagger.Module
@@ -29,4 +30,7 @@ object DatabaseModule {
 
     @Provides
     fun provideWatchProgressDao(db: AerioDatabase): WatchProgressDao = db.watchProgressDao()
+
+    @Provides
+    fun provideLocalRecordingDao(db: AerioDatabase): LocalRecordingDao = db.localRecordingDao()
 }
