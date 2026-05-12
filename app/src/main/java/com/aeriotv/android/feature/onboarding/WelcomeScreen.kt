@@ -1,7 +1,9 @@
 package com.aeriotv.android.feature.onboarding
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,21 +27,24 @@ import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.Wifi
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.R
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
@@ -74,23 +79,29 @@ private fun WelcomeSingleColumn(
     onConnectServer: () -> Unit,
     onSkip: () -> Unit,
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        Spacer(Modifier.height(36.dp))
-        BrandBlock()
-        Spacer(Modifier.height(28.dp))
-        SupportedTypesGroup(alignStart = false)
-        Spacer(Modifier.height(20.dp))
-        InfoCardsGroup()
-        Spacer(Modifier.height(28.dp))
-        ActionButtons(onConnectServer = onConnectServer, onSkip = onSkip)
-        Spacer(Modifier.height(24.dp))
+        WelcomeAmbientOrbs(modifier = Modifier.fillMaxSize())
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(36.dp))
+            BrandBlock()
+            Spacer(Modifier.height(28.dp))
+            SupportedTypesGroup(alignStart = false)
+            Spacer(Modifier.height(20.dp))
+            InfoCardsGroup()
+            Spacer(Modifier.height(28.dp))
+            ActionButtons(onConnectServer = onConnectServer, onSkip = onSkip)
+            Spacer(Modifier.height(24.dp))
+        }
     }
 }
 
@@ -99,10 +110,24 @@ private fun WelcomeTwoColumn(
     onConnectServer: () -> Unit,
     onSkip: () -> Unit,
 ) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        WelcomeAmbientOrbs(modifier = Modifier.fillMaxSize())
+        WelcomeTwoColumnRow(onConnectServer, onSkip)
+    }
+}
+
+@Composable
+private fun WelcomeTwoColumnRow(
+    onConnectServer: () -> Unit,
+    onSkip: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 48.dp, vertical = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(40.dp),
@@ -158,12 +183,6 @@ private fun BrandBlock(alignStart: Boolean = false) {
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = "Phone, tablet, & Google TV",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -198,27 +217,40 @@ private fun ActionButtons(
     onConnectServer: () -> Unit,
     onSkip: () -> Unit,
 ) {
+    val gradient = accentBrush()
+    val shape = RoundedCornerShape(28.dp)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Button(
-            onClick = onConnectServer,
+        // iOS WelcomeView line 174: `.background(LinearGradient.accentGradient)`.
+        // Material3 Button can't host a Brush container, so the CTA is a
+        // gradient-backed Box with clickable + same Material ripple behavior.
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp),
+                .height(54.dp)
+                .background(brush = gradient, shape = shape)
+                .clickable(onClick = onConnectServer),
+            contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Hub,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.size(10.dp))
-            Text(
-                text = "Connect a Server",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Hub,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = "Connect a Server",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onSkip) {
@@ -233,19 +265,125 @@ private fun ActionButtons(
 
 @Composable
 private fun BrandLogo() {
-    // Renders the iOS AerioLogo PNG (signal-wave glyph baked into the navy
-    // rounded-square). The iOS corner radius is already part of the bitmap,
-    // so we don't apply our own clip — that would double-round and leave a
-    // visible navy ring outside the iOS rounding.
-    Image(
-        painter = painterResource(id = R.drawable.aerio_logo),
-        contentDescription = null,
-        modifier = Modifier.size(96.dp),
-    )
+    // Mirrors iOS WelcomeView's `.shadow(color: aerioCyan @ 0.45, radius: 20, y: 8)`
+    // under the logo. Compose's shadow modifier only renders elevation drop-shadows,
+    // not colored glows, so we draw a soft radial gradient halo behind the logo
+    // bitmap instead — same visual effect, API-agnostic.
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier.size(140.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(140.dp)) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0.0f to accent.copy(alpha = 0.55f),
+                        0.35f to accent.copy(alpha = 0.28f),
+                        0.7f to accent.copy(alpha = 0.06f),
+                        1.0f to Color.Transparent,
+                    ),
+                    center = Offset(size.width / 2f, size.height / 2f + 8.dp.toPx()),
+                    radius = size.minDimension / 2f,
+                ),
+                center = Offset(size.width / 2f, size.height / 2f + 8.dp.toPx()),
+                radius = size.minDimension / 2f,
+            )
+        }
+        Image(
+            painter = painterResource(id = R.drawable.aerio_logo),
+            contentDescription = null,
+            modifier = Modifier.size(96.dp),
+        )
+    }
+}
+
+/**
+ * Two soft, blurred accent orbs in opposite corners — mirrors iOS WelcomeView
+ * lines 22-35 where SwiftUI uses `Circle().blur(radius: 80)` on top of the
+ * navy background. Compose's Modifier.blur is API 31+, so the same look here
+ * comes from radial gradients with carefully tuned color stops.
+ */
+@Composable
+private fun WelcomeAmbientOrbs(modifier: Modifier = Modifier) {
+    val primary = MaterialTheme.colorScheme.primary
+    val secondary = MaterialTheme.colorScheme.secondary
+    Canvas(modifier = modifier) {
+        // Top-left orb (cyan)
+        val tlCenter = Offset(-50.dp.toPx(), -30.dp.toPx())
+        val tlRadius = 360.dp.toPx()
+        drawCircle(
+            brush = Brush.radialGradient(
+                colorStops = arrayOf(
+                    0.0f to primary.copy(alpha = 0.18f),
+                    0.4f to primary.copy(alpha = 0.10f),
+                    0.75f to primary.copy(alpha = 0.03f),
+                    1.0f to Color.Transparent,
+                ),
+                center = tlCenter,
+                radius = tlRadius,
+            ),
+            center = tlCenter,
+            radius = tlRadius,
+        )
+        // Bottom-right orb (teal)
+        val brCenter = Offset(size.width + 50.dp.toPx(), size.height - 80.dp.toPx())
+        val brRadius = 320.dp.toPx()
+        drawCircle(
+            brush = Brush.radialGradient(
+                colorStops = arrayOf(
+                    0.0f to secondary.copy(alpha = 0.16f),
+                    0.4f to secondary.copy(alpha = 0.08f),
+                    0.75f to secondary.copy(alpha = 0.02f),
+                    1.0f to Color.Transparent,
+                ),
+                center = brCenter,
+                radius = brRadius,
+            ),
+            center = brCenter,
+            radius = brRadius,
+        )
+    }
+}
+
+/** Linear cyan→teal gradient matching iOS LinearGradient.accentGradient
+ * (top-leading to bottom-trailing). */
+@Composable
+private fun accentBrush(): Brush = Brush.linearGradient(
+    colors = listOf(
+        MaterialTheme.colorScheme.primary,
+        MaterialTheme.colorScheme.secondary,
+    ),
+)
+
+/** Icon filled with a Brush instead of a solid tint — mirrors iOS FeaturePill's
+ * `.foregroundStyle(LinearGradient.accentGradient)` on the SF Symbol. */
+@Composable
+private fun GradientIcon(
+    imageVector: ImageVector,
+    brush: Brush,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen),
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    drawContent()
+                    drawRect(brush = brush, blendMode = BlendMode.SrcIn)
+                },
+        )
+    }
 }
 
 @Composable
 private fun SupportedTypeRow(icon: ImageVector, label: String, alignStart: Boolean = false) {
+    val gradient = accentBrush()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -256,10 +394,9 @@ private fun SupportedTypeRow(icon: ImageVector, label: String, alignStart: Boole
             if (alignStart) Alignment.Start else Alignment.CenterHorizontally,
         ),
     ) {
-        Icon(
+        GradientIcon(
             imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            brush = gradient,
             modifier = Modifier.size(18.dp),
         )
         Text(
