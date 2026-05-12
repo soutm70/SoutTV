@@ -83,6 +83,12 @@ fun MultiviewScreen(
     // Long-press a tile -> relocate mode. The next tap swaps positions with
     // the relocating tile. Tap the same tile again (or the close X) to cancel.
     var relocatingIndex by remember { mutableStateOf<Int?>(null) }
+    // Double-tap a tile -> fullscreen that single tile (other tiles hidden +
+    // their MPV instances paused). Double-tap the same tile or the close X
+    // to exit. Mirrors iOS MultiviewStore.fullscreenTileID --
+    // architecture spec section F: "Full-screen mode hides all but
+    // fullscreenTileID."
+    var fullscreenIndex by remember { mutableStateOf<Int?>(null) }
     // For the themeFading mode: track the last time audio focus changed so the
     // accent border can auto-hide after 5s. Resets when the user taps a new tile.
     var focusActivityAt by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -124,6 +130,7 @@ fun MultiviewScreen(
             tiles = selected,
             focusedIndex = focused,
             relocatingIndex = relocatingIndex,
+            fullscreenIndex = fullscreenIndex,
             httpHeaders = httpHeaders,
             cachingMs = bufferMillisFor(bufferSize),
             audioFocusStyle = audioFocusStyle,
@@ -143,24 +150,47 @@ fun MultiviewScreen(
                 }
             },
             onTileLongPress = { idx ->
+                // Long-press is a no-op in fullscreen mode (no other tiles
+                // to swap with). Exit fullscreen first if active.
+                if (fullscreenIndex != null) return@TileGrid
                 relocatingIndex = if (relocatingIndex == idx) null else idx
+            },
+            onTileDoubleTap = { idx ->
+                // Toggle fullscreen for this tile. Audio focus rides along
+                // so the fullscreened tile is the one playing sound.
+                fullscreenIndex = if (fullscreenIndex == idx) null else idx
+                if (fullscreenIndex != null) {
+                    storeHandle.setAudioFocus(idx)
+                    relocatingIndex = null
+                }
             },
         )
 
         if (chromeVisible) {
             CloseButton(onClose = {
-                if (relocatingIndex != null) relocatingIndex = null else onClose()
+                // Close X cascades through transient modes before fully
+                // exiting multiview: cancel relocate -> exit fullscreen ->
+                // exit multiview. Mirrors iOS Menu-button cascade.
+                when {
+                    relocatingIndex != null -> relocatingIndex = null
+                    fullscreenIndex != null -> fullscreenIndex = null
+                    else -> onClose()
+                }
             })
-            val countLabel = relocatingIndex?.let { "Tap a tile to swap" }
-                ?: "${selected.size} / ${storeHandle.maxTiles}"
+            val countLabel = when {
+                relocatingIndex != null -> "Tap a tile to swap"
+                fullscreenIndex != null -> "Double-tap to exit fullscreen"
+                else -> "${selected.size} / ${storeHandle.maxTiles}"
+            }
+            val labelHighlighted = relocatingIndex != null || fullscreenIndex != null
             Text(
                 text = countLabel,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (relocatingIndex != null)
+                color = if (labelHighlighted)
                     MaterialTheme.colorScheme.primary
                 else
                     Color.White.copy(alpha = 0.85f),
-                fontWeight = if (relocatingIndex != null) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (labelHighlighted) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
@@ -219,6 +249,7 @@ private fun TileGrid(
     tiles: List<M3UChannel>,
     focusedIndex: Int,
     relocatingIndex: Int?,
+    fullscreenIndex: Int?,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
     audioFocusStyle: String,
@@ -228,7 +259,37 @@ private fun TileGrid(
     focusFadedOut: Boolean,
     onTileTap: (Int) -> Unit,
     onTileLongPress: (Int) -> Unit,
+    onTileDoubleTap: (Int) -> Unit,
 ) {
+    // Fullscreen branch: render exactly the focused tile filling the whole
+    // viewport. We deliberately skip the grid recomposition path so the
+    // other tiles' MPV instances continue running in the background (audio
+    // muted via storeHandle) -- exiting fullscreen returns to them
+    // instantly. iOS does the same: fullscreenTileID just changes which
+    // tile is rendered, not which tiles are loaded.
+    fullscreenIndex?.let { idx ->
+        val ch = tiles.getOrNull(idx)
+        if (ch != null) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Tile(
+                    channel = ch,
+                    isAudioFocused = true,
+                    isRelocating = false,
+                    httpHeaders = httpHeaders,
+                    cachingMs = cachingMs,
+                    audioFocusStyle = audioFocusStyle,
+                    tileRounded = false,
+                    chromeVisible = chromeVisible,
+                    focusFadedOut = focusFadedOut,
+                    onTap = { onTileTap(idx) },
+                    onLongPress = { onTileLongPress(idx) },
+                    onDoubleTap = { onTileDoubleTap(idx) },
+                )
+            }
+            return
+        }
+    }
+
     val (rows, cols) = gridShapeFor(tiles.size)
     val pad = if (tilePadding) 4.dp else 0.dp
     Column(modifier = Modifier.fillMaxSize()) {
@@ -260,6 +321,7 @@ private fun TileGrid(
                                 focusFadedOut = focusFadedOut,
                                 onTap = { onTileTap(index) },
                                 onLongPress = { onTileLongPress(index) },
+                                onDoubleTap = { onTileDoubleTap(index) },
                             )
                         }
                     }
@@ -283,6 +345,7 @@ private fun Tile(
     focusFadedOut: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
+    onDoubleTap: () -> Unit,
 ) {
     val shape = if (tileRounded) RoundedCornerShape(8.dp) else RoundedCornerShape(0.dp)
     // Resolve the focus indicator for this tile. iOS canon:
@@ -312,6 +375,7 @@ private fun Tile(
             .combinedClickable(
                 onClick = onTap,
                 onLongClick = onLongPress,
+                onDoubleClick = onDoubleTap,
             ),
     ) {
         // Tracks the URL the held MPV instance is currently playing. Lets
