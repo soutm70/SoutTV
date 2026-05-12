@@ -58,22 +58,57 @@ class DriveSyncManager @Inject constructor(
     private val _status: MutableStateFlow<Status> = MutableStateFlow(Status.SignedOut)
     val status: StateFlow<Status> = _status.asStateFlow()
 
-    suspend fun requestAuthorization(): String? {
+    /**
+     * Step 1 of the two-step flow: open the Sign-in-with-Google sheet via
+     * Credential Manager. Returns the user's email on success so the caller
+     * can persist it; the resulting identity has no Drive scope yet, so the
+     * UI should call [requestDriveScope] next to obtain the bearer token.
+     */
+    suspend fun signInWithGoogle(activity: android.app.Activity): String? {
         if (!SyncConfig.isConfigured()) {
             _status.value = Status.MissingConfig
             return null
         }
-        val result = runCatching { auth.requestAuthorization() }.getOrNull()
-        val token = result?.accessToken
-        _status.value = if (token != null) Status.SignedIn(token) else Status.SignedOut
-        return token
+        val result = runCatching { auth.signIn(activity) }.getOrNull() ?: return null
+        appPreferences.setSyncAccountEmail(result.email)
+        return result.email
     }
 
-    fun acceptToken(token: String?) {
+    /**
+     * Step 2: ask AuthorizationClient for the Drive AppData scope. Returns
+     *  - [Status.SignedIn] when the user has already granted the scope.
+     *  - [Status.NeedsConsent] when consent UI must be shown by the caller.
+     *
+     * The caller (SyncSettingsScreen) is responsible for launching the
+     * consent intent via an ActivityResultLauncher and feeding the result
+     * back through [acceptConsentResult].
+     */
+    suspend fun requestDriveScope(): RequestResult? {
+        if (!SyncConfig.isConfigured()) return null
+        val authResult = runCatching { auth.requestDriveAuthorization() }.getOrNull()
+            ?: return RequestResult.Failed
+        val token = authResult.accessToken
+        if (token != null) {
+            _status.value = Status.SignedIn(token)
+            return RequestResult.Authorized(token)
+        }
+        val pi = authResult.pendingIntent
+        return if (pi != null) {
+            RequestResult.NeedsConsent(pi.intentSender)
+        } else {
+            RequestResult.Failed
+        }
+    }
+
+    /** Consume the activity result intent from the consent flow. */
+    fun acceptConsentResult(data: android.content.Intent?) {
+        val token = auth.extractAccessToken(data)
         _status.value = if (token != null) Status.SignedIn(token) else Status.SignedOut
     }
 
-    fun signOut() {
+    suspend fun signOut() {
+        runCatching { auth.signOut() }
+        appPreferences.setSyncAccountEmail("")
         _status.value = Status.SignedOut
     }
 
@@ -299,6 +334,13 @@ class DriveSyncManager @Inject constructor(
         object SignedOut : Status
         object MissingConfig : Status
         data class SignedIn(val accessToken: String) : Status
+    }
+
+    /** Two outcomes from [requestDriveScope]: token in hand, or needs consent UI. */
+    sealed interface RequestResult {
+        data class Authorized(val accessToken: String) : RequestResult
+        data class NeedsConsent(val intentSender: android.content.IntentSender) : RequestResult
+        object Failed : RequestResult
     }
 
     companion object { private const val TAG = "DriveSyncManager" }

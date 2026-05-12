@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -7,6 +8,18 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
 }
+
+// Read the OAuth Web Client ID from local.properties (never checked in) so
+// Drive Sync can do a real Sign-in with Google flow without leaking the
+// project credentials into git. Each contributor pastes their own once.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val googleDriveWebClientId: String =
+    localProps.getProperty("GOOGLE_DRIVE_WEB_CLIENT_ID")
+        ?: System.getenv("GOOGLE_DRIVE_WEB_CLIENT_ID")
+        ?: ""
 
 android {
     namespace = "com.aeriotv.android"
@@ -22,6 +35,11 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
+        buildConfigField(
+            "String",
+            "GOOGLE_DRIVE_WEB_CLIENT_ID",
+            "\"$googleDriveWebClientId\"",
+        )
     }
 
     buildTypes {
@@ -101,6 +119,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
     implementation(libs.play.services.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.playservices)
+    implementation(libs.google.identity.googleid)
     implementation(libs.androidx.work.runtime.ktx)
 
     debugImplementation(libs.androidx.ui.tooling)

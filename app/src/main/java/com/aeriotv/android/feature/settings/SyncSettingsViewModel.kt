@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.settings
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.preferences.AppPreferences
@@ -13,10 +14,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Backs SyncSettingsScreen. Bridges the DataStore-backed toggles and timestamps
- * to DriveSyncManager's signed-in/out state, and serializes the two pushes
- * that "Sync Now" actually performs (push then pull, in that order so local
- * changes win on conflict by virtue of being remote-stamped after).
+ * Backs SyncSettingsScreen. Drives the two-step sign-in (Credential Manager
+ * identity → Drive scope authorization) and serializes the push-then-pull
+ * sync flow.
  */
 @HiltViewModel
 class SyncSettingsViewModel @Inject constructor(
@@ -41,15 +41,18 @@ class SyncSettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setSyncCategoryEnabled(category, value) }
     }
 
-    suspend fun connect() {
-        sync.requestAuthorization()
+    suspend fun signInWithGoogle(activity: Activity): String? =
+        sync.signInWithGoogle(activity)
+
+    suspend fun requestDriveScope(): DriveSyncManager.RequestResult? =
+        sync.requestDriveScope()
+
+    fun acceptConsentResult(data: android.content.Intent?) {
+        sync.acceptConsentResult(data)
     }
 
     fun signOut() {
-        viewModelScope.launch {
-            sync.signOut()
-            prefs.setSyncAccountEmail("")
-        }
+        viewModelScope.launch { sync.signOut() }
     }
 
     suspend fun clearRemote(): Boolean {

@@ -1,7 +1,13 @@
 package com.aeriotv.android.feature.settings
 
+import android.app.Activity
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aeriotv.android.core.pip.findActivity
+import com.aeriotv.android.core.sync.DriveSyncManager
 import com.aeriotv.android.core.sync.SyncCategory
 import com.aeriotv.android.core.sync.SyncConfig
 import kotlinx.coroutines.launch
@@ -54,11 +62,19 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * Settings > Sync sub-screen. Mirrors iOS Settings > iCloud Sync layout:
- * master toggle, account row, per-category toggles, manual Sync Now / Pull,
- * and a red Clear Drive Data link at the bottom. The "Connect Google Drive"
- * banner explains the OAuth config requirement when SyncConfig.WEB_CLIENT_ID
- * is blank — a build-time bring-up step the user has to do once per project.
+ * Settings > Sync sub-screen. Mirrors iOS Settings > iCloud Sync layout.
+ *
+ * Sign-in is a two-step flow:
+ *   1. Tap "Sign in with Google" → Credential Manager surfaces the
+ *      account picker → we get the user's email + GoogleId token.
+ *   2. We immediately call AuthorizationClient for the Drive AppData
+ *      scope. If the user has previously granted, we get an access
+ *      token directly. Otherwise we launch the consent IntentSender via
+ *      an ActivityResultLauncher and parse the result on return.
+ *
+ * After step 2 succeeds the per-category toggles + Sync Now / Clear
+ * unlock. The "missing OAuth config" red banner shows only when the
+ * BuildConfig.GOOGLE_DRIVE_WEB_CLIENT_ID field is empty.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +92,16 @@ fun SyncSettingsScreen(
     val configured = remember { SyncConfig.isConfigured() }
 
     var inFlight by remember { mutableStateOf(false) }
+
+    // Consent intent launcher for step 2 of sign-in. AuthorizationClient may
+    // return either an access token outright or a pendingIntent we have to
+    // launch; this catches the result of the latter path.
+    val consentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        viewModel.acceptConsentResult(result.data)
+        inFlight = false
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -102,59 +128,60 @@ fun SyncSettingsScreen(
                 item { ConfigBanner() }
             }
             item {
-                Section(header = "Drive Sync", footer = "Playlists, watch progress, reminders, app preferences and credentials sync via your Drive AppData folder. Files are scoped per-app and never appear in your main Drive UI.") {
+                Section(
+                    header = "Drive Sync",
+                    footer = "Playlists, watch progress, reminders, app preferences and credentials sync via your Drive AppData folder. Files are scoped per-app and never appear in your main Drive UI.",
+                ) {
+                    AccountRow(
+                        signedIn = statusObj is DriveSyncManager.Status.SignedIn,
+                        email = accountEmail,
+                        configured = configured,
+                        inFlight = inFlight,
+                        onSignIn = {
+                            val activity = context.findActivity() ?: return@AccountRow
+                            inFlight = true
+                            scope.launch {
+                                val email = viewModel.signInWithGoogle(activity)
+                                if (email == null) {
+                                    inFlight = false
+                                    Toast.makeText(context, "Sign-in cancelled or failed.", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                val driveResult = viewModel.requestDriveScope()
+                                when (driveResult) {
+                                    is DriveSyncManager.RequestResult.Authorized -> {
+                                        inFlight = false
+                                        Toast.makeText(context, "Signed in as $email", Toast.LENGTH_SHORT).show()
+                                    }
+                                    is DriveSyncManager.RequestResult.NeedsConsent -> {
+                                        consentLauncher.launch(
+                                            IntentSenderRequest.Builder(driveResult.intentSender).build(),
+                                        )
+                                        // inFlight cleared by the launcher callback.
+                                    }
+                                    DriveSyncManager.RequestResult.Failed,
+                                    null -> {
+                                        inFlight = false
+                                        Toast.makeText(context, "Drive authorization failed.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                        onSignOut = {
+                            viewModel.signOut()
+                            Toast.makeText(context, "Signed out of Drive.", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                     ToggleRow(
                         title = "Sync enabled",
-                        subtitle = if (statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn)
-                            "Signed in${if (accountEmail.isNotBlank()) " as $accountEmail" else ""}"
+                        subtitle = if (statusObj is DriveSyncManager.Status.SignedIn)
+                            "Auto-syncing the categories you've toggled below."
                         else
-                            "Not connected. Tap Connect Google Drive below.",
+                            "Sign in above, then enable sync to push and pull data.",
                         checked = masterEnabled,
                         onCheckedChange = viewModel::setMasterEnabled,
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn)
-                                    "Disconnect Google Drive" else "Connect Google Drive",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                text = if (statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn)
-                                    "Sign out of Drive on this device" else "Grant Drive AppData access",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Button(
-                            enabled = configured && !inFlight,
-                            onClick = {
-                                inFlight = true
-                                scope.launch {
-                                    val signedIn = statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn
-                                    if (signedIn) {
-                                        viewModel.signOut()
-                                    } else {
-                                        viewModel.connect()
-                                    }
-                                    inFlight = false
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        ) {
-                            Text(if (statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn) "Disconnect" else "Connect")
-                        }
-                    }
                 }
             }
 
@@ -176,10 +203,13 @@ fun SyncSettingsScreen(
             }
 
             item {
-                Section(header = "Actions", footer = "Sync Now pushes local changes then pulls remote changes. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.") {
+                Section(
+                    header = "Actions",
+                    footer = "Sync Now pushes local changes then pulls remote changes. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.",
+                ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Button(
-                            enabled = !inFlight && statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn,
+                            enabled = !inFlight && statusObj is DriveSyncManager.Status.SignedIn,
                             onClick = {
                                 inFlight = true
                                 scope.launch {
@@ -218,7 +248,7 @@ fun SyncSettingsScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = !inFlight && statusObj is com.aeriotv.android.core.sync.DriveSyncManager.Status.SignedIn,
+                            enabled = !inFlight && statusObj is DriveSyncManager.Status.SignedIn,
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.CloudOff,
@@ -253,11 +283,121 @@ private fun ConfigBanner() {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Set SyncConfig.WEB_CLIENT_ID with your project's OAuth 2.0 Web Client ID and register this app's signing-cert SHA-1 with an Android client id. Until then, sign-in will fail.",
+                text = "Add GOOGLE_DRIVE_WEB_CLIENT_ID=<your-web-client-id> to local.properties (gitignored) and register this build's signing-cert SHA-1 with an Android client id in the same Cloud project. Until then, Sign in with Google will refuse.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+@Composable
+private fun AccountRow(
+    signedIn: Boolean,
+    email: String,
+    configured: Boolean,
+    inFlight: Boolean,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (signedIn) "Signed in to Drive" else "Sign in with Google",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = when {
+                    signedIn && email.isNotBlank() -> email
+                    signedIn -> "Account connected"
+                    else -> "Grants Drive AppData access. Files stay private to AerioTV."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (signedIn) {
+            TextButton(onClick = onSignOut, enabled = !inFlight) {
+                Text(
+                    text = "Sign out",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        } else {
+            SignInWithGoogleButton(
+                enabled = configured && !inFlight,
+                onClick = onSignIn,
+            )
+        }
+    }
+}
+
+/**
+ * Google-branded Sign in button. We render a Compose approximation that
+ * follows Google's brand guidelines (white background, 1px outline, Google G
+ * mark on the left, "Sign in with Google" label). Avoids embedding a raster
+ * since the brand asset has strict size/colour rules and the rendering here
+ * stays consistent across light/dark themes.
+ */
+@Composable
+private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.White.copy(alpha = if (enabled) 1f else 0.55f))
+            .border(1.dp, Color(0xFFDADCE0), RoundedCornerShape(20.dp))
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GoogleGMark(size = 18.dp)
+        Spacer(Modifier.size(10.dp))
+        Text(
+            text = "Sign in with Google",
+            color = Color(0xFF3C4043),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * Four-quadrant "G" mark approximating Google's brand glyph in Compose.
+ * The actual SVG is delivered via Material Icons Extended as
+ * vector drawables, but the closest neutral analog rendered here keeps
+ * everything self-contained and theme-stable.
+ */
+@Composable
+private fun GoogleGMark(size: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(Color.White),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .border(
+                    width = (size.value * 0.18f).dp,
+                    color = Color(0xFF4285F4),
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                ),
+        )
+        Text(
+            text = "G",
+            color = Color(0xFF4285F4),
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+        )
     }
 }
 
