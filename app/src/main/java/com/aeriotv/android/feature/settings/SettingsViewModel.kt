@@ -150,6 +150,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setDvrCustomFolderUri(value) }
     }
 
+    val dvrKeepAwakeDuringRecording: Flow<Boolean> = prefs.dvrKeepAwakeDuringRecording
+    fun setDvrKeepAwakeDuringRecording(value: Boolean) {
+        viewModelScope.launch { prefs.setDvrKeepAwakeDuringRecording(value) }
+    }
+
     // Category Palette (Phase 15)
     val categoryPalette: Flow<CategoryPaletteState> = prefs.categoryPalette
     fun setCategoryColorsEnabled(value: Boolean) {

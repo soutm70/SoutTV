@@ -72,6 +72,7 @@ fun DvrSettingsScreen(
     val preRoll by settingsVm.dvrDefaultPreRollMins.collectAsStateWithLifecycle(initialValue = 0)
     val postRoll by settingsVm.dvrDefaultPostRollMins.collectAsStateWithLifecycle(initialValue = 0)
     val customFolderUri by settingsVm.dvrCustomFolderUri.collectAsStateWithLifecycle(initialValue = "")
+    val keepAwake by settingsVm.dvrKeepAwakeDuringRecording.collectAsStateWithLifecycle(initialValue = true)
     val context = LocalContext.current
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -269,6 +270,43 @@ fun DvrSettingsScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    header = "Behavior",
+                    footer = "Holds a CPU wake lock while a local recording is downloading so Doze can't stall it. Server-side recordings are unaffected (they run on Dispatcharr). Leave on unless you're debugging battery drain.",
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Keep device awake during recording",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                text = "Recommended for long local recordings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.size(12.dp))
+                        androidx.compose.material3.Switch(
+                            checked = keepAwake,
+                            onCheckedChange = settingsVm::setDvrKeepAwakeDuringRecording,
+                            colors = androidx.compose.material3.SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            ),
+                        )
                     }
                 }
             }

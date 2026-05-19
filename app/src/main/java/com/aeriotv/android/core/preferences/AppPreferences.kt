@@ -448,6 +448,21 @@ class AppPreferences @Inject constructor(
     suspend fun dvrCustomFolderUriOnce(): String =
         store.data.first()[KEY_DVR_CUSTOM_FOLDER_URI].orEmpty()
 
+    /**
+     * iOS DVR Settings "Keep device awake during recording" toggle. Default
+     * ON (iOS parity). When on, LocalRecordingService holds a partial
+     * WakeLock for the duration of an active local recording so the CPU
+     * doesn't doze and stall the in-flight download. Reads synchronously at
+     * recording start via [dvrKeepAwakeOnce].
+     */
+    val dvrKeepAwakeDuringRecording: Flow<Boolean> =
+        store.data.map { it[KEY_DVR_KEEP_AWAKE] ?: true }
+    suspend fun setDvrKeepAwakeDuringRecording(value: Boolean) {
+        store.edit { it[KEY_DVR_KEEP_AWAKE] = value }
+    }
+    suspend fun dvrKeepAwakeOnce(): Boolean =
+        store.data.first()[KEY_DVR_KEEP_AWAKE] ?: true
+
     private companion object {
         val KEY_SELECTED_THEME = stringPreferencesKey("selected_theme")
         val KEY_USE_CUSTOM_ACCENT = booleanPreferencesKey("use_custom_accent")
@@ -473,6 +488,7 @@ class AppPreferences @Inject constructor(
         val KEY_DVR_DEFAULT_PRE_ROLL = intPreferencesKey("dvr_default_pre_roll_mins")
         val KEY_DVR_DEFAULT_POST_ROLL = intPreferencesKey("dvr_default_post_roll_mins")
         val KEY_DVR_CUSTOM_FOLDER_URI = stringPreferencesKey("dvr_custom_folder_uri")
+        val KEY_DVR_KEEP_AWAKE = booleanPreferencesKey("dvr_keep_awake_during_recording")
         val KEY_CATEGORY_MASTER_ENABLE = booleanPreferencesKey(CategoryPaletteState.MASTER_ENABLED_KEY)
         val KEY_CATEGORY_CUSTOM_JSON = stringPreferencesKey(CategoryPaletteState.CUSTOM_KEY)
         val KEY_SYNC_MASTER = booleanPreferencesKey("sync_master_enabled")

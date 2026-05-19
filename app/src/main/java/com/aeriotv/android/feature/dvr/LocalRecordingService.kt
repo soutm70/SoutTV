@@ -68,6 +68,16 @@ class LocalRecordingService : Service() {
     private var recordingJob: Job? = null
     private var currentChannelName: String = ""
 
+    /**
+     * Partial wake lock held while a local recording is in flight, gated by
+     * the "Keep device awake during recording" DVR setting (default ON, iOS
+     * parity). PARTIAL_WAKE_LOCK keeps the CPU running with the screen off so
+     * the download read-loop isn't paused by doze; it does NOT keep the
+     * screen on. Released in [releaseWakeLock] from the recording coroutine's
+     * finally + onDestroy so it can't leak past the recording.
+     */
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     private val okHttp: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -107,6 +117,14 @@ class LocalRecordingService : Service() {
         startForegroundCompat(notif)
 
         recordingJob = scope.launch {
+            // Acquire the wake lock before the read-loop if the user left the
+            // "Keep device awake during recording" toggle on. Bounded to
+            // duration + 1 min so a hung job can never hold the CPU awake
+            // forever; the finally below releases it on the normal path.
+            if (runCatching { appPreferences.dvrKeepAwakeOnce() }.getOrDefault(true)) {
+                acquireWakeLock(durationMs + 60_000L)
+            }
+
             val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
             val safeTitle = title.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40)
             val fileName = "$ts-$safeTitle.ts"
@@ -174,6 +192,7 @@ class LocalRecordingService : Service() {
                     )
                 }.onFailure { Log.w(TAG, "Couldn't persist local recording row", it) }
             }
+            releaseWakeLock()
             stopSelf()
         }
 
@@ -190,8 +209,37 @@ class LocalRecordingService : Service() {
     private fun stopRecording() {
         recordingJob?.cancel()
         recordingJob = null
+        releaseWakeLock()
         stopForegroundCompat()
         stopSelf()
+    }
+
+    @android.annotation.SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock(timeoutMs: Long) {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(POWER_SERVICE) as? android.os.PowerManager ?: return
+        wakeLock = pm.newWakeLock(
+            android.os.PowerManager.PARTIAL_WAKE_LOCK,
+            "AerioTV:LocalRecording",
+        ).apply {
+            setReferenceCounted(false)
+            // Bounded timeout as a safety net -- the finally/stopRecording
+            // paths release explicitly, but if the process is killed
+            // mid-recording the OS reclaims the lock at the timeout instead
+            // of holding the CPU awake indefinitely.
+            acquire(timeoutMs)
+        }
+        Log.i(TAG, "WakeLock acquired (timeout=${timeoutMs}ms)")
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { wl ->
+            if (wl.isHeld) {
+                runCatching { wl.release() }
+                    .onFailure { Log.w(TAG, "WakeLock release failed", it) }
+            }
+        }
+        wakeLock = null
     }
 
     /**
@@ -244,6 +292,7 @@ class LocalRecordingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseWakeLock()
         scope.cancel()
     }
 
