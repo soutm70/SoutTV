@@ -25,6 +25,10 @@ import kotlinx.serialization.json.Json
 
 private val Context.appDataStore: DataStore<Preferences> by preferencesDataStore(name = "aerio_prefs")
 
+/** Guide timeline zoom bounds. 0.5x = twice the hours on screen, 2x = half. */
+const val GUIDE_SCALE_MIN = 0.5f
+const val GUIDE_SCALE_MAX = 2.0f
+
 /**
  * Typed DataStore wrapper, mirroring the iOS @AppStorage registry
  * (project_aeriotv_ios_architecture.md section C). Each key has a Flow getter
@@ -84,6 +88,22 @@ class AppPreferences @Inject constructor(
     }
     suspend fun setDisplayScaleLiveTV(value: Float) {
         store.edit { it[KEY_DISPLAY_SCALE_LIVE_TV] = value.toDouble() }
+    }
+
+    /**
+     * EPG guide timeline zoom. iOS `guideScale` parity: scales the hour-column
+     * width so the user can fit more or fewer hours on screen. Clamped
+     * [GUIDE_SCALE_MIN]..[GUIDE_SCALE_MAX]; default 1.0. Written by both the
+     * pinch gesture (on gesture end) and the discrete zoom selector in the
+     * guide top bar.
+     */
+    val guideScale: Flow<Float> = store.data.map {
+        (it[KEY_GUIDE_SCALE] ?: 1.0).toFloat().coerceIn(GUIDE_SCALE_MIN, GUIDE_SCALE_MAX)
+    }
+    suspend fun setGuideScale(value: Float) {
+        store.edit {
+            it[KEY_GUIDE_SCALE] = value.coerceIn(GUIDE_SCALE_MIN, GUIDE_SCALE_MAX).toDouble()
+        }
     }
 
     /**
@@ -522,6 +542,7 @@ class AppPreferences @Inject constructor(
         val KEY_HOME_SSIDS = stringPreferencesKey("home_ssids")
         val KEY_DISPLAY_SCALE_MOVIES = doublePreferencesKey("display_scale_movies")
         val KEY_DISPLAY_SCALE_LIVE_TV = doublePreferencesKey("display_scale_live_tv")
+        val KEY_GUIDE_SCALE = doublePreferencesKey("guide_scale")
         val KEY_DEFAULT_TAB = stringPreferencesKey("default_tab")
         val KEY_NETWORK_TIMEOUT = doublePreferencesKey("network_timeout_secs")
         val KEY_MAX_RETRIES = intPreferencesKey("max_retries")

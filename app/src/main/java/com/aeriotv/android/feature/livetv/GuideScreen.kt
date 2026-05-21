@@ -29,8 +29,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.input.pointer.pointerInput
+import com.aeriotv.android.core.preferences.GUIDE_SCALE_MAX
+import com.aeriotv.android.core.preferences.GUIDE_SCALE_MIN
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -78,6 +85,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Check
 
 /**
  * EPG Guide grid (channels on Y, time on X). Mirrors iOS EPGGuideView.
@@ -119,6 +127,17 @@ fun GuideScreen(
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val epgWindowHours by settingsVm.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
     val multiviewStore = rememberMultiviewStoreHandle()
+
+    // Guide timeline zoom (iOS guideScale). `liveScale` tracks the in-flight
+    // pinch and the discrete selector; it's seeded from the persisted value and
+    // re-synced whenever that changes (e.g. selector tap or another screen).
+    // The pinch commits to the store on gesture end so we hit DataStore once
+    // per gesture, not every frame.
+    val storedScale by settingsVm.guideScale.collectAsStateWithLifecycle(initialValue = 1f)
+    var liveScale by remember { mutableStateOf(storedScale) }
+    LaunchedEffect(storedScale) { liveScale = storedScale }
+    val scale = liveScale.coerceIn(GUIDE_SCALE_MIN, GUIDE_SCALE_MAX)
+    val scaledHourWidth = GuideMetrics.HOUR_WIDTH * scale
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
@@ -209,18 +228,23 @@ fun GuideScreen(
                 // when actually useful. Matches iOS EPGGuideView nav-bar
                 // "now" affordance.
                 val nowOffsetPx = with(density) {
-                    ((nowMillis - windowStart) / GuideMetrics.MS_PER_DP_LONG).toFloat().dp.toPx()
+                    msToDp(nowMillis - windowStart, scaledHourWidth).toPx()
                 }
                 val visibleCenter = horizontalScrollState.value +
-                    with(density) { GuideMetrics.HOUR_WIDTH.toPx() }
+                    with(density) { scaledHourWidth.toPx() }
                 val nowOffScreen = kotlin.math.abs(visibleCenter - nowOffsetPx) >
-                    with(density) { (GuideMetrics.HOUR_WIDTH * 2).toPx() }
+                    with(density) { (scaledHourWidth * 2).toPx() }
+                // Discrete zoom selector (iOS guideScale, complements pinch).
+                ZoomSelector(
+                    scale = scale,
+                    onSelect = { settingsVm.setGuideScale(it) },
+                )
                 IconButton(onClick = {
                     jumpScope.launch {
                         // Land the now-indicator ~1/4 into the viewport so
                         // the user sees a bit of past + the upcoming block
                         // of programmes. iOS uses the same offset.
-                        val target = (nowOffsetPx - with(density) { GuideMetrics.HOUR_WIDTH.toPx() / 2f })
+                        val target = (nowOffsetPx - with(density) { scaledHourWidth.toPx() / 2f })
                             .toInt().coerceAtLeast(0)
                         horizontalScrollState.animateScrollTo(target)
                     }
@@ -293,14 +317,14 @@ fun GuideScreen(
                 val hourCount = (windowDurationMs / 3_600_000L).toInt()
                 Row(
                     modifier = Modifier
-                        .width(GuideMetrics.HOUR_WIDTH * hourCount)
+                        .width(scaledHourWidth * hourCount)
                         .height(GuideMetrics.HEADER_HEIGHT),
                 ) {
                     for (i in 0 until hourCount) {
                         val slotStart = windowStart + i * 3_600_000L
                         Box(
                             modifier = Modifier
-                                .width(GuideMetrics.HOUR_WIDTH)
+                                .width(scaledHourWidth)
                                 .fillMaxHeight(),
                             contentAlignment = Alignment.CenterStart,
                         ) {
@@ -318,7 +342,33 @@ fun GuideScreen(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
 
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                // Pinch-to-zoom the timeline. Custom detector that only acts on
+                // two-or-more pointers so single-finger pans still reach the
+                // LazyColumn's vertical scroll + the rows' horizontal scroll.
+                // Commits to DataStore once per gesture (on lift).
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        var didZoom = false
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } >= 2) {
+                                val zoom = event.calculateZoom()
+                                if (zoom != 1f) {
+                                    liveScale = (liveScale * zoom)
+                                        .coerceIn(GUIDE_SCALE_MIN, GUIDE_SCALE_MAX)
+                                    didZoom = true
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                        if (didZoom) settingsVm.setGuideScale(liveScale)
+                    }
+                },
+        ) {
             items(items = filteredChannels, key = { it.id }) { channel ->
                 val programmes = state.epgByChannel[channel.tvgID].orEmpty()
                 ChannelGuideRow(
@@ -326,6 +376,7 @@ fun GuideScreen(
                     programmes = programmes,
                     windowStart = windowStart,
                     windowDurationMs = windowDurationMs,
+                    hourWidth = scaledHourWidth,
                     nowMillis = nowMillis,
                     horizontalScrollState = horizontalScrollState,
                     onChannelClick = { onChannelClick(channel) },
@@ -366,6 +417,7 @@ private fun ChannelGuideRow(
     programmes: List<EPGProgramme>,
     windowStart: Long,
     windowDurationMs: Long,
+    hourWidth: androidx.compose.ui.unit.Dp,
     nowMillis: Long,
     horizontalScrollState: androidx.compose.foundation.ScrollState,
     onChannelClick: () -> Unit,
@@ -482,7 +534,7 @@ private fun ChannelGuideRow(
                 .horizontalScroll(horizontalScrollState)
                 .fillMaxHeight(),
         ) {
-            val totalWidth = GuideMetrics.HOUR_WIDTH * (windowDurationMs / 3_600_000L).toInt()
+            val totalWidth = hourWidth * (windowDurationMs / 3_600_000L).toInt()
             Box(modifier = Modifier.width(totalWidth).fillMaxHeight()) {
                 // Programme cells, positioned by offset.
                 programmes.forEach { programme ->
@@ -494,8 +546,8 @@ private fun ChannelGuideRow(
                     if (rawStart >= windowEnd) return@forEach
                     val clippedStart = rawStart.coerceAtLeast(windowStart)
                     val clippedEnd = rawEnd.coerceAtMost(windowEnd)
-                    val xDp = ((clippedStart - windowStart) / GuideMetrics.MS_PER_DP_LONG).toFloat().dp
-                    val wDp = ((clippedEnd - clippedStart) / GuideMetrics.MS_PER_DP_LONG).toFloat().dp
+                    val xDp = msToDp(clippedStart - windowStart, hourWidth)
+                    val wDp = msToDp(clippedEnd - clippedStart, hourWidth)
                     val isLive = programme.startMillis <= nowMillis && programme.endMillis > nowMillis
                     ProgrammeCell(
                         programme = programme,
@@ -522,7 +574,7 @@ private fun ChannelGuideRow(
                 }
                 // "Now" indicator - 2dp cyan line, only drawn when "now" falls inside the window.
                 if (nowMillis in (windowStart + 1)..(windowStart + windowDurationMs - 1)) {
-                    val nowX = ((nowMillis - windowStart) / GuideMetrics.MS_PER_DP_LONG).toFloat().dp
+                    val nowX = msToDp(nowMillis - windowStart, hourWidth)
                     Box(
                         modifier = Modifier
                             .offset(x = nowX)
@@ -662,12 +714,66 @@ private fun ProgrammeCell(
     }
 }
 
-/** Layout constants for the guide grid. Centralized so Phase 8 zoom-via-AppStorage can scale them. */
+/** Preset zoom levels for the discrete selector (within GUIDE_SCALE_MIN..MAX). */
+private val GUIDE_ZOOM_PRESETS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+/**
+ * Discrete guide-zoom control in the top bar: a percentage button that opens a
+ * preset menu. Complements pinch-to-zoom (iOS guideScale). The active preset is
+ * checkmarked; "active" tolerates small float drift from a prior pinch.
+ */
+@Composable
+private fun ZoomSelector(scale: Float, onSelect: (Float) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) {
+            Text(
+                text = "${kotlin.math.round(scale * 100).toInt()}%",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            GUIDE_ZOOM_PRESETS.forEach { preset ->
+                val active = kotlin.math.abs(preset - scale) < 0.02f
+                DropdownMenuItem(
+                    text = { Text("${(preset * 100).toInt()}%") },
+                    trailingIcon = {
+                        if (active) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(preset)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Layout constants for the guide grid. [HOUR_WIDTH] is the unscaled base; the
+ * guide zoom (iOS guideScale) multiplies it and everything time-axis derives
+ * from the scaled value via [msToDp]. */
 private object GuideMetrics {
     val RAIL_WIDTH = 168.dp
     val HEADER_HEIGHT = 36.dp
     val ROW_HEIGHT = 80.dp
+    /** Base (1.0x) width of one hour column. Scaled by guideScale at render. */
     val HOUR_WIDTH = 320.dp
-    /** ms / dp for 1 hour = 320dp. Used to compute programme cell x + width. */
-    const val MS_PER_DP_LONG: Long = 3_600_000L / 320L
 }
+
+private const val MS_PER_HOUR_F = 3_600_000f
+
+/** Convert a millisecond span to its dp width on the (already scaled) time axis. */
+private fun msToDp(ms: Long, hourWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp =
+    (hourWidth.value * (ms.toFloat() / MS_PER_HOUR_F)).dp

@@ -48,6 +48,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setDisplayScaleLiveTV(value) }
     }
 
+    /** EPG guide timeline zoom (iOS guideScale). Written by pinch + the discrete selector. */
+    val guideScale: Flow<Float> = prefs.guideScale
+    fun setGuideScale(value: Float) {
+        viewModelScope.launch { prefs.setGuideScale(value) }
+    }
+
     val hiddenGroups: Flow<Set<String>> = prefs.hiddenGroups
     fun setHiddenGroups(groups: Set<String>) {
         viewModelScope.launch { prefs.setHiddenGroups(groups) }
