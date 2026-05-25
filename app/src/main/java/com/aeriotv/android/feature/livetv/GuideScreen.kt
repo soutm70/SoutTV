@@ -28,12 +28,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
@@ -129,6 +133,10 @@ fun GuideScreen(
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val epgWindowHours by settingsVm.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
     val multiviewStore = rememberMultiviewStoreHandle()
+    // tvOS-style guide controls: a search field toggle + a group on/off filter.
+    val hiddenGroups by settingsVm.hiddenGroups.collectAsStateWithLifecycle(initialValue = emptySet())
+    var searchActive by remember { mutableStateOf(false) }
+    var showManageGroups by remember { mutableStateOf(false) }
 
     // Guide timeline zoom (iOS guideScale). `liveScale` tracks the in-flight
     // pinch and the discrete selector; it's seeded from the persisted value and
@@ -185,15 +193,22 @@ fun GuideScreen(
         }
     }
 
-    val groups by remember(state.channels) {
+    // Full set of group names (the Manage Groups picker lists hidden ones too
+    // so they can be turned back on).
+    val allGroupNames by remember(state.channels) {
         derivedStateOf {
-            val unique = state.channels.asSequence()
+            state.channels.asSequence()
                 .map { it.groupTitle }
                 .filter { it.isNotBlank() }
                 .distinct()
                 .sortedBy { it.lowercase() }
                 .toList()
-            listOf(PlaylistViewModel.ALL_GROUPS) + unique
+        }
+    }
+    // Visible chips: all groups minus the ones hidden via the filter picker.
+    val groups by remember(state.channels) {
+        derivedStateOf {
+            listOf(PlaylistViewModel.ALL_GROUPS) + allGroupNames.filter { it !in hiddenGroups }
         }
     }
 
@@ -201,9 +216,16 @@ fun GuideScreen(
         derivedStateOf {
             val query = state.searchQuery.trim()
             state.channels.asSequence()
-                .filter {
-                    state.selectedGroup == PlaylistViewModel.ALL_GROUPS ||
-                            it.groupTitle.equals(state.selectedGroup, ignoreCase = true)
+                .filter { ch ->
+                    when {
+                        state.selectedGroup != PlaylistViewModel.ALL_GROUPS ->
+                            ch.groupTitle.equals(state.selectedGroup, ignoreCase = true)
+                        // In "All", hide channels whose group is toggled off --
+                        // unless searching, where hidden groups stay findable
+                        // (matches the List view behaviour).
+                        query.isNotEmpty() -> true
+                        else -> ch.groupTitle !in hiddenGroups
+                    }
                 }
                 .filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
                 .sortedWith(compareBy({ it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE }, { it.name.lowercase() }))
@@ -222,19 +244,9 @@ fun GuideScreen(
         // suspend; matches iOS EPGGuideView's "scroll back to now" button
         // which snaps the time axis so the now-indicator sits ~1/4 of the
         // way across the viewport.
-        val jumpScope = rememberCoroutineScope()
-        val density = LocalDensity.current
-        // Single control + filter row. The zoom %, jump-to-now, and List/Guide
-        // toggle sit on the LEFT, then the channel-group pills fill the rest.
-        // Folding the controls into the pill row removes the old (title-less)
-        // app bar and hands that vertical space back to the guide.
-        val nowOffsetPx = with(density) {
-            msToDp(nowMillis - windowStart, scaledHourWidth).toPx()
-        }
-        val visibleCenter = horizontalScrollState.value +
-            with(density) { scaledHourWidth.toPx() }
-        val nowOffScreen = kotlin.math.abs(visibleCenter - nowOffsetPx) >
-            with(density) { (scaledHourWidth * 2).toPx() }
+        // Control + filter row, mirroring the tvOS guide: List/Guide switcher,
+        // search toggle, and a group on/off filter on the left, then the
+        // channel-group pills (or an inline search field) filling the rest.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -242,33 +254,7 @@ fun GuideScreen(
                 .padding(horizontal = if (isTv) 24.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Discrete zoom selector (iOS guideScale, complements pinch).
-            ZoomSelector(
-                scale = scale,
-                onSelect = { settingsVm.setGuideScale(it) },
-            )
-            IconButton(
-                onClick = {
-                    jumpScope.launch {
-                        // Land the now-indicator ~1/4 into the viewport so the user
-                        // sees a bit of past + the upcoming block. iOS parity.
-                        val target = (nowOffsetPx - with(density) { scaledHourWidth.toPx() / 2f })
-                            .toInt().coerceAtLeast(0)
-                        horizontalScrollState.animateScrollTo(target)
-                    }
-                },
-                modifier = Modifier.size(36.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AccessTime,
-                    contentDescription = "Jump to now",
-                    tint = if (nowOffScreen)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            // List / Guide view switcher.
             if (canToggleViewMode) {
                 IconButton(
                     onClick = onToggleViewMode,
@@ -283,9 +269,54 @@ fun GuideScreen(
                     )
                 }
             }
-            // Group filter chips fill the remainder of the row.
-            if (groups.size > 1) {
-                Spacer(Modifier.width(if (isTv) 12.dp else 6.dp))
+            // Search toggle: reveals an inline channel-name search field.
+            IconButton(
+                onClick = {
+                    searchActive = !searchActive
+                    if (!searchActive) viewModel.onSearchQueryChange("")
+                },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "Search channels",
+                    tint = if (searchActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            // Filter toggle: opens the group on/off picker (Manage Groups).
+            IconButton(
+                onClick = { showManageGroups = true },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.FilterList,
+                    contentDescription = "Filter groups",
+                    tint = if (hiddenGroups.isEmpty())
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(if (isTv) 12.dp else 6.dp))
+            if (searchActive) {
+                OutlinedTextField(
+                    value = state.searchQuery,
+                    onValueChange = viewModel::onSearchQueryChange,
+                    placeholder = { Text("Search channels") },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (state.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            } else if (groups.size > 1) {
                 LazyRow(
                     modifier = Modifier
                         .weight(1f)
@@ -301,8 +332,6 @@ fun GuideScreen(
                             label = {
                                 Text(
                                     group,
-                                    // labelLarge is the FilterChip default, so phone
-                                    // is unchanged; TV bumps to a 10-foot size.
                                     style = if (isTv) MaterialTheme.typography.titleMedium
                                     else MaterialTheme.typography.labelLarge,
                                 )
@@ -430,6 +459,14 @@ fun GuideScreen(
         RecordProgramSheet(
             target = target,
             onDismiss = { recordTarget = null },
+        )
+    }
+    if (showManageGroups) {
+        ManageGroupsSheet(
+            allGroups = allGroupNames,
+            hiddenGroups = hiddenGroups,
+            onSave = { settingsVm.setHiddenGroups(it) },
+            onDismiss = { showManageGroups = false },
         )
     }
 }
@@ -758,63 +795,6 @@ private fun ProgrammeCell(
     }
 }
 
-/** Preset zoom levels for the discrete selector (within GUIDE_SCALE_MIN..MAX). */
-private val GUIDE_ZOOM_PRESETS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-
-/**
- * Discrete guide-zoom control in the top bar: a percentage button that opens a
- * preset menu. Complements pinch-to-zoom (iOS guideScale). The active preset is
- * checkmarked; "active" tolerates small float drift from a prior pinch.
- */
-@Composable
-private fun ZoomSelector(scale: Float, onSelect: (Float) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    var focused by remember { mutableStateOf(false) }
-    Box {
-        // Compact percentage pill (was a min-width TextButton). Tight padding so
-        // it takes little space, with a clear D-pad focus highlight.
-        Text(
-            text = "${kotlin.math.round(scale * 100).toInt()}%",
-            style = MaterialTheme.typography.labelMedium,
-            color = if (focused) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                )
-                .onFocusChanged { focused = it.isFocused }
-                .clickable { open = true }
-                .padding(horizontal = 10.dp, vertical = 5.dp),
-        )
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-        ) {
-            GUIDE_ZOOM_PRESETS.forEach { preset ->
-                val active = kotlin.math.abs(preset - scale) < 0.02f
-                DropdownMenuItem(
-                    text = { Text("${(preset * 100).toInt()}%") },
-                    trailingIcon = {
-                        if (active) {
-                            Icon(
-                                imageVector = Icons.Filled.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    },
-                    onClick = {
-                        open = false
-                        onSelect(preset)
-                    },
-                )
-            }
-        }
-    }
-}
 
 /** Layout constants for the guide grid. [HOUR_WIDTH] is the unscaled base; the
  * guide zoom (iOS guideScale) multiplies it and everything time-axis derives
