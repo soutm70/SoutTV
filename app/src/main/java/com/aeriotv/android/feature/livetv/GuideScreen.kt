@@ -141,6 +141,14 @@ fun GuideScreen(
     val scale = liveScale.coerceIn(GUIDE_SCALE_MIN, GUIDE_SCALE_MAX)
     val scaledHourWidth = GuideMetrics.HOUR_WIDTH * scale
 
+    // 10-foot sizing on Android TV: a wider channel rail, taller rows, and a
+    // taller time header so the guide is legible from a couch. Phone/tablet
+    // keep the compact GuideMetrics defaults.
+    val isTv = rememberLiveTvFormFactor().isTv
+    val railWidth = if (isTv) 264.dp else GuideMetrics.RAIL_WIDTH
+    val rowHeight = if (isTv) 118.dp else GuideMetrics.ROW_HEIGHT
+    val headerHeight = if (isTv) 48.dp else GuideMetrics.HEADER_HEIGHT
+
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
 
@@ -307,8 +315,8 @@ fun GuideScreen(
         Row(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
-                    .width(GuideMetrics.RAIL_WIDTH)
-                    .height(GuideMetrics.HEADER_HEIGHT)
+                    .width(railWidth)
+                    .height(headerHeight)
                     .background(MaterialTheme.colorScheme.background),
             )
             Box(
@@ -320,7 +328,7 @@ fun GuideScreen(
                 Row(
                     modifier = Modifier
                         .width(scaledHourWidth * hourCount)
-                        .height(GuideMetrics.HEADER_HEIGHT),
+                        .height(headerHeight),
                 ) {
                     for (i in 0 until hourCount) {
                         val slotStart = windowStart + i * 3_600_000L
@@ -383,6 +391,9 @@ fun GuideScreen(
                     windowDurationMs = windowDurationMs,
                     hourWidth = scaledHourWidth,
                     nowMillis = nowMillis,
+                    isTv = isTv,
+                    railWidth = railWidth,
+                    rowHeight = rowHeight,
                     horizontalScrollState = horizontalScrollState,
                     onChannelClick = { onChannelClick(channel) },
                     onProgrammeClick = { programme ->
@@ -424,6 +435,9 @@ private fun ChannelGuideRow(
     windowDurationMs: Long,
     hourWidth: androidx.compose.ui.unit.Dp,
     nowMillis: Long,
+    isTv: Boolean,
+    railWidth: androidx.compose.ui.unit.Dp,
+    rowHeight: androidx.compose.ui.unit.Dp,
     horizontalScrollState: androidx.compose.foundation.ScrollState,
     onChannelClick: () -> Unit,
     onProgrammeClick: (EPGProgramme) -> Unit,
@@ -439,38 +453,44 @@ private fun ChannelGuideRow(
     val context = LocalContext.current
     var railMenuOpen by remember { mutableStateOf(false) }
 
+    // 10-foot sizing knobs (compact defaults on phone/tablet).
+    val numberStyle = if (isTv) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelSmall
+    val numberWidth = if (isTv) 30.dp else 22.dp
+    val logoBox = if (isTv) 52.dp else 36.dp
+    val logoImage = if (isTv) 46.dp else 32.dp
+    val nameStyle = if (isTv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(GuideMetrics.ROW_HEIGHT),
+            .height(rowHeight),
     ) {
         // Sticky-left channel rail. Tap plays the channel; long-press opens the
         // favorites toggle. Mirrors iOS EPGGuideView channel-rail .contextMenu
         // (EPGGuideView.swift:2823).
         Row(
             modifier = Modifier
-                .width(GuideMetrics.RAIL_WIDTH)
+                .width(railWidth)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
                 .combinedClickable(
                     onClick = onChannelClick,
                     onLongClick = { railMenuOpen = true },
                 )
-                .padding(horizontal = 8.dp),
+                .padding(horizontal = if (isTv) 14.dp else 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             channel.channelNumber?.let { num ->
                 Text(
                     text = num.toString(),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = numberStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(22.dp),
+                    modifier = Modifier.width(numberWidth),
                 )
             }
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(if (isTv) 8.dp else 4.dp))
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(logoBox)
                     .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center,
@@ -479,21 +499,21 @@ private fun ChannelGuideRow(
                     AsyncImage(
                         model = channel.tvgLogo,
                         contentDescription = null,
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(logoImage),
                     )
                 } else {
                     Text(
                         text = channel.name.take(2).uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
+                        style = if (isTv) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
                     )
                 }
             }
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(if (isTv) 10.dp else 6.dp))
             Text(
                 text = channel.name,
-                style = MaterialTheme.typography.labelMedium,
+                style = nameStyle,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -560,6 +580,7 @@ private fun ChannelGuideRow(
                         channelId = channel.id,
                         widthDp = wDp,
                         isLive = isLive,
+                        isTv = isTv,
                         // Dispatcharr bulk grid drops <category>; fall back
                         // to the channel's group title so guide cells still
                         // tint even before any per-program lazy enrichment
@@ -601,6 +622,7 @@ private fun ProgrammeCell(
     channelId: String,
     widthDp: androidx.compose.ui.unit.Dp,
     isLive: Boolean,
+    isTv: Boolean,
     categoryTint: androidx.compose.ui.graphics.Color?,
     modifier: Modifier,
     onClick: () -> Unit,
@@ -709,7 +731,7 @@ private fun ProgrammeCell(
         }
         Text(
             text = programme.title.ifBlank { "—" },
-            style = MaterialTheme.typography.labelMedium,
+            style = if (isTv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium,
             color = titleColor,
             fontWeight = FontWeight.SemiBold,
             maxLines = 2,
@@ -718,9 +740,9 @@ private fun ProgrammeCell(
         if (programme.description.isNotBlank()) {
             Text(
                 text = programme.description,
-                style = MaterialTheme.typography.labelSmall,
+                style = if (isTv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                maxLines = if (isTv) 3 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }

@@ -283,7 +283,7 @@ private fun TvTopTabBar(
             .background(MaterialTheme.colorScheme.surface)
             // Overscan-safe: TVs can crop ~5% of each edge.
             .padding(horizontal = 48.dp, vertical = 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         tabs.forEach { tab ->
