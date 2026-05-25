@@ -291,15 +291,26 @@ fun GuideScreen(
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .height(if (isTv) 76.dp else 56.dp),
+                contentPadding = PaddingValues(
+                    horizontal = if (isTv) 48.dp else 16.dp,
+                    vertical = 8.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp),
             ) {
                 items(groups, key = { it }) { group ->
                     FilterChip(
                         selected = state.selectedGroup == group,
                         onClick = { viewModel.onGroupSelected(group) },
-                        label = { Text(group) },
+                        label = {
+                            Text(
+                                group,
+                                // labelLarge is the FilterChip default, so phone
+                                // is unchanged; TV bumps to a 10-foot size.
+                                style = if (isTv) MaterialTheme.typography.titleMedium
+                                else MaterialTheme.typography.labelLarge,
+                            )
+                        },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
