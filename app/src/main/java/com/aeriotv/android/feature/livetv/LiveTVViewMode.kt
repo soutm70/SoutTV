@@ -37,11 +37,18 @@ data class LiveTvFormFactor(
     val widthClass: WindowWidthSizeClass,
     val isTv: Boolean,
 ) {
-    /** Phone-class layout: no toggle, force List. */
+    /** Phone-class layout: List is the default, but the toggle is still offered. */
     val isCompactPhone: Boolean get() = widthClass == WindowWidthSizeClass.Compact && !isTv
 
-    /** Whether the user can flip between List and Guide. */
-    val supportsToggle: Boolean get() = !isCompactPhone
+    /**
+     * Whether the user can flip between List and Guide. Always true: compact
+     * phones in portrait previously hid the toggle (only landscape, where the
+     * width class leaves Compact, showed it), which left no way to reach the
+     * Guide in portrait. The Guide is usable in portrait (it horizontally
+     * scrolls), so we always offer the toggle; [defaultMode] still picks List
+     * for compact phones so nothing changes for users who don't toggle.
+     */
+    val supportsToggle: Boolean get() = true
 
     /** Default view when no user override exists. */
     val defaultMode: LiveTVViewMode

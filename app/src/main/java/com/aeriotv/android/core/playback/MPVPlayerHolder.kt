@@ -7,6 +7,10 @@ import com.aeriotv.android.feature.player.MPVPlayerView
 import `is`.xyz.mpv.Utils
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Hoists the active [MPVPlayerView] out of any single composable lifecycle so
@@ -36,6 +40,10 @@ class MPVPlayerHolder @Inject constructor() {
      * resuming PlayerScreen knows whether to skip the playFile re-init. */
     var currentChannelId: String? = null
 
+    /** Off-main scope for the blocking libmpv teardown (mpv_terminate_destroy
+     * joins decode/render/audio threads and would ANR the close button). */
+    private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /**
      * Return the active MPV view, creating it once on first call. The view is
      * detached from any prior parent before return so the caller can attach
@@ -59,8 +67,12 @@ class MPVPlayerHolder @Inject constructor() {
             // those onto the live instance without re-initialising.
             existing.cachingMs = cachingMs
             existing.httpHeaders = httpHeaders
-            // Re-enable video output (back-out via mini-player set vid=no).
+            // Re-enable video + unpause: a close (see [destroy]) leaves the
+            // retained handle paused with vid=no. The `pause` property survives
+            // loadfile, so without this an in-place reuse would load the new
+            // channel but stay frozen on the first frame.
             runCatching { existing.mpv.setPropertyString("vid", "auto") }
+            runCatching { existing.mpv.setPropertyString("pause", "no") }
             return existing
         }
         Log.i(TAG, "Creating fresh MPVPlayerView in holder")
@@ -117,15 +129,57 @@ class MPVPlayerHolder @Inject constructor() {
 
     fun isPaused(): Boolean = view?.mpv?.getPropertyString("pause") == "yes"
 
-    /** Fully release the MPV core. Invoked when the user explicitly closes
-     * the player or session is dismissed via the mini-player X button. */
+    /**
+     * Close handler for the player X button + mini-player dismiss. Stops
+     * playback and detaches the SurfaceView, but deliberately does NOT tear
+     * down the libmpv core.
+     *
+     * Why not call MPV.destroy() (mpv_terminate_destroy / nativeDestroy):
+     *  1. It BLOCKS the calling thread for several seconds while libmpv joins
+     *     its demuxer/decoder/render/audio threads. Invoked from the close
+     *     button's main-thread onClick, that froze the UI past the 5s input
+     *     dispatch deadline -> "AerioTV isn't responding" ANR on close.
+     *  2. On mpv-android-lib 0.1.12 nativeDestroy also releases process-global
+     *     JNI state that the warmed handle + the next nativeCreate need
+     *     (Phase 82), so the *next* stream opened after a close came up dead
+     *     ("close one, start another crashes").
+     *
+     * Instead we `stop` (frees the demuxer/decoders/audio output for the
+     * current file) and detach the view, but RETAIN the MPV handle. The next
+     * channel reuses it via [acquireOrCreate] + playFile -- the same retain-
+     * and-reuse path the mini-player resume already relies on, and it makes
+     * the next open instant. The handle is reclaimed when the process dies.
+     * currentChannelId is cleared so the next acquire re-issues playFile.
+     */
     fun destroy() {
         val v = view ?: return
-        Log.i(TAG, "Destroying held MPVPlayerView")
-        (v.parent as? ViewGroup)?.removeView(v)
-        v.destroy()
         view = null
         currentChannelId = null
+        Log.i(TAG, "Player close: vid=no -> detach -> async native teardown")
+        // ORDER MATTERS. Two separate things were ANR'ing the X-close, both on
+        // the main thread:
+        //  1. removeView() fires SurfaceHolder.surfaceDestroyed synchronously,
+        //     and the lib's handler blocks waiting for libmpv's render thread
+        //     to release the surface -- which, while the live stream is still
+        //     decoding, took >5s. Setting vid=no FIRST stops rendering so the
+        //     surface releases immediately and removeView returns at once
+        //     (same trick the mini-player uses before it detaches).
+        //  2. mpv_terminate_destroy (nativeDestroy) joins libmpv's demuxer/
+        //     decode/audio threads and blocks for seconds. Run it on a
+        //     background dispatcher. The retained warmup handle (Phase 94)
+        //     keeps the process-global JNI state alive, so destroying this
+        //     user handle does NOT poison the next nativeCreate (the Phase 82
+        //     failure only happened when NO handle remained).
+        // The next open creates a fresh handle (view is null), which renders
+        // video reliably -- reusing a detached handle across a new loadfile
+        // left the video output black.
+        runCatching { v.mpv.setPropertyString("vid", "no") }
+        (v.parent as? ViewGroup)?.removeView(v)
+        val mpv = v.mpv
+        teardownScope.launch {
+            runCatching { mpv.destroy() }
+                .onFailure { Log.w(TAG, "async mpv teardown failed", it) }
+        }
     }
 
     companion object { private const val TAG = "MPVPlayerHolder" }
