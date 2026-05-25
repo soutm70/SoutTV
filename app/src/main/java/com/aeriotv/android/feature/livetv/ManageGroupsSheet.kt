@@ -1,6 +1,7 @@
 package com.aeriotv.android.feature.livetv
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,24 +15,34 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 
 /**
  * Manage Groups bottom sheet. Mirrors iOS Settings > Manage Groups modal:
@@ -166,6 +177,106 @@ fun ManageGroupsSheet(
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * TV-native group on/off picker: a centered, D-pad-driven dialog instead of the
+ * touch bottom sheet. Each row toggles live and the focused row is highlighted,
+ * mirroring the tvOS guide's "Toggle groups on or off" popup. [onToggle] passes
+ * the group and its new visibility so the caller updates hiddenGroups.
+ */
+@Composable
+fun TvGroupPicker(
+    allGroups: List<String>,
+    hiddenGroups: Set<String>,
+    onToggle: (group: String, visible: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            modifier = Modifier
+                .width(640.dp)
+                .heightIn(max = 640.dp),
+        ) {
+            Column(modifier = Modifier.padding(vertical = 20.dp)) {
+                Text(
+                    text = "Toggle groups on or off to show or hide them.",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 4.dp),
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                if (allGroups.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No groups available",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    return@Column
+                }
+                val firstFocus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    itemsIndexed(allGroups, key = { _, g -> g }) { index, group ->
+                        val visible = group !in hiddenGroups
+                        var focused by remember { mutableStateOf(false) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                    else Color.Transparent,
+                                )
+                                .border(
+                                    width = if (focused) 2.dp else 0.dp,
+                                    color = if (focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    shape = RoundedCornerShape(12.dp),
+                                )
+                                .then(
+                                    if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                                )
+                                .onFocusChanged { focused = it.isFocused }
+                                .clickable { onToggle(group, !visible) }
+                                .padding(horizontal = 22.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = group,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = if (visible) "On" else "Off",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (visible) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

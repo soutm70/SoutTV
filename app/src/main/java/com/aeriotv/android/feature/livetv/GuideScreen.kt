@@ -197,11 +197,13 @@ fun GuideScreen(
     // so they can be turned back on).
     val allGroupNames by remember(state.channels) {
         derivedStateOf {
+            // First-occurrence order so groups follow the channel ordering
+            // (which the server/playlist defines), NOT alphabetical. distinct()
+            // preserves encounter order.
             state.channels.asSequence()
                 .map { it.groupTitle }
                 .filter { it.isNotBlank() }
                 .distinct()
-                .sortedBy { it.lowercase() }
                 .toList()
         }
     }
@@ -462,12 +464,26 @@ fun GuideScreen(
         )
     }
     if (showManageGroups) {
-        ManageGroupsSheet(
-            allGroups = allGroupNames,
-            hiddenGroups = hiddenGroups,
-            onSave = { settingsVm.setHiddenGroups(it) },
-            onDismiss = { showManageGroups = false },
-        )
+        if (isTv) {
+            // D-pad-driven centered picker on TV; the touch bottom sheet on phone.
+            TvGroupPicker(
+                allGroups = allGroupNames,
+                hiddenGroups = hiddenGroups,
+                onToggle = { group, visible ->
+                    settingsVm.setHiddenGroups(
+                        if (visible) hiddenGroups - group else hiddenGroups + group,
+                    )
+                },
+                onDismiss = { showManageGroups = false },
+            )
+        } else {
+            ManageGroupsSheet(
+                allGroups = allGroupNames,
+                hiddenGroups = hiddenGroups,
+                onSave = { settingsVm.setHiddenGroups(it) },
+                onDismiss = { showManageGroups = false },
+            )
+        }
     }
 }
 
