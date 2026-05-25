@@ -10,18 +10,14 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Home WiFi detection for LAN URL switching. ACCESS_WIFI_STATE alone is
-         enough pre-API-29; API 29-32 needs ACCESS_FINE_LOCATION at runtime to
-         read the connected SSID; API 33+ accepts NEARBY_WIFI_DEVICES with the
-         neverForLocation tag instead. We declare all three and request the
-         appropriate one at runtime depending on SDK level. -->
+    <!-- Home WiFi detection for LAN URL switching. Reading the CONNECTED
+         network's SSID (WifiInfo.getSSID) requires ACCESS_FINE_LOCATION at
+         runtime on API 29+ (and location services on), or it is redacted to
+         unknown-ssid. NEARBY_WIFI_DEVICES does NOT unlock the connected SSID
+         (it gates Wi-Fi scanning / peer APIs), so fine location is the only
+         path on every API level at or above 29. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="32" />
-    <uses-permission
-        android:name="android.permission.NEARBY_WIFI_DEVICES"
-        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Phase 9b Local DVR. Foreground service handles in-flight downloads
          so Android doesn't kill the recording when the user backgrounds the
          app. mediaPlayback service type matches the spirit of the work even
