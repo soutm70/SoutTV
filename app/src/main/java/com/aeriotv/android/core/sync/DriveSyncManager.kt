@@ -124,6 +124,7 @@ class DriveSyncManager @Inject constructor(
      * Playlists. Returns a map of category → success.
      */
     suspend fun pushAll(token: String, enabled: Set<SyncCategory>): Map<SyncCategory, Boolean> {
+        Log.i(TAG, "pushAll: categories=${enabled.map { it.name }}")
         val result = mutableMapOf<SyncCategory, Boolean>()
         enabled.forEach { category ->
             val ok = runCatching { pushCategory(token, category) }

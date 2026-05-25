@@ -1,6 +1,8 @@
 package com.aeriotv.android.core.sync
 
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -38,7 +40,7 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
      * Look up the file id for [fileName] in the appDataFolder. Returns null
      * when the file doesn't exist yet (first upload path).
      */
-    suspend fun findFileId(token: String, fileName: String): String? {
+    suspend fun findFileId(token: String, fileName: String): String? = withContext(Dispatchers.IO) {
         val url = driveBase.newBuilder()
             .addQueryParameter("spaces", "appDataFolder")
             .addQueryParameter("fields", "files(id,name)")
@@ -49,7 +51,7 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
             .get()
             .header("Authorization", "Bearer $token")
             .build()
-        return runCatching {
+        runCatching {
             okHttp.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     Log.w(TAG, "findFileId $fileName -> HTTP ${resp.code}: ${resp.body?.string()}")
@@ -59,11 +61,12 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
                 val tree = json.parseToJsonElement(body).jsonObject
                 tree["files"]?.jsonArray?.firstOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.content
             }
-        }.getOrNull()
+        }.onFailure { Log.w(TAG, "findFileId $fileName threw: ${it.message}", it) }
+            .getOrNull()
     }
 
     /** Read a JSON file as a string, or null when missing/unreadable. */
-    suspend fun download(token: String, fileId: String): String? {
+    suspend fun download(token: String, fileId: String): String? = withContext(Dispatchers.IO) {
         val url = driveBase.newBuilder()
             .addPathSegment(fileId)
             .addQueryParameter("alt", "media")
@@ -73,7 +76,7 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
             .get()
             .header("Authorization", "Bearer $token")
             .build()
-        return runCatching {
+        runCatching {
             okHttp.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     Log.w(TAG, "download $fileId -> HTTP ${resp.code}")
@@ -89,14 +92,17 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
      * Create-or-update [fileName] with [contentJson]. Single round-trip uses
      * Drive's multipart upload when creating; PATCH /upload for updates.
      */
-    suspend fun upload(token: String, fileName: String, contentJson: String): Result<String> = runCatching {
-        val existing = findFileId(token, fileName)
-        if (existing == null) {
-            createMultipart(token, fileName, contentJson)
-        } else {
-            updateContent(token, existing, contentJson)
-            existing
-        }
+    suspend fun upload(token: String, fileName: String, contentJson: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val existing = findFileId(token, fileName)
+            if (existing == null) {
+                createMultipart(token, fileName, contentJson)
+            } else {
+                updateContent(token, existing, contentJson)
+                existing
+            }
+        }.onFailure { Log.w(TAG, "upload $fileName FAILED: ${it.message}", it) }
+            .onSuccess { Log.i(TAG, "upload $fileName OK -> id=$it") }
     }
 
     private fun createMultipart(token: String, fileName: String, contentJson: String): String {
@@ -104,20 +110,15 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
             put("name", JsonPrimitive(fileName))
             put("parents", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("appDataFolder"))))
         }
+        // Drive's multipart/related upload: part 1 = metadata JSON, part 2 =
+        // the file content. The per-part Content-Type MUST ride on the body's
+        // MediaType -- OkHttp rejects a "Content-Type" entry in the Part
+        // headers with IllegalArgumentException("Unexpected header: Content-Type").
+        val jsonMedia = "application/json; charset=UTF-8".toMediaType()
         val multipart = MultipartBody.Builder()
             .setType("multipart/related".toMediaType())
-            .addPart(
-                MultipartBody.Part.create(
-                    okhttp3.Headers.headersOf("Content-Type", "application/json; charset=UTF-8"),
-                    metadata.toString().toRequestBody(),
-                ),
-            )
-            .addPart(
-                MultipartBody.Part.create(
-                    okhttp3.Headers.headersOf("Content-Type", "application/json; charset=UTF-8"),
-                    contentJson.toRequestBody(),
-                ),
-            )
+            .addPart(metadata.toString().toRequestBody(jsonMedia))
+            .addPart(contentJson.toRequestBody(jsonMedia))
             .build()
         val req = Request.Builder()
             .url(uploadBase.newBuilder().addQueryParameter("uploadType", "multipart").build())
@@ -148,21 +149,23 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
     }
 
     /** Delete a file by id. Idempotent — a 404 is treated as success. */
-    suspend fun delete(token: String, fileId: String): Result<Unit> = runCatching {
-        val req = Request.Builder()
-            .url(driveBase.newBuilder().addPathSegment(fileId).build())
-            .delete()
-            .header("Authorization", "Bearer $token")
-            .build()
-        okHttp.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful && resp.code != 404) {
-                error("delete $fileId failed: HTTP ${resp.code}")
+    suspend fun delete(token: String, fileId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url(driveBase.newBuilder().addPathSegment(fileId).build())
+                .delete()
+                .header("Authorization", "Bearer $token")
+                .build()
+            okHttp.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful && resp.code != 404) {
+                    error("delete $fileId failed: HTTP ${resp.code}")
+                }
             }
         }
     }
 
     /** List all AppData file metadata (id + name + modifiedTime). */
-    suspend fun listAll(token: String): List<Pair<String, String>> {
+    suspend fun listAll(token: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
         val url = driveBase.newBuilder()
             .addQueryParameter("spaces", "appDataFolder")
             .addQueryParameter("fields", "files(id,name,modifiedTime)")
@@ -172,7 +175,7 @@ class DriveAppDataClient(private val okHttp: OkHttpClient) {
             .get()
             .header("Authorization", "Bearer $token")
             .build()
-        return runCatching {
+        runCatching {
             okHttp.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@runCatching emptyList()
                 val body = resp.body?.string().orEmpty()
