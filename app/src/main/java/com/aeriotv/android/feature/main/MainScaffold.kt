@@ -36,10 +36,10 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.M3UChannel
-import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.playback.MPVPlayerHolder
 import com.aeriotv.android.core.playback.PlaybackService
 import com.aeriotv.android.feature.dvr.DvrTabContent
+import com.aeriotv.android.feature.dvr.DvrViewModel
 import com.aeriotv.android.feature.favorites.FavoritesTabContent
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.livetv.LiveTVTabContent
@@ -49,6 +49,7 @@ import com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel
 import com.aeriotv.android.feature.onboarding.ChooseSourceTypeScreen
 import com.aeriotv.android.feature.onboarding.ConfigureSourceScreen
 import com.aeriotv.android.feature.ondemand.OnDemandTabContent
+import com.aeriotv.android.feature.ondemand.OnDemandViewModel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.AppBehaviorsSettingsScreen
@@ -90,7 +91,33 @@ fun MainScaffold(
         val visibleIds = state.channels.asSequence().map { it.id }.toHashSet()
         favorites.any { it.channelId in visibleIds }
     }
-    val tabs = visibleTabs(state, hasFavorites = hasRenderableFavorites)
+    // Dynamic On Demand + DVR tabs (iOS MainTabView.hasVOD / hasRecordings
+    // parity). Both ViewModels are hoisted here so the tabs can appear / vanish
+    // based on actual content, NOT just the source type. hiltViewModel() resolves
+    // to the SAME instance the tab body uses (shared ViewModelStoreOwner), so this
+    // adds no duplicate fetch; it just makes the eager load drive tab visibility.
+    val onDemandVm: OnDemandViewModel = hiltViewModel()
+    val onDemandState by onDemandVm.state.collectAsStateWithLifecycle()
+    // hasVOD: any movie/series loaded, OR still loading its library. The loading
+    // bridge keeps the tab from flickering "absent -> present" on cold launch /
+    // source switch; a source that finishes with zero VOD hides the tab entirely.
+    val hasVodContent = !onDemandState.unsupportedSource && (
+        onDemandState.movies.isNotEmpty() ||
+            onDemandState.series.isNotEmpty() ||
+            onDemandState.isLoading ||
+            onDemandState.isLoadingSeries
+        )
+    val dvrVm: DvrViewModel = hiltViewModel()
+    val dvrState by dvrVm.state.collectAsStateWithLifecycle()
+    // hasRecordings: at least one recording (scheduled / recording / completed,
+    // server or local) for the active source. Scheduling from the guide makes the
+    // tab appear; deleting the last recording makes it disappear.
+    val hasRecordings = dvrState.recordings.isNotEmpty()
+    val tabs = visibleTabs(
+        hasFavorites = hasRenderableFavorites,
+        hasVod = hasVodContent,
+        hasRecordings = hasRecordings,
+    )
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val miniPlayerState by miniPlayerVm.state.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -118,17 +145,25 @@ fun MainScaffold(
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.LiveTV) }
     var initialTabApplied by rememberSaveable { mutableStateOf(false) }
 
-    // First composition: honour the saved defaultTab if it's in the visible set.
-    // After that, user taps on the bottom nav win.
+    // Honour the saved defaultTab once its tab is actually available. On Demand /
+    // DVR now materialise a beat after launch (their content loads async), so we
+    // must NOT latch on the empty initial pref or while the target tab is still
+    // missing - otherwise a "default = On Demand" preference would be dropped on
+    // the floor before the tab appeared. We latch only when the target is applied;
+    // a manual tab tap also latches (see onSelect / NavigationBarItem onClick) so
+    // the default never overrides a deliberate user choice. Empty pref = Live TV
+    // (already the initial selection), so there's nothing to apply.
     LaunchedEffect(defaultTabPref, tabs) {
-        if (!initialTabApplied && defaultTabPref.isNotEmpty()) {
-            val target = AppTab.entries.firstOrNull { it.name == defaultTabPref }
-            if (target != null && target in tabs) {
+        if (initialTabApplied || defaultTabPref.isEmpty()) return@LaunchedEffect
+        val target = AppTab.entries.firstOrNull { it.name == defaultTabPref }
+        when {
+            target == null -> initialTabApplied = true
+            target in tabs -> {
                 selectedTab = target
+                initialTabApplied = true
             }
-            initialTabApplied = true
-        } else if (defaultTabPref.isEmpty()) {
-            initialTabApplied = true
+            // else: target tab not present yet (content still loading); keep
+            // waiting - this effect re-fires when `tabs` changes.
         }
     }
 
@@ -151,7 +186,7 @@ fun MainScaffold(
             TvTopTabBar(
                 tabs = tabs,
                 selected = selectedTab,
-                onSelect = { selectedTab = it },
+                onSelect = { selectedTab = it; initialTabApplied = true },
             )
             MainTabContent(
                 selectedTab = selectedTab,
@@ -210,7 +245,7 @@ fun MainScaffold(
                         val selected = tab == selectedTab
                         NavigationBarItem(
                             selected = selected,
-                            onClick = { selectedTab = tab },
+                            onClick = { selectedTab = tab; initialTabApplied = true },
                             icon = {
                                 Icon(
                                     imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
@@ -446,35 +481,29 @@ private fun SettingsTabContent() {
 }
 
 /**
- * Mirror of iOS's dynamic tab-visibility rule. Always-on tabs: Live TV, Settings.
- * Conditional tabs:
- *  - DVR: source type supports recordings (Dispatcharr or Xtream).
- *  - On Demand: source type serves VOD (Dispatcharr or Xtream).
- *  - Favorites: when the user has favorited at least one channel.
- *    Stub for now (always false until the Favorites store lands in Phase 5+).
+ * Mirror of iOS MainTabView's dynamic tab-visibility rule (HomeView.swift
+ * hasFavorites / hasRecordings / hasVOD). Always-on tabs: Live TV, Settings.
+ * Conditional tabs appear ONLY when there is real content to show, NOT merely
+ * because the source type could in theory serve it:
+ *  - Favorites: the user has favorited at least one channel in the active playlist.
+ *  - DVR: at least one recording exists (scheduled / recording / completed,
+ *    server or local) for the active source.
+ *  - On Demand: the active source has advertised any VOD (movies or series), or
+ *    is still loading its VOD library (loading bridge prevents cold-start flicker).
  *
- * Raw M3U URLs surface only Live TV + Settings - those sources cannot enumerate
- * recordings or VOD catalogues, so the conditional tabs would be empty.
+ * A bare live-TV M3U, or a Dispatcharr/Xtream source with no VOD and no
+ * recordings, surfaces only Live TV + Settings - empty tabs never appear.
  */
 internal fun visibleTabs(
-    state: PlaylistViewModel.UiState,
     hasFavorites: Boolean = false,
-): List<AppTab> {
-    val sourceType = SourceType.entries.firstOrNull { it.name == state.playlist?.sourceType }
-        ?: SourceType.M3uUrl
-    val sourceServesDvrAndVod = when (sourceType) {
-        SourceType.DispatcharrApiKey,
-        SourceType.DispatcharrUserPass,
-        SourceType.XtreamCodes -> true
-        SourceType.M3uUrl -> false
-    }
-    return buildList {
-        add(AppTab.LiveTV)
-        if (hasFavorites) add(AppTab.Favorites)
-        if (sourceServesDvrAndVod) add(AppTab.DVR)
-        if (sourceServesDvrAndVod) add(AppTab.OnDemand)
-        add(AppTab.Settings)
-    }
+    hasVod: Boolean = false,
+    hasRecordings: Boolean = false,
+): List<AppTab> = buildList {
+    add(AppTab.LiveTV)
+    if (hasFavorites) add(AppTab.Favorites)
+    if (hasRecordings) add(AppTab.DVR)
+    if (hasVod) add(AppTab.OnDemand)
+    add(AppTab.Settings)
 }
 
 /** EntryPoint accessor so MainScaffold can drive pause/destroy on the held
