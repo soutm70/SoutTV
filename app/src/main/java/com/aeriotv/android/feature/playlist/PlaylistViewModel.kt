@@ -271,7 +271,7 @@ class PlaylistViewModel @Inject constructor(
         val willHaveEpg = when (sourceType) {
             SourceType.M3uUrl -> !playlist.epgUrl.isNullOrBlank()
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> true
-            SourceType.XtreamCodes -> false
+            SourceType.XtreamCodes -> !playlist.username.isNullOrBlank()
         }
         if (!willHaveEpg) {
             Log.i(TAG, "loadEpgIfConfigured: no EPG for sourceType=${playlist.sourceType}")

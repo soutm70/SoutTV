@@ -127,6 +127,8 @@ class PlaylistRepository @Inject constructor(
             userEpgUrl = request.epgUrl,
             apiKey = resolvedApiKey,
             profileId = request.dispatcharrProfileId,
+            username = request.username,
+            password = request.password,
         )
 
         val entity = PlaylistEntity(
@@ -172,7 +174,10 @@ class PlaylistRepository @Inject constructor(
                 dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                     fetchChannelsFor(sourceType, base, playlist.epgUrl, key, playlist.dispatcharrProfileId)
                 }
-            else -> fetchChannelsFor(sourceType, base, playlist.epgUrl, playlist.apiKey, playlist.dispatcharrProfileId)
+            else -> fetchChannelsFor(
+                sourceType, base, playlist.epgUrl, playlist.apiKey, playlist.dispatcharrProfileId,
+                playlist.username, playlist.password,
+            )
         }
         dao.update(
             playlist.copy(
@@ -285,7 +290,16 @@ class PlaylistRepository @Inject constructor(
                     dispatcharrClient.getEpgGrid(base, key).toProgrammes()
                 }
             }
-            SourceType.XtreamCodes -> return@runCatching emptyList()
+            SourceType.XtreamCodes -> {
+                // Xtream EPG is a standard XMLTV feed at xmltv.php. Reuse the
+                // XMLTV parser; programmes map to channels by tvg-id like M3U.
+                val user = playlist.username?.takeIf { it.isNotBlank() }
+                    ?: return@runCatching emptyList()
+                val b = base.trimEnd('/')
+                val xmltvUrl = "$b/xmltv.php?username=${xtreamEncode(user)}" +
+                    "&password=${xtreamEncode(playlist.password.orEmpty())}"
+                XMLTVParser.parseBytes(fetcher.fetchBytes(xmltvUrl))
+            }
         }
         dao.update(playlist.copy(lastEpgRefreshedAt = System.currentTimeMillis()))
         programmes
@@ -333,7 +347,10 @@ class PlaylistRepository @Inject constructor(
                 dispatcharrAuth.withApiKeyRetry(entity.id) { key ->
                     fetchChannelsFor(sourceType, base, entity.epgUrl, key, entity.dispatcharrProfileId)
                 }
-            else -> fetchChannelsFor(sourceType, base, entity.epgUrl, entity.apiKey, entity.dispatcharrProfileId)
+            else -> fetchChannelsFor(
+                sourceType, base, entity.epgUrl, entity.apiKey, entity.dispatcharrProfileId,
+                entity.username, entity.password,
+            )
         }
         dao.update(entity.copy(channelCount = channels.size, lastRefreshedAt = System.currentTimeMillis()))
         entity to channels
@@ -362,6 +379,8 @@ class PlaylistRepository @Inject constructor(
         userEpgUrl: String?,
         apiKey: String?,
         profileId: Int? = null,
+        username: String? = null,
+        password: String? = null,
     ): List<M3UChannel> = when (sourceType) {
         SourceType.M3uUrl -> {
             val bytes = fetcher.fetchBytes(base)
@@ -415,9 +434,25 @@ class PlaylistRepository @Inject constructor(
                     )
                 }
         }
-        SourceType.XtreamCodes -> error("$sourceType is not implemented yet")
+        SourceType.XtreamCodes -> {
+            // Xtream Codes serves a standard M3U at get.php?type=m3u_plus with the
+            // real proxy stream URLs, group-title, tvg-id, and logos already in it
+            // (iOS StreamingAPIs notes the M3U carries the playable URLs). Reuse
+            // the M3U parser for live channels rather than the player_api JSON;
+            // VOD + series use the JSON client. EPG comes from xmltv.php (loadEpg).
+            val user = username?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("Xtream Codes username is required")
+            val b = base.trimEnd('/')
+            val m3uUrl = "$b/get.php?username=${xtreamEncode(user)}" +
+                "&password=${xtreamEncode(password.orEmpty())}&type=m3u_plus"
+            M3UParser.parseBytes(fetcher.fetchBytes(m3uUrl))
+        }
     }
 }
+
+/** URL-encode an Xtream credential for use in a query string. */
+private fun xtreamEncode(value: String): String =
+    java.net.URLEncoder.encode(value, "UTF-8")
 
 private fun PlaylistEntity.resolvedSourceType(): SourceType =
     SourceType.entries.firstOrNull { it.name == sourceType } ?: SourceType.M3uUrl
