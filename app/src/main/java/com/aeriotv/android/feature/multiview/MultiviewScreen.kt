@@ -52,6 +52,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.core.data.M3UChannel
+import androidx.annotation.OptIn
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.aeriotv.android.feature.player.MPVPlayerView
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.bufferMillisFor
@@ -438,68 +452,12 @@ private fun Tile(
                 onDoubleClick = onDoubleTap,
             ),
     ) {
-        // Tracks the URL the held MPV instance is currently playing. Lets
-        // `update` distinguish a channel-flip (URL changed) from an aid-only
-        // recomposition, so we call playFile (libmpv loadfile, replace mode)
-        // only when needed. Mirrors iOS swapStreamIfChanged + the in-place
-        // tile-swap pattern from commits e627ca7 / b34fa82 / 8fb0d5a.
-        val currentUrlRef = remember { mutableStateOf("") }
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                Utils.copyAssets(ctx)
-                val configDir = ctx.filesDir.path
-                val cacheDir = ctx.cacheDir.path
-                val view = MPVPlayerView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                    this.isLive = true
-                    this.caFilePath = "$configDir/cacert.pem"
-                    this.httpHeaders = httpHeaders
-                    this.cachingMs = cachingMs
-                }
-                view.initialize(configDir, cacheDir)
-                Log.i(TAG, "Tile MPV loading: ${channel.name}")
-                if (channel.url.isNotBlank()) {
-                    view.playFile(channel.url)
-                    currentUrlRef.value = channel.url
-                }
-                // Initial audio focus state. `mute` is the reliable gate: aid=no
-                // set right after playFile doesn't survive the async file load
-                // (mpv re-selects the default audio track on FILE_LOADED), which
-                // let every tile play sound at once. mute applies immediately and
-                // persists regardless of track-selection timing; aid still spares
-                // the CPU for non-focused tiles once it sticks.
-                view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
-                view.mpv.setPropertyString("mute", if (isAudioFocused) "no" else "yes")
-                // Pause non-fullscreen tiles (set when this tile is created while
-                // another is already fullscreen). Frees decode/GPU; resumes on exit.
-                view.mpv.setPropertyString("pause", if (paused) "yes" else "no")
-                view
-            },
-            update = { view ->
-                // In-place stream swap: when the positional Tile sees a new
-                // channel (via MultiviewStore.swap or replaceTile), don't
-                // teardown — just hand the new URL to the existing mpv handle.
-                if (channel.url.isNotBlank() && currentUrlRef.value != channel.url) {
-                    Log.i(TAG, "Tile MPV swap: ${currentUrlRef.value} -> ${channel.url}")
-                    view.playFile(channel.url)
-                    currentUrlRef.value = channel.url
-                }
-                view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
-                view.mpv.setPropertyString("mute", if (isAudioFocused) "no" else "yes")
-                // Fullscreen pause-not-destroy: a backgrounded (non-fullscreen)
-                // tile pauses to free decode/GPU/network; un-pauses on exit and
-                // resumes from its buffer (no reload). Surface + libmpv handle
-                // stay alive the whole time (the tile is only moved off-screen).
-                view.mpv.setPropertyString("pause", if (paused) "yes" else "no")
-            },
-            onRelease = { view ->
-                Log.i(TAG, "Tile MPV releasing: ${channel.name}")
-                view.destroy()
-            },
+        ExoTile(
+            url = channel.url,
+            channelName = channel.name,
+            httpHeaders = httpHeaders,
+            isAudioFocused = isAudioFocused,
+            paused = paused,
         )
         // Channel-name overlay (top-left). Always shown — iOS canon keeps the
         // tile's broadcast bug visible alongside the channel label.
@@ -531,5 +489,145 @@ private fun Tile(
                     .size(48.dp),
             )
         }
+    }
+}
+
+/**
+ * Per-tile Media3 ExoPlayer + PlayerView. Direct counterpart of the
+ * libmpv tile we deleted (task #63).
+ *
+ * Lifetime: factory builds one ExoPlayer per tile. update() handles
+ * channel swap (setMediaItem on the same player -- no rebuild),
+ * audio-focus changes (volume), and paused flag (playWhenReady).
+ * onRelease releases the player.
+ *
+ * Audio strategy: libmpv used `mute` because `aid=no` didn't survive
+ * the async file-load. Media3 exposes a direct `volume` (0f..1f) on
+ * Player that applies immediately and persists across setMediaItem,
+ * so the two-knob libmpv dance collapses to one knob here.
+ *
+ * Resource budget: each tile is one ExoPlayer = one MediaCodec
+ * instance + one AudioRenderer. The Streamer (MediaTek, modest 32-bit
+ * SoC) caps at ~8 concurrent MediaCodec instances; the existing
+ * Multiview UI already exposes N=1..9 tiles. If we hit
+ * MediaCodec.CONFIGURE_ERROR / INSUFFICIENT_RESOURCE we surface
+ * the failure via the player's Listener; the existing N-aware audio
+ * strategy + thermal/soft-limit/OOM guards (task #35) still apply.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun ExoTile(
+    url: String,
+    channelName: String,
+    httpHeaders: Map<String, String>,
+    isAudioFocused: Boolean,
+    paused: Boolean,
+) {
+    val currentUrlRef = remember { mutableStateOf("") }
+    val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx ->
+            // Live-stream tuning. Tighter than the VOD profile because
+            // a 9-tile grid wants every tile to start ASAP, even at
+            // the cost of an occasional rebuffer.
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(2_500, 5_000, 500, 2_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+            val dataSourceFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(30_000)
+                .setReadTimeoutMs(30_000)
+            if (httpHeaders.isNotEmpty()) {
+                dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                httpHeaders.entries
+                    .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+                    ?.value
+                    ?.let(dataSourceFactory::setUserAgent)
+            }
+            val renderersFactory = DefaultRenderersFactory(ctx)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            // Route raw .ts / /proxy/ts via TsExtractor like the Live
+            // TV holder; HLS via HlsMediaSource; everything else via
+            // the default factory. Same routing logic as
+            // AerioExoPlayerHolder.buildMediaSource. The factory is
+            // constructed per-prepare in buildTileMediaSource below
+            // rather than being passed as a top-level MediaSource.Factory,
+            // because we route by URL shape at call time.
+            val player = ExoPlayer.Builder(ctx)
+                .setRenderersFactory(renderersFactory)
+                .setLoadControl(loadControl)
+                .setHandleAudioBecomingNoisy(false) // tile is muted-by-default; don't react
+                .build()
+                .apply {
+                    volume = if (isAudioFocused) 1f else 0f
+                    playWhenReady = !paused
+                }
+            playerRef.value = player
+
+            Log.i(TAG, "Tile ExoPlayer loading: $channelName")
+            if (url.isNotBlank()) {
+                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                player.prepare()
+                currentUrlRef.value = url
+            }
+
+            PlayerView(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                useController = false
+                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                setPlayer(player)
+            }
+        },
+        update = { _ ->
+            val player = playerRef.value ?: return@AndroidView
+            // In-place stream swap: the positional Tile sees a new
+            // channel (via MultiviewStore.swap or replaceTile). Don't
+            // teardown -- hand the new URL to the same player.
+            if (url.isNotBlank() && currentUrlRef.value != url) {
+                Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
+                val dataSourceFactory = DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
+                if (httpHeaders.isNotEmpty()) {
+                    dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                }
+                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                player.prepare()
+                currentUrlRef.value = url
+            }
+            player.volume = if (isAudioFocused) 1f else 0f
+            player.playWhenReady = !paused
+        },
+        onRelease = { _ ->
+            Log.i(TAG, "Tile ExoPlayer releasing: $channelName")
+            playerRef.value?.release()
+            playerRef.value = null
+        },
+    )
+}
+
+@OptIn(UnstableApi::class)
+private fun buildTileMediaSource(
+    url: String,
+    dataSourceFactory: androidx.media3.datasource.DataSource.Factory,
+): androidx.media3.exoplayer.source.MediaSource {
+    val mediaItem = MediaItem.fromUri(url)
+    return when {
+        url.endsWith(".m3u8", ignoreCase = true) ->
+            HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        url.endsWith(".ts", ignoreCase = true) ||
+            url.contains("/proxy/ts/", ignoreCase = true) -> {
+            val extractors = DefaultExtractorsFactory()
+                .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
+            ProgressiveMediaSource.Factory(dataSourceFactory, extractors)
+                .createMediaSource(mediaItem)
+        }
+        else -> DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem)
     }
 }
