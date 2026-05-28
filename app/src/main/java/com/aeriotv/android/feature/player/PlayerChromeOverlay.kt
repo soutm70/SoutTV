@@ -98,6 +98,7 @@ fun PlayerChromeOverlay(
     channel: M3UChannel?,
     nowProgramme: EPGProgramme?,
     chromeVisible: Boolean,
+    pillVisible: Boolean = chromeVisible,
     onClose: () -> Unit,
     onAddToMultiview: () -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
@@ -232,20 +233,9 @@ fun PlayerChromeOverlay(
 
             // Info card just below the top-row. Stacks the same status-bar inset
             // so it slides down with the buttons when the system bar is taller.
-            channel?.let {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .statusBarsPadding()
-                        .padding(top = 84.dp, start = 16.dp, end = 16.dp),
-                ) {
-                    InfoCard(
-                        channel = it,
-                        programme = nowProgramme,
-                        sleepRemainingMillis = sleepRemainingMillis,
-                    )
-                }
-            }
+            // (InfoCard moved out of this AnimatedVisibility so it can be
+            //  rendered independently when the user just launched the
+            //  channel; see the second AnimatedVisibility block below.)
 
             // Bottom progress + remaining row. navigationBarsPadding keeps the
             // copy clear of the system gesture handle.
@@ -284,6 +274,34 @@ fun PlayerChromeOverlay(
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    // Info pill (channel logo + name + programme) -- a SECOND
+    // AnimatedVisibility, gated on `pillVisible`. PlayerScreen sets
+    // pillVisible to true for a few seconds after the channel launches
+    // (a "what am I watching" hint) AND whenever chromeVisible is true
+    // (so it reads alongside the rest of the chrome on a back press).
+    AnimatedVisibility(
+        visible = pillVisible && !inPip,
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        channel?.let {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(top = 84.dp, start = 16.dp, end = 16.dp),
+            ) {
+                Box(modifier = Modifier.align(Alignment.TopStart)) {
+                    InfoCard(
+                        channel = it,
+                        programme = nowProgramme,
+                        sleepRemainingMillis = sleepRemainingMillis,
                     )
                 }
             }

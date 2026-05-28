@@ -211,6 +211,21 @@ fun PlayerScreen(
 
     // Chrome + ad-hoc sub-modal state.
     // chromeVisible declared above (before the BackHandler).
+
+    // Launch-hint: the info pill appears briefly when the user just opened
+    // a channel, then auto-hides. Independent of chromeVisible so the
+    // initial "what am I watching" hint doesn't drag the rest of the
+    // chrome (close button, control bar, dim scrim) with it. After the
+    // first auto-hide the pill follows chromeVisible (i.e. the Back-press
+    // path surfaces it alongside the full chrome).
+    var launchHintActive by remember { mutableStateOf(true) }
+    LaunchedEffect(currentChannel?.id) {
+        // Re-arm whenever the user channel-flips to a new id.
+        launchHintActive = true
+        kotlinx.coroutines.delay(AUTO_HIDE_MS)
+        launchHintActive = false
+    }
+    val pillVisible = chromeVisible || launchHintActive
     var audioOnly by remember { mutableStateOf(false) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var streamInfo by remember { mutableStateOf<StreamInfoSnapshot?>(null) }
@@ -294,6 +309,7 @@ fun PlayerScreen(
             channel = currentChannel,
             nowProgramme = nowProgramme,
             chromeVisible = chromeVisible,
+            pillVisible = pillVisible,
             // Explicit X tap = user is done with this channel; clear the mini-player
             // session, destroy the held MPV instance, and stop the background
             // PlaybackService so the notification disappears. System back keeps
