@@ -66,6 +66,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.size.Size
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
@@ -538,8 +540,24 @@ private fun InfoCard(
                 contentAlignment = Alignment.Center,
             ) {
                 if (channel.tvgLogo.isNotBlank()) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    // Phase 174: force Coil to decode at the source's
+                    // original resolution + let GPU filtering scale it
+                    // down to the 40dp display target. Coil's default
+                    // Precision.AUTOMATIC samples to the View's pixel
+                    // bounds (44dp box = ~88px on the Streamer at
+                    // density 2.0), which makes a 256x256 logo bitmap
+                    // collapse to ~80x80 with noticeable softness. With
+                    // Size.ORIGINAL the bitmap arrives in memory at
+                    // native resolution and the GPU does the bilinear
+                    // downscale -- visibly sharper at the cost of a
+                    // few KB extra RAM per cached logo (fine for a
+                    // single chrome pill at a time).
                     AsyncImage(
-                        model = channel.tvgLogo,
+                        model = ImageRequest.Builder(ctx)
+                            .data(channel.tvgLogo)
+                            .size(Size.ORIGINAL)
+                            .build(),
                         contentDescription = null,
                         modifier = Modifier.size(40.dp),
                     )

@@ -764,8 +764,17 @@ private fun ChannelGuideRow(
                         contentAlignment = Alignment.Center,
                     ) {
                         if (channel.tvgLogo.isNotBlank()) {
+                            val ctx = androidx.compose.ui.platform.LocalContext.current
+                            // Phase 174: decode at 128x128 px so the
+                            // downsample to ~60x36 px display happens
+                            // via GPU bilinear rather than CPU
+                            // box-filter. Sharper text/glyphs in
+                            // logos that would otherwise look mushy.
                             AsyncImage(
-                                model = channel.tvgLogo,
+                                model = coil3.request.ImageRequest.Builder(ctx)
+                                    .data(channel.tvgLogo)
+                                    .size(128, 128)
+                                    .build(),
                                 contentDescription = null,
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -809,8 +818,14 @@ private fun ChannelGuideRow(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (channel.tvgLogo.isNotBlank()) {
+                        val ctx2 = androidx.compose.ui.platform.LocalContext.current
+                        // Phase 174: sharper logo decode (see neighbour
+                        // AsyncImage rationale above).
                         AsyncImage(
-                            model = channel.tvgLogo,
+                            model = coil3.request.ImageRequest.Builder(ctx2)
+                                .data(channel.tvgLogo)
+                                .size(128, 128)
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier.size(logoImage),
                         )
