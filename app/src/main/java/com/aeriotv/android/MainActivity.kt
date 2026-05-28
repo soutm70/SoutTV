@@ -19,6 +19,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.aeriotv.android.core.pip.enterPip16x9
 import com.aeriotv.android.core.playback.PlaybackService
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,9 +27,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.aeriotv.android.core.pip.PipState
+import com.aeriotv.android.core.playback.MPVPlayerHolder
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.core.system.NotificationPermissionGate
 import com.aeriotv.android.feature.miniplayer.MiniPlayerSession
+import com.aeriotv.android.feature.player.MpvWindowState
+import com.aeriotv.android.feature.player.PersistentMpvWindow
 import com.aeriotv.android.feature.splash.SplashGate
 import com.aeriotv.android.ui.theme.AerioTVTheme
 import com.aeriotv.android.ui.theme.AppTheme
@@ -40,6 +44,8 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var miniPlayerSession: MiniPlayerSession
+    @Inject lateinit var mpvHolder: MPVPlayerHolder
+    @Inject lateinit var mpvWindowState: MpvWindowState
 
     /**
      * Most recent deep-link target the activity has received from a
@@ -254,13 +260,26 @@ class MainActivity : ComponentActivity() {
                 ) {
                     NotificationPermissionGate()
                     SplashGate {
-                        AerioTVNavHost(
-                            initialUrl = initialUrl,
-                            initialEpgUrl = initialEpgUrl,
-                            initialApiKey = initialApiKey,
-                            deepLinkTarget = deepLinkTarget.value,
-                            onDeepLinkConsumed = { deepLinkTarget.value = null },
-                        )
+                        // Phase 165: PersistentMpvWindow lives as a SIBLING
+                        // of NavHost inside an outer Box. The video
+                        // SurfaceView is mounted ONCE at this scope and
+                        // never changes parents -- only its modifier
+                        // (Hidden / Fullscreen / Mini) flips. PlayerScreen
+                        // and TvMiniPlayerOverlay update MpvWindowState
+                        // instead of owning their own AndroidView.
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            AerioTVNavHost(
+                                initialUrl = initialUrl,
+                                initialEpgUrl = initialEpgUrl,
+                                initialApiKey = initialApiKey,
+                                deepLinkTarget = deepLinkTarget.value,
+                                onDeepLinkConsumed = { deepLinkTarget.value = null },
+                            )
+                            PersistentMpvWindow(
+                                mpvHolder = mpvHolder,
+                                state = mpvWindowState,
+                            )
+                        }
                     }
                 }
             }

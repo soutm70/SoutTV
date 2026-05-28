@@ -85,12 +85,14 @@ fun PlayerScreen(
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val appleTVChannelFlip by settingsVm.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
-    val mpvHolder = remember {
+    val playerEntry = remember {
         EntryPointAccessors.fromApplication(
             context.applicationContext,
             PlayerScreenEntryPoint::class.java,
-        ).mpvPlayerHolder()
+        )
     }
+    val mpvHolder = remember { playerEntry.mpvPlayerHolder() }
+    val mpvWindowState = remember { playerEntry.mpvWindowState() }
 
     // Channel-flip state. The MPV view stays alive across flips; only the
     // current channel index changes and we call playFile again with the new URL.
@@ -124,9 +126,30 @@ fun PlayerScreen(
     // PlaybackService is still running with the notification surfaced and MPV
     // in audio-only mode. Stop the service (we're foreground again) and flip
     // video output back on.
+    //
+    // Phase 165: also request the PersistentMpvWindow into Fullscreen mode
+    // so the SurfaceView (mounted at MainActivity root) fills the screen
+    // beneath our chrome overlays.
     LaunchedEffect(Unit) {
         PlaybackService.stop(context)
         mpvHolder.setVideoEnabled(true)
+        mpvWindowState.requestFullscreen()
+    }
+
+    // Channel-switch / first-mount playFile: when the held MPV is on a
+    // different channel than the user just selected, swap streams. Because
+    // the SurfaceView is persistent (Phase 165) we never have to wait for
+    // it to attach -- if mpvHolder.view exists, vo is already wired.
+    LaunchedEffect(currentChannel?.id) {
+        val channelId = currentChannel?.id ?: return@LaunchedEffect
+        val url = currentChannel?.url ?: return@LaunchedEffect
+        if (url.isBlank()) return@LaunchedEffect
+        val view = mpvHolder.view
+        if (view != null && mpvHolder.currentChannelId != channelId) {
+            Log.i(TAG, "Channel switch on persistent view -> $url")
+            view.playFile(url)
+            mpvHolder.currentChannelId = channelId
+        }
     }
 
     // System back intercept. Two flavours:
@@ -145,15 +168,19 @@ fun PlayerScreen(
         ) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     androidx.activity.compose.BackHandler {
         if (isTvForm) {
-            // TV mini-player disabled (see TvMiniPlayerOverlay top comment).
-            // Treat Back as a clean fullscreen close: tear down MPV,
-            // pop back to the guide. No mini state transition since the
-            // overlay no longer renders.
-            mpvHolder.destroy()
+            // Phase 165: persistent-SurfaceView mini path. Flip the root-
+            // level PersistentMpvWindow into Mini mode (210x118 top-right),
+            // promote the MiniPlayerSession to Active so
+            // TvMiniPlayerOverlay's hint chip renders. The SurfaceView
+            // never reparents -- only its size + position. No reload, no
+            // ANR, no fresh-handle race. The stream just keeps playing.
+            mpvWindowState.requestMini()
+            miniPlayerVm.showMiniPlayer()
         } else {
             miniPlayerVm.showMiniPlayer()
             currentChannel?.let { ch ->
                 mpvHolder.setVideoEnabled(false)
+                mpvWindowState.hide()
                 PlaybackService.startBackground(
                     context = context,
                     title = ch.name,
@@ -179,7 +206,9 @@ fun PlayerScreen(
     var sleepEndsAt by remember { mutableStateOf<Long?>(null) }
     var sleepRemainingMillis by remember { mutableStateOf<Long?>(null) }
 
-    var mpvView by remember { mutableStateOf<MPVPlayerView?>(null) }
+    // Phase 165: mpvView is now derived from mpvHolder.view (single
+    // persistent View at root). Kept as a local val inside the chrome
+    // Box below for parity with the old factory-captured reference.
 
     // Publish playback state for the activity's leave-the-app handling: video
     // (not audio-only) auto-enters PiP; audio-only instead keeps a background
@@ -198,130 +227,19 @@ fun PlayerScreen(
 
     val streamUrl = currentChannel?.url.orEmpty()
 
-    // Player background MUST be black -- not the app's navy app-background --
-    // so:
-    //   1. The brief gap between AndroidView mounting and the SurfaceView's
-    //      first decoded frame reads as a "video loading" black instead of a
-    //      navy rectangle floating in the player chrome. iOS uses pure black
-    //      here for the same reason.
-    //   2. Non-16:9 streams letterbox to black bars (the rest of the player
-    //      surface) rather than navy bars, matching every video player on
-    //      every platform.
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black),
-    ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                val configDir = ctx.filesDir.path
-                val cacheDir = ctx.cacheDir.path
-                val cachingMs = com.aeriotv.android.feature.settings.bufferMillisFor(streamBufferSize)
-                val fresh = mpvHolder.view == null
-                val view = mpvHolder.acquireOrCreate(
-                    context = ctx,
-                    caFilePath = "$configDir/cacert.pem",
-                    cachingMs = cachingMs,
-                    isLive = isLive,
-                    httpHeaders = httpHeaders,
-                    configDir = configDir,
-                    cacheDir = cacheDir,
-                )
-                if (fresh) {
-                    // Observer registration MUST land before playFile.
-                    // Earlier attempt to reorder (Phase 79) was reverted
-                    // alongside the warmup -- on at least one device the
-                    // playFile-first ordering correlated with streams
-                    // never producing a first frame. Until that's
-                    // properly isolated, keep the known-good order:
-                    // observers first, loadfile second.
-                    view.mpv.addLogObserver(object : MPV.LogObserver {
-                        override fun logMessage(prefix: String, level: Int, text: String) {
-                            // DEBUG-only: this fires for every libmpv log line (dozens/sec).
-                            // On a passively-cooled Android TV that per-line Log.i churn
-                            // measurably adds jank (iOS pulled its mpv log level back to
-                            // warn/error for the same reason).
-                            if (BuildConfig.DEBUG) Log.i(TAG, "[mpv $prefix/L$level] ${text.trimEnd()}")
-                        }
-                    })
-                    view.mpv.addObserver(object : MPV.EventObserver {
-                        // Tap-to-first-frame timing. The user taps a channel
-                        // -> view.playFile fires -> MPV starts the loadfile
-                        // pipeline -> START_FILE event -> FILE_LOADED event
-                        // -> first VIDEO_RECONFIG (first decoded frame ready)
-                        // -> PLAYBACK_RESTART (first frame presented). The
-                        // PLAYBACK_RESTART offset from START_FILE is the
-                        // user-visible "wait time" we're optimizing.
-                        var loadStartedAt = 0L
-                        override fun eventProperty(property: String) {}
-                        override fun eventProperty(property: String, value: Long) {}
-                        override fun eventProperty(property: String, value: Boolean) {}
-                        override fun eventProperty(property: String, value: String) {}
-                        override fun eventProperty(property: String, value: Double) {}
-                        override fun eventProperty(property: String, value: MPVNode) {}
-                        override fun event(eventId: Int, data: MPVNode) {
-                            if (eventId == MPVEvents.START_FILE) {
-                                loadStartedAt = android.os.SystemClock.elapsedRealtime()
-                            }
-                            // Per-event logging is DEBUG-only too (VIDEO_RECONFIG can
-                            // fire repeatedly on 4K). Native crashes still surface via
-                            // logcat tags (AndroidRuntime/DEBUG/SurfaceFlinger) + tombstones.
-                            if (!BuildConfig.DEBUG) return
-                            val label = when (eventId) {
-                                MPVEvents.START_FILE -> "START_FILE"
-                                MPVEvents.FILE_LOADED -> "FILE_LOADED"
-                                MPVEvents.END_FILE -> "END_FILE"
-                                MPVEvents.VIDEO_RECONFIG -> "VIDEO_RECONFIG"
-                                MPVEvents.AUDIO_RECONFIG -> "AUDIO_RECONFIG"
-                                MPVEvents.PLAYBACK_RESTART -> "PLAYBACK_RESTART"
-                                MPVEvents.SEEK -> "SEEK"
-                                MPVEvents.SHUTDOWN -> "SHUTDOWN"
-                                else -> "event#$eventId"
-                            }
-                            if (eventId == MPVEvents.PLAYBACK_RESTART && loadStartedAt > 0) {
-                                val ms = android.os.SystemClock.elapsedRealtime() - loadStartedAt
-                                Log.i(TAG, "mpv $label (tap-to-first-frame: ${ms}ms)")
-                            } else {
-                                Log.i(TAG, "mpv $label")
-                            }
-                        }
-                    })
-                    if (streamUrl.isNotBlank()) {
-                        Log.i(TAG, "Loading initial stream: $streamUrl")
-                        view.playFile(streamUrl)
-                        mpvHolder.currentChannelId = currentChannel?.id
-                    }
-                } else if (mpvHolder.currentChannelId != currentChannel?.id && streamUrl.isNotBlank()) {
-                    // Resuming on a different channel than what's held — swap.
-                    view.playFile(streamUrl)
-                    mpvHolder.currentChannelId = currentChannel?.id
-                }
-                mpvView = view
-                view
-            },
-            onRelease = { view ->
-                // Detach from this composition's frame but DON'T destroy MPV.
-                // Either the user navigated back (BackHandler started the
-                // background service and MPVHolder retains MPV) or the user
-                // hit X-close (handled separately, which calls mpvHolder.destroy).
-                Log.i(TAG, "PlayerScreen composable released; detaching MPV view")
-                mpvView = null
-                mpvHolder.detach()
-            },
-        )
-
-        // Channel-flip side effect — when currentIndex changes (e.g. via swipe),
-        // hand the new URL to the live MPV instance. Keeping the instance alive
-        // avoids the multi-second native-init cost of recreating it per channel.
-        LaunchedEffect(currentIndex) {
-            val view = mpvView
-            val url = currentChannel?.url
-            if (view != null && !url.isNullOrBlank() && currentIndex != initialIndex) {
-                Log.i(TAG, "Channel flip -> $url")
-                view.playFile(url)
-            }
-        }
+    // Phase 165: the video SurfaceView is no longer created here. It's
+    // mounted at MainActivity root by PersistentMpvWindow and resized via
+    // MpvWindowState (requested fullscreen in the LaunchedEffect above).
+    // Our chrome (controls, tap-target, dim, sheets) renders ABOVE the
+    // root-level video automatically thanks to SurfaceView's default
+    // z-order, which composites the surface BELOW the window's main UI
+    // layer. The wrapping Box here is the chrome canvas -- transparent
+    // background so the persistent video shows through.
+    //
+    // mpvView is a derived view-into-the-holder so the chrome callbacks
+    // (onShowStreamInfo / onShowSubtitles / etc.) keep working.
+    val mpvView: MPVPlayerView? = mpvHolder.view
+    Box(modifier = Modifier.fillMaxSize()) {
 
         // Transparent tap-target above the video to toggle chrome. Vertical drag
         // on the same layer (while chrome is visible) flips to next/prev channel.
@@ -653,4 +571,5 @@ private fun Double.roundToOneDecimal(): String = String.format(Locale.US, "%.1f"
 @InstallIn(SingletonComponent::class)
 interface PlayerScreenEntryPoint {
     fun mpvPlayerHolder(): MPVPlayerHolder
+    fun mpvWindowState(): MpvWindowState
 }
