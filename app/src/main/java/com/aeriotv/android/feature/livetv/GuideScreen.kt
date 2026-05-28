@@ -43,7 +43,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MAX
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MIN
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -489,6 +491,12 @@ fun GuideScreen(
             }
         }
 
+        // Audit task #57: when the guide is showing on TV, route D-pad UP off
+        // the top row to the section pills (LocalTvTopNavFocusRequester),
+        // rather than letting the `focusGroup` below trap focus inside the
+        // grid. `null` on phone (the CompositionLocal is unset off-TV) so
+        // the .then(...) call is a no-op.
+        val topNavRequester = LocalTvTopNavFocusRequester.current
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -496,6 +504,11 @@ fun GuideScreen(
                 // Treat the grid as one focus group so D-pad DOWN from the chips
                 // / top bar reliably descends into the programme cells on TV.
                 .focusGroup()
+                .then(
+                    if (topNavRequester != null) {
+                        Modifier.focusProperties { up = topNavRequester }
+                    } else Modifier
+                )
                 // Pinch-to-zoom the timeline. Custom detector that only acts on
                 // two-or-more pointers so single-finger pans still reach the
                 // LazyColumn's vertical scroll + the rows' horizontal scroll.

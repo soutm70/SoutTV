@@ -20,15 +20,20 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -63,6 +68,20 @@ import com.aeriotv.android.feature.settings.SettingsScreen
 import com.aeriotv.android.feature.settings.SettingsSection
 import com.aeriotv.android.feature.settings.SettingsSubScreenPlaceholder
 import com.aeriotv.android.feature.settings.SettingsViewModel
+
+/**
+ * App-scoped [FocusRequester] for the Android TV top tab bar's "current"
+ * focusable surface (the Row of pills, with [Modifier.focusRestorer] so a
+ * re-entry restores the previously-focused pill).
+ *
+ * Section-level composables (GuideScreen first) read this and attach
+ * `Modifier.focusProperties { up = it }` to their top-most focusable so
+ * D-pad UP from the top row of the guide jumps focus back to the pills
+ * instead of being trapped inside the `focusGroup()` (audit task #57).
+ *
+ * `null` on phone shell — the CompositionLocal is only filled on TV.
+ */
+val LocalTvTopNavFocusRequester = staticCompositionLocalOf<FocusRequester?> { null }
 
 /**
  * Top-level scaffold once a playlist is loaded. Mirrors iOS MainTabView with the
@@ -185,27 +204,36 @@ fun MainScaffold(
         // 184dp here gives a small breathing margin under the hint chip.
         val miniActive = miniPlayerState is MiniPlayerSession.State.Active
         val tvMiniTopShift = if (miniActive) 184.dp else 0.dp
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .padding(top = tvMiniTopShift),
-        ) {
-            TvTopTabBar(
-                tabs = tabs,
-                selected = selectedTab,
-                onSelect = { selectedTab = it; initialTabApplied = true },
-            )
-            MainTabContent(
-                selectedTab = selectedTab,
-                onChannelClick = onChannelClick,
-                onMovieClick = onMovieClick,
-                onSeriesClick = onSeriesClick,
-                onEpisodeResume = onEpisodeResume,
+        // Audit #57: a single FocusRequester bound to the tab-bar Row. The
+        // Row uses focusRestorer() so re-entry from a section restores the
+        // pill the user last focused (typically the currently-selected one).
+        // Section composables read it via LocalTvTopNavFocusRequester and
+        // route D-pad UP from their topmost focusable here.
+        val topNavRequester = remember { FocusRequester() }
+        CompositionLocalProvider(LocalTvTopNavFocusRequester provides topNavRequester) {
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-            )
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(top = tvMiniTopShift),
+            ) {
+                TvTopTabBar(
+                    tabs = tabs,
+                    selected = selectedTab,
+                    onSelect = { selectedTab = it; initialTabApplied = true },
+                    focusRequester = topNavRequester,
+                )
+                MainTabContent(
+                    selectedTab = selectedTab,
+                    onChannelClick = onChannelClick,
+                    onMovieClick = onMovieClick,
+                    onSeriesClick = onSeriesClick,
+                    onEpisodeResume = onEpisodeResume,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+            }
         }
         return
     }
@@ -322,12 +350,19 @@ private fun MainTabContent(
  * 10-foot top navigation for Android TV. A horizontal, D-pad-traversable row of
  * pill tabs with overscan-safe margins. Selection follows focus (tvOS TabView
  * behaviour): landing on a tab switches to it; pressing DOWN drops into content.
+ *
+ * Audit task #57: [focusRequester] is attached to the pill Row and combined
+ * with [Modifier.focusRestorer]. When a section calls `focusRequester
+ * .requestFocus()` (via the D-pad UP route from the guide), focus lands on
+ * the previously-focused pill rather than the first one — so the user comes
+ * back exactly where they left.
  */
 @Composable
 private fun TvTopTabBar(
     tabs: List<AppTab>,
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
+    focusRequester: FocusRequester,
 ) {
     // tvOS-style floating nav: the tabs are grouped into one centered, rounded
     // "segmented" capsule over the app background (no full-width surface toolbar
@@ -340,6 +375,8 @@ private fun TvTopTabBar(
     ) {
         Row(
             modifier = Modifier
+                .focusRequester(focusRequester)
+                .focusRestorer()
                 .clip(RoundedCornerShape(30.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                 .padding(horizontal = 6.dp, vertical = 6.dp),
