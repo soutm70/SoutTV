@@ -58,6 +58,15 @@ class DvrViewModel @Inject constructor(
          * recording is still in-progress / scheduled / failed.
          */
         val playbackUrl: String? = null,
+        /**
+         * Dispatcharr channel id this recording is for (audit task #50
+         * watch-live). Populated on server recordings from the
+         * Dispatcharr API response; null on local recordings (the source
+         * channel isn't persisted in LocalRecordingEntity). The DVR tab
+         * surfaces a "Watch Live" action when a server recording is
+         * Recording (in-progress) and this id is non-null.
+         */
+        val dispatcharrChannelId: Int? = null,
     ) {
         enum class Status { Scheduled, Recording, Completed, Failed, Stopped, Unknown }
     }
@@ -354,6 +363,7 @@ private fun DispatcharrRecording.toRecording(): DvrViewModel.Recording {
         endMillis = end,
         status = status,
         fileSizeBytes = fileSize ?: 0L,
+        dispatcharrChannelId = channel,
     )
 }
 

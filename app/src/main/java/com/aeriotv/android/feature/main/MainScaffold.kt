@@ -96,6 +96,7 @@ fun MainScaffold(
     onEpisodeResume: (String) -> Unit = {},
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
     onLaunchMultiview: () -> Unit = {},
+    onWatchLive: (Int) -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -233,6 +234,7 @@ fun MainScaffold(
                     onEpisodeResume = onEpisodeResume,
                     onPlayRecording = onPlayRecording,
                     onLaunchMultiview = onLaunchMultiview,
+                    onWatchLive = onWatchLive,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -318,6 +320,7 @@ fun MainScaffold(
             onEpisodeResume = onEpisodeResume,
             onPlayRecording = onPlayRecording,
             onLaunchMultiview = onLaunchMultiview,
+            onWatchLive = onWatchLive,
             modifier = Modifier.padding(padding),
         )
     }
@@ -337,6 +340,7 @@ private fun MainTabContent(
     onEpisodeResume: (String) -> Unit,
     onPlayRecording: (String, String) -> Unit,
     onLaunchMultiview: () -> Unit,
+    onWatchLive: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -346,7 +350,10 @@ private fun MainTabContent(
                 onLaunchMultiview = onLaunchMultiview,
             )
             AppTab.Favorites -> FavoritesTabContent(onChannelClick = onChannelClick)
-            AppTab.DVR -> DvrTabContent(onPlayRecording = onPlayRecording)
+            AppTab.DVR -> DvrTabContent(
+                onPlayRecording = onPlayRecording,
+                onWatchLive = onWatchLive,
+            )
             AppTab.OnDemand -> OnDemandTabContent(
                 onMovieClick = { movie -> onMovieClick(movie.uuid) },
                 onSeriesClick = { series -> onSeriesClick(series.id) },

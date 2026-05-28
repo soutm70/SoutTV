@@ -407,6 +407,22 @@ fun AerioTVNavHost(
                     onLaunchMultiview = {
                         navController.navigate(Routes.MULTIVIEW)
                     },
+                    onWatchLive = { dispatcharrChannelId ->
+                        // Audit task #50 watch-live: the DVR tab only fires
+                        // this on a server-side Recording row whose dispatcharr
+                        // channel id maps to a row in the active playlist's
+                        // channels (the M3U mapper attaches the int id). When
+                        // the lookup misses (e.g. user switched playlists and
+                        // recordings refer to channels no longer in the
+                        // current source), silently drop.
+                        val ch = state.channels.firstOrNull {
+                            it.dispatcharrChannelId == dispatcharrChannelId &&
+                                it.url.isNotBlank()
+                        }
+                        if (ch != null) {
+                            navController.navigate(Routes.player(ch.id))
+                        }
+                    },
                 )
             }
 

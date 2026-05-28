@@ -79,6 +79,7 @@ import java.util.Date
 fun DvrTabContent(
     modifier: Modifier = Modifier,
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
+    onWatchLive: (Int) -> Unit = {},
     viewModel: DvrViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -213,6 +214,12 @@ fun DvrTabContent(
                     rec = rec,
                     onEdit = { pendingEdit = rec },
                     onDelete = { pendingDelete = rec },
+                    onWatchLive = {
+                        // Audit task #50 watch-live: only Server + Recording
+                        // rows that carry a dispatcharrChannelId offer this
+                        // action via the menu, so a non-null is expected.
+                        rec.dispatcharrChannelId?.let { onWatchLive(it) }
+                    },
                     onPlay = {
                         // Audit task #43: local recordings have a file:// URL
                         // resolved at toRecording() time; route to the VOD
@@ -468,6 +475,7 @@ private fun RecordingRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onPlay: () -> Unit,
+    onWatchLive: () -> Unit,
     onSaveToDevice: () -> Unit,
     onRemoveCommercials: () -> Unit,
     onStopRecording: () -> Unit,
@@ -554,6 +562,7 @@ private fun RecordingRow(
             onEdit = onEdit,
             onDelete = onDelete,
             onPlay = onPlay,
+            onWatchLive = onWatchLive,
             onSaveToDevice = onSaveToDevice,
             onRemoveCommercials = onRemoveCommercials,
             onStopRecording = onStopRecording,
@@ -622,6 +631,7 @@ private fun RecordingActionMenu(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onPlay: () -> Unit,
+    onWatchLive: () -> Unit,
     onSaveToDevice: () -> Unit,
     onRemoveCommercials: () -> Unit,
     onStopRecording: () -> Unit,
@@ -657,6 +667,18 @@ private fun RecordingActionMenu(
         }
 
         if (isInProgress && isServer) {
+            // Audit task #50 watch-live. Only offered on server-side
+            // in-progress recordings that carry a Dispatcharr channel id
+            // (every API-sourced recording does). Local recordings can't
+            // surface this because LocalRecordingEntity doesn't persist
+            // the source channel id.
+            if (rec.dispatcharrChannelId != null) {
+                DropdownMenuItem(
+                    text = { Text("Watch Live") },
+                    leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    onClick = { onDismiss(); onWatchLive() },
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Stop Recording") },
                 leadingIcon = { Icon(Icons.Outlined.Stop, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
