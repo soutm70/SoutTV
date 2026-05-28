@@ -24,6 +24,7 @@ import com.aeriotv.android.ui.scale.WithDisplayScale
 fun LiveTVTabContent(
     onChannelClick: (M3UChannel) -> Unit,
     modifier: Modifier = Modifier,
+    onLaunchMultiview: () -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -68,6 +69,7 @@ fun LiveTVTabContent(
             viewMode = mode,
             canToggleViewMode = canToggle,
             onToggleViewMode = toggleMode,
+            onLaunchMultiview = onLaunchMultiview,
         )
     }
 }

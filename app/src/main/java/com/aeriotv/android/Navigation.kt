@@ -404,6 +404,9 @@ fun AerioTVNavHost(
                     onPlayRecording = { playbackUrl, title ->
                         navController.navigate(Routes.recordingPlayer(playbackUrl, title))
                     },
+                    onLaunchMultiview = {
+                        navController.navigate(Routes.MULTIVIEW)
+                    },
                 )
             }
 

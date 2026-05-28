@@ -130,6 +130,7 @@ fun GuideScreen(
     viewMode: LiveTVViewMode,
     canToggleViewMode: Boolean,
     onToggleViewMode: () -> Unit,
+    onLaunchMultiview: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -141,6 +142,12 @@ fun GuideScreen(
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val epgWindowHours by settingsVm.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
     val multiviewStore = rememberMultiviewStoreHandle()
+    // Audit task #22: staged-channel banner. When the user has added at
+    // least one channel to Multiview (via the row context menu / long
+    // press), surface a "X channels staged" pill with a Play button at
+    // the top of the guide so they can launch without backing out to the
+    // dedicated tab.
+    val stagedMultiview by multiviewStore.selected.collectAsStateWithLifecycle()
     // tvOS-style guide controls: a search field toggle + a group on/off filter.
     val hiddenGroups by settingsVm.hiddenGroups.collectAsStateWithLifecycle(initialValue = emptySet())
     var searchActive by remember { mutableStateOf(false) }
@@ -318,6 +325,47 @@ fun GuideScreen(
     // (clock/battery overlap the All/Sports pills). No-op on Android TV (no status
     // bar). Matches ChannelListScreen's top-inset behaviour.
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
+        // Audit task #22: multiview staging banner. Visible only when at
+        // least one channel has been added to Multiview. Tapping the Play
+        // button launches the dedicated Multiview screen; tapping the chip
+        // body itself does the same so D-pad-focused users on TV can press
+        // OK from any column of the row.
+        if (stagedMultiview.isNotEmpty()) {
+            val labelCount = stagedMultiview.size
+            val label = "$labelCount Multiview channel${if (labelCount == 1) "" else "s"} staged"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (isTv) 24.dp else 12.dp, vertical = 8.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                    .clickable(onClick = onLaunchMultiview)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ViewList,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.size(10.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onLaunchMultiview) {
+                    Text(
+                        text = "Play Multiview",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
         // Jump-to-now scroller. Coroutine-driven so animateScrollTo can
         // suspend; matches iOS EPGGuideView's "scroll back to now" button
         // which snaps the time axis so the now-indicator sits ~1/4 of the
