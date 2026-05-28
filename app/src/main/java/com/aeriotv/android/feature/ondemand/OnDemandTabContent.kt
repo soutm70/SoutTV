@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -214,30 +217,11 @@ private fun MoviesSubScreen(
     val movieByUuid = remember(state.movies) { state.movies.associateBy { it.uuid } }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = viewModel::setSearchQuery,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            singleLine = true,
-            placeholder = { Text("Search movies") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            trailingIcon = if (state.searchQuery.isNotEmpty()) {
-                {
-                    IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Clear search",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            } else null,
-            shape = RoundedCornerShape(14.dp),
-            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
-                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
-            ),
+        VodSearchField(
+            query = state.searchQuery,
+            onQueryChange = viewModel::setSearchQuery,
+            placeholder = "Search movies",
+            isTv = isTv,
         )
 
         if (continueWatching.isNotEmpty() && state.searchQuery.isBlank()) {
@@ -343,30 +327,11 @@ private fun SeriesSubScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = state.seriesSearchQuery,
-            onValueChange = viewModel::setSeriesSearchQuery,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            singleLine = true,
-            placeholder = { Text("Search series") },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            trailingIcon = if (state.seriesSearchQuery.isNotEmpty()) {
-                {
-                    IconButton(onClick = { viewModel.setSeriesSearchQuery("") }) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = "Clear search",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            } else null,
-            shape = RoundedCornerShape(14.dp),
-            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
-                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
-            ),
+        VodSearchField(
+            query = state.seriesSearchQuery,
+            onQueryChange = viewModel::setSeriesSearchQuery,
+            placeholder = "Search series",
+            isTv = isTv,
         )
 
         if (continueWatchingEpisodes.isNotEmpty() && state.seriesSearchQuery.isBlank()) {
@@ -832,4 +797,115 @@ private fun EmptyState(title: String, body: String) {
 private enum class OnDemandSection(val label: String, val icon: ImageVector) {
     Movies(label = "Movies", icon = Icons.Outlined.Movie),
     Series(label = "Series", icon = Icons.Outlined.Tv),
+}
+
+/**
+ * Search field that behaves differently on TV vs phone (audit task #30).
+ * On a 10-foot UI the always-on TextField was a focus trap -- D-pad DOWN
+ * from the section pills landed on the soft IME, and there's no easy way
+ * to get back into the grid without entering text. Toggle-to-search keeps
+ * the field collapsed behind a magnifier icon by default, expands it only
+ * when the user presses the icon, and auto-focuses the field so the
+ * remote keyboard is immediately useful.
+ *
+ * On phone / tablet, the field is always visible (matches the iOS phone
+ * UX). The collapse-with-X-button when expanded mirrors iOS's TV behavior
+ * so the user can dismiss the keyboard without clearing query first.
+ */
+@Composable
+private fun VodSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    isTv: Boolean,
+) {
+    if (!isTv) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            singleLine = true,
+            placeholder = { Text(placeholder) },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            trailingIcon = if (query.isNotEmpty()) {
+                {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Clear search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            } else null,
+            shape = RoundedCornerShape(14.dp),
+            keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+            ),
+        )
+        return
+    }
+    // TV: collapsed unless the user explicitly expands. A non-empty query
+    // forces expansion so a saved state restoration doesn't strand the
+    // user with a filter they can't see.
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    if (query.isNotEmpty()) expanded = true
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+    if (!expanded) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            IconButton(onClick = { expanded = true }) {
+                Icon(
+                    imageVector = Icons.Outlined.Search,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .focusRequester(focusRequester),
+        singleLine = true,
+        placeholder = { Text(placeholder) },
+        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+        trailingIcon = {
+            // X button collapses the field. When the query has text, clear
+            // it first; a second tap collapses. Two-step lets the user
+            // close the soft IME without losing their place in the grid.
+            IconButton(onClick = {
+                if (query.isNotEmpty()) {
+                    onQueryChange("")
+                } else {
+                    expanded = false
+                }
+            }) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = if (query.isNotEmpty()) "Clear search" else "Close search",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        shape = RoundedCornerShape(14.dp),
+        keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+        ),
+    )
 }
