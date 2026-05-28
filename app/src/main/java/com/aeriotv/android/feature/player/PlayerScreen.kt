@@ -152,6 +152,11 @@ fun PlayerScreen(
         // is enough.
         mpvWindowState.hide()
         exoWindowState.requestFullscreen()
+        // Bring up the MediaSessionService so the session is alive
+        // before the first frame. Idempotent -- if it's already
+        // running this is a no-op.
+        com.aeriotv.android.core.playback.AerioMediaPlaybackService
+            .startBackground(context)
     }
 
     // Channel-switch / first-mount setMediaItem: when the held Exo
@@ -160,14 +165,27 @@ fun PlayerScreen(
     // root holds the surface across this so no reattach is required.
     LaunchedEffect(currentChannel?.id) {
         val channelId = currentChannel?.id ?: return@LaunchedEffect
-        val url = currentChannel?.url ?: return@LaunchedEffect
+        val ch = currentChannel ?: return@LaunchedEffect
+        val url = ch.url
         if (url.isBlank()) return@LaunchedEffect
         if (exoHolder.currentChannelId != channelId) {
             Log.i(TAG, "Channel switch on Exo persistent player -> $url")
             // Refresh headers each switch -- some Dispatcharr deployments
             // rotate the API key per stream.
             exoHolder.httpHeaders = httpHeaders
-            exoHolder.playUrl(url)
+            // Pass title / subtitle / logo to the MediaItem so
+            // MediaSessionService renders the right notification +
+            // lock-screen art (task #64). The mediaMetadata fields
+            // flow through Player.currentMediaItem.mediaMetadata to
+            // the session.
+            val artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
+                ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() }
+            exoHolder.playUrl(
+                url = url,
+                title = ch.name,
+                subtitle = nowProgramme?.title.orEmpty(),
+                artworkUri = artworkUri,
+            )
             exoHolder.currentChannelId = channelId
         }
     }
@@ -222,26 +240,18 @@ fun PlayerScreen(
             }
         } else {
             // Phone Back: promote to bottom-bar audio-only mini chip,
-            // shut the persistent video window, keep playback going via
-            // the foreground PlaybackService. Live TV is on Exo so we
-            // hide that window; Mpv stays Hidden as it was.
+            // hide the persistent video window, keep playback going
+            // via the AerioMediaPlaybackService (task #64). The
+            // MediaItem metadata already carries title / subtitle /
+            // logo (set in the channel-switch LaunchedEffect above)
+            // so the service's notification renders correctly the
+            // moment we foreground it.
             miniPlayerVm.showMiniPlayer()
-            currentChannel?.let { ch ->
-                // setVideoEnabled(false) is the libmpv "vid=no" trick.
-                // Exo's equivalent (stop rendering video, keep audio):
-                // we pause -- the MediaSession + foreground service
-                // approach in task #64 will replace this with a
-                // proper audio-only renderer setup. For first session,
-                // hiding the window is enough; the surface is gone
-                // so the GPU stops working.
+            currentChannel?.let { _ ->
                 exoWindowState.hide()
                 mpvWindowState.hide()
-                PlaybackService.startBackground(
-                    context = context,
-                    title = ch.name,
-                    subtitle = nowProgramme?.title.orEmpty(),
-                    logoUrl = ch.tvgLogo.takeIf { it.isNotBlank() },
-                )
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .startBackground(context)
             }
             onClose()
         }
@@ -383,6 +393,8 @@ fun PlayerScreen(
                 exoHolder.stop()
                 mpvWindowState.hide()
                 PlaybackService.stop(context)
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(context)
                 onClose()
             },
             onAddToMultiview = { multiviewPickerOpen = true },

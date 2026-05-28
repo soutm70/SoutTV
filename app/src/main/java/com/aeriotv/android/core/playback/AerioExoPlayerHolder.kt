@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -124,8 +125,18 @@ class AerioExoPlayerHolder @Inject constructor() {
      * Build a MediaSource appropriate to the URL + apply the current
      * HTTP headers. The factory is rebuilt each time so the latest
      * headers (Dispatcharr API key, custom User-Agent) ride along.
+     *
+     * Optional metadata (channel name / program / logo) is attached
+     * to the MediaItem so MediaSessionService can render its
+     * notification + lock-screen art automatically. We mirror the
+     * iOS NowPlayingManager fields here.
      */
-    fun buildMediaSource(url: String): MediaSource {
+    fun buildMediaSource(
+        url: String,
+        title: String? = null,
+        subtitle: String? = null,
+        artworkUri: android.net.Uri? = null,
+    ): MediaSource {
         val dataSourceFactory = httpDataSourceFactory()
 
         // Force-route raw .ts URLs through ProgressiveMediaSource +
@@ -139,7 +150,18 @@ class AerioExoPlayerHolder @Inject constructor() {
         // which has no extension. We detect raw TS by URL shape AND let
         // DefaultMediaSourceFactory handle .m3u8 (HLS) / .mpd (DASH) /
         // .mp4 (progressive) on its own.
-        val mediaItem = MediaItem.fromUri(url)
+        val mediaMetadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(subtitle)
+            .setDisplayTitle(title)
+            .setSubtitle(subtitle)
+            .setArtworkUri(artworkUri)
+            .build()
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setMediaId(title.orEmpty().ifBlank { url })
+            .setMediaMetadata(mediaMetadata)
+            .build()
         return when {
             isRawTsUrl(url) -> {
                 // SINGLE_PMT is what HlsMediaSource uses internally and
@@ -171,15 +193,21 @@ class AerioExoPlayerHolder @Inject constructor() {
 
     /**
      * Set the media item + start loading. Equivalent of MPV's
-     * mpv.command("loadfile", url). Idempotent for the same URL
-     * (no-op rather than reloading mid-playback).
+     * mpv.command("loadfile", url). Pass [title] / [subtitle] /
+     * [artworkUri] for the MediaSession notification + lock-screen
+     * art.
      */
-    fun playUrl(url: String) {
+    fun playUrl(
+        url: String,
+        title: String? = null,
+        subtitle: String? = null,
+        artworkUri: android.net.Uri? = null,
+    ) {
         val p = player ?: run {
             Log.w(TAG, "playUrl called before acquireOrCreate")
             return
         }
-        val source = buildMediaSource(url)
+        val source = buildMediaSource(url, title, subtitle, artworkUri)
         p.setMediaSource(source)
         p.prepare()
         p.playWhenReady = true
