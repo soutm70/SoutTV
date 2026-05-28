@@ -388,7 +388,7 @@ fun PlayerScreen(
             onAddToMultiview = { multiviewPickerOpen = true },
             onShowRecord = { target -> recordTarget = target },
             onShowStreamInfo = {
-                streamInfo = mpvView?.captureStreamInfo() ?: StreamInfoSnapshot(
+                streamInfo = exoHolder.player?.captureStreamInfo() ?: StreamInfoSnapshot(
                     videoLines = listOf("(player not ready)"),
                     audioLines = emptyList(),
                     cacheLines = emptyList(),
@@ -396,36 +396,40 @@ fun PlayerScreen(
                 )
             },
             onShowSubtitles = {
-                val view = mpvView ?: return@PlayerChromeOverlay
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
                 subtitles = SubtitlesState(
-                    tracks = view.readSubtitleTracks(),
-                    currentSid = view.readCurrentSid(),
+                    tracks = player.readSubtitleTracks(),
+                    currentSid = player.readCurrentSid(),
                 )
             },
             onShowAudioTracks = {
-                val view = mpvView ?: return@PlayerChromeOverlay
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
                 audioTracks = AudioTracksState(
-                    tracks = view.readAudioTracks(),
-                    currentAid = view.readCurrentAid(),
+                    tracks = player.readAudioTracks(),
+                    currentAid = player.readCurrentAid(),
                 )
             },
             onShowPlaybackSpeed = {
-                val view = mpvView ?: return@PlayerChromeOverlay
-                playbackSpeedSheet = view.readSpeed()
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
+                playbackSpeedSheet = player.readSpeed()
             },
             onToggleAudioOnly = {
                 audioOnly = !audioOnly
-                val view = mpvView
+                val player = exoHolder.player
                 if (audioOnly) {
-                    view?.mpv?.setPropertyString("vid", "no")
+                    // Disable the video track on the current selection.
+                    // The audio renderer keeps running -- this is the
+                    // Media3 equivalent of libmpv `vid=no` without the
+                    // need to reload the stream when toggling back.
+                    player?.trackSelectionParameters = player?.trackSelectionParameters
+                        ?.buildUpon()
+                        ?.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                        ?.build() ?: return@PlayerChromeOverlay
                 } else {
-                    // Re-enabling video: on Android, vid=auto alone doesn't bring
-                    // the picture back -- libmpv released the video output when vid
-                    // went to "no" and doesn't re-bind it to the (still-attached)
-                    // SurfaceView. Reloading the current stream in place (the same
-                    // path a channel flip uses) re-inits the VO and restores video.
-                    view?.mpv?.setPropertyString("vid", "auto")
-                    currentChannel?.url?.takeIf { it.isNotBlank() }?.let { view?.playFile(it) }
+                    player?.trackSelectionParameters = player?.trackSelectionParameters
+                        ?.buildUpon()
+                        ?.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                        ?.build() ?: return@PlayerChromeOverlay
                 }
             },
             audioOnly = audioOnly,
@@ -492,7 +496,7 @@ fun PlayerScreen(
             tracks = state.tracks,
             currentTrackId = state.currentSid,
             onSelect = { sid ->
-                mpvView?.mpv?.setPropertyString("sid", sid?.toString() ?: "no")
+                exoHolder.player?.selectSubtitleTrack(sid)
                 subtitles = null
             },
             onDismiss = { subtitles = null },
@@ -503,7 +507,7 @@ fun PlayerScreen(
             tracks = state.tracks,
             currentTrackId = state.currentAid,
             onSelect = { aid ->
-                mpvView?.mpv?.setPropertyString("aid", aid.toString())
+                exoHolder.player?.selectAudioTrack(aid)
                 audioTracks = null
             },
             onDismiss = { audioTracks = null },
@@ -513,7 +517,7 @@ fun PlayerScreen(
         PlaybackSpeedSheet(
             currentSpeed = current,
             onSelect = { speed ->
-                mpvView?.mpv?.setPropertyString("speed", speed.toString())
+                exoHolder.player?.applySpeed(speed)
                 playbackSpeedSheet = null
             },
             onDismiss = { playbackSpeedSheet = null },
