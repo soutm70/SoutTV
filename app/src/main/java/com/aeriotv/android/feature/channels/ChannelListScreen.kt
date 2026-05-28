@@ -50,6 +50,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -293,32 +294,45 @@ fun ChannelListScreen(
             thickness = 0.5.dp,
         )
 
-        LazyColumn(
+        // Audit task #51 (partial): pull-to-refresh on the Live TV list.
+        // Drags the spinner from the top of the LazyColumn and invokes
+        // PlaylistViewModel.refreshPlaylist(), which re-fetches the channel
+        // list and the EPG. The spinner stays visible while
+        // state.isLoading is true. PullToRefreshBox lets the inner
+        // LazyColumn handle its own vertical scroll; we don't lose the
+        // sticky chips above.
+        PullToRefreshBox(
+            isRefreshing = state.isLoading,
+            onRefresh = { viewModel.refreshPlaylist() },
             modifier = Modifier.fillMaxSize(),
-            // 104dp bottom clears the MainScaffold NavigationBar so the
-            // final channel row stays fully visible above the tab bar.
-            contentPadding = PaddingValues(
-                start = 12.dp,
-                end = 12.dp,
-                top = 8.dp,
-                bottom = 104.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(items = filtered, key = { it.id }) { channel ->
-                val programmes = state.epgByChannel[channel.tvgID].orEmpty()
-                val nowProgramme = programmes.nowPlaying()
-                ChannelRow(
-                    channel = channel,
-                    nowProgramme = nowProgramme,
-                    programmes = programmes,
-                    isFavorite = channel.id in favoriteIds,
-                    onPlay = { onChannelClick(channel) },
-                    onToggleFavorite = { favoritesVm.toggle(channel) },
-                    onShowProgramInfo = { programInfoTarget = it },
-                    onShowRecord = { recordTarget = it },
-                    palette = palette,
-                )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                // 104dp bottom clears the MainScaffold NavigationBar so the
+                // final channel row stays fully visible above the tab bar.
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = 8.dp,
+                    bottom = 104.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(items = filtered, key = { it.id }) { channel ->
+                    val programmes = state.epgByChannel[channel.tvgID].orEmpty()
+                    val nowProgramme = programmes.nowPlaying()
+                    ChannelRow(
+                        channel = channel,
+                        nowProgramme = nowProgramme,
+                        programmes = programmes,
+                        isFavorite = channel.id in favoriteIds,
+                        onPlay = { onChannelClick(channel) },
+                        onToggleFavorite = { favoritesVm.toggle(channel) },
+                        onShowProgramInfo = { programInfoTarget = it },
+                        onShowRecord = { recordTarget = it },
+                        palette = palette,
+                    )
+                }
             }
         }
     }
