@@ -130,6 +130,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setEpgWindowHours(value) }
     }
 
+    // Audit task #48: master toggle for the periodic PlaylistRefreshWorker.
+    // The Application collects this Flow and registers/cancels the unique
+    // periodic work whenever the user flips it.
+    val backgroundRefreshEnabled: Flow<Boolean> = prefs.backgroundRefreshEnabled
+    fun setBackgroundRefreshEnabled(value: Boolean) {
+        viewModelScope.launch { prefs.setBackgroundRefreshEnabled(value) }
+    }
+
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
     fun setMultiviewAudioFocusStyle(value: String) {

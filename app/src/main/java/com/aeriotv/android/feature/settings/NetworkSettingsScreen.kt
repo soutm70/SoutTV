@@ -28,6 +28,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -59,6 +61,8 @@ fun NetworkSettingsScreen(
     val maxRetries by viewModel.maxRetries.collectAsStateWithLifecycle(initialValue = 3)
     val bufferSize by viewModel.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
     val epgWindowHours by viewModel.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
+    val backgroundRefreshEnabled by viewModel.backgroundRefreshEnabled
+        .collectAsStateWithLifecycle(initialValue = true)
     val homeSsids by viewModel.homeSsids.collectAsStateWithLifecycle(initialValue = emptySet<String>())
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -113,6 +117,10 @@ fun NetworkSettingsScreen(
             EpgWindowSection(
                 currentHours = epgWindowHours,
                 onSelect = viewModel::setEpgWindowHours,
+            )
+            BackgroundRefreshSection(
+                enabled = backgroundRefreshEnabled,
+                onToggle = viewModel::setBackgroundRefreshEnabled,
             )
             HomeWifiSection(
                 homeSsids = homeSsids,
@@ -330,6 +338,47 @@ private fun EpgWindowSection(
             if (idx < EPG_WINDOW_OPTIONS.lastIndex) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
             }
+        }
+    }
+}
+
+/**
+ * Audit task #48: master toggle for the periodic background EPG + channel
+ * refresh worker. On by default — most users benefit from warm caches.
+ * Off for metered/restricted connections or users who only want the app
+ * to touch the network when they explicitly open it.
+ */
+@Composable
+private fun BackgroundRefreshSection(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    SettingsCard(
+        header = "Background Refresh",
+        footer = "Refresh channels + the EPG every 6 hours in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. Off here means data refreshes only when you launch AerioTV or pull to refresh.",
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle(!enabled) }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Refresh in the background",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
         }
     }
 }

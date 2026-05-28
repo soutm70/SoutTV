@@ -421,6 +421,18 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_SYNC_MASTER] = value }
     }
 
+    /**
+     * Audit task #48: master toggle for the periodic PlaylistRefreshWorker.
+     * Default `true` so a fresh install gets the warm-cache benefit without
+     * the user having to opt in. Network Settings surfaces the toggle so
+     * users on a metered/restricted connection can switch it off.
+     */
+    val backgroundRefreshEnabled: Flow<Boolean> =
+        store.data.map { it[KEY_BG_REFRESH_ENABLED] ?: true }
+    suspend fun setBackgroundRefreshEnabled(value: Boolean) {
+        store.edit { it[KEY_BG_REFRESH_ENABLED] = value }
+    }
+
     fun syncCategoryEnabled(category: SyncCategory): Flow<Boolean> = store.data.map { prefs ->
         prefs[booleanPreferencesKey(category.enabledStorageKey())] ?: true
     }
@@ -613,5 +625,6 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_LAST_PULL = longPreferencesKey("sync_last_pull_at")
         val KEY_SYNC_ACCESS_TOKEN = stringPreferencesKey("sync_access_token")
         val KEY_SYNC_TOKEN_EXPIRY = longPreferencesKey("sync_token_expiry")
+        val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
     }
 }

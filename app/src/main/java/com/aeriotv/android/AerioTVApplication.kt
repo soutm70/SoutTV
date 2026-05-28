@@ -10,6 +10,7 @@ import coil3.disk.DiskCache
 import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
+import com.aeriotv.android.core.data.sync.PlaylistRefreshWorker
 import com.aeriotv.android.core.debug.DebugLogger
 import com.aeriotv.android.core.debug.MemoryPressureBus
 import com.aeriotv.android.core.debug.ResourceTelemetry
@@ -111,6 +112,19 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         appScope.launch {
             appPreferences.debugLoggingEnabled.collectLatest { enabled ->
                 debugLogger.setEnabled(enabled)
+            }
+        }
+        // Audit task #48: periodic background EPG + channel refresh so the
+        // cache is always warm. Driven by a DataStore toggle (default ON,
+        // user-overridable in Network Settings). collectLatest re-evaluates
+        // whenever the user flips it.
+        appScope.launch {
+            appPreferences.backgroundRefreshEnabled.collectLatest { enabled ->
+                if (enabled) {
+                    PlaylistRefreshWorker.enqueuePeriodic(this@AerioTVApplication)
+                } else {
+                    PlaylistRefreshWorker.cancel(this@AerioTVApplication)
+                }
             }
         }
     }
