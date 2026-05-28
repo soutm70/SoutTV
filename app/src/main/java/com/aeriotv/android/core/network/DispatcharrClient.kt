@@ -496,8 +496,16 @@ class DispatcharrClient @Inject constructor() {
      * walks all pages via fetchAllPages; the Android first cut shows page 1
      * and a "Load more" affordance lands when the user request comes.
      */
-    suspend fun getVODMoviesFirstPage(baseUrl: String, apiKey: String): VODMoviesPage {
-        val url = "${baseUrl.trimEnd('/')}/api/vod/movies/?page_size=100"
+    suspend fun getVODMoviesFirstPage(baseUrl: String, apiKey: String): VODMoviesPage =
+        getVODMoviesPage("${baseUrl.trimEnd('/')}/api/vod/movies/?page_size=100", apiKey)
+
+    /**
+     * Audit task #42: fetch an arbitrary VOD movies page by its absolute URL
+     * (typically the `next` cursor returned by the previous page). Same
+     * envelope shape, same auth headers. OnDemandViewModel loops on this
+     * after the first-page paint to backfill the full library.
+     */
+    suspend fun getVODMoviesPage(url: String, apiKey: String): VODMoviesPage {
         val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
@@ -527,8 +535,11 @@ class DispatcharrClient @Inject constructor() {
      * iOS DispatcharrAPI.getVODSeries (StreamingAPIs.swift:1727), pagination
      * support deferred until the user hits the bottom of the grid.
      */
-    suspend fun getVODSeriesFirstPage(baseUrl: String, apiKey: String): VODSeriesPage {
-        val url = "${baseUrl.trimEnd('/')}/api/vod/series/?page_size=100"
+    suspend fun getVODSeriesFirstPage(baseUrl: String, apiKey: String): VODSeriesPage =
+        getVODSeriesPage("${baseUrl.trimEnd('/')}/api/vod/series/?page_size=100", apiKey)
+
+    /** Audit task #42: fetch an arbitrary VOD series page by absolute URL. */
+    suspend fun getVODSeriesPage(url: String, apiKey: String): VODSeriesPage {
         val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {

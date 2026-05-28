@@ -117,6 +117,39 @@ class OnDemandViewModel @Inject constructor(
                             error = null,
                         )
                     }
+                    // Audit task #42: walk the `next` cursor in the background
+                    // so the user gets the full library appended progressively
+                    // instead of just the first 100. First-page paint already
+                    // landed above so the grid is interactive; subsequent
+                    // pages append as they arrive. De-dup on uuid in case two
+                    // pages share a row.
+                    var nextUrl = page.next
+                    while (nextUrl != null) {
+                        val captured = nextUrl
+                        val nextResult = runCatching {
+                            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                                dispatcharrClient.getVODMoviesPage(captured, key)
+                            }
+                        }
+                        nextUrl = nextResult.getOrNull()?.next
+                        nextResult.getOrNull()?.let { p ->
+                            _state.update { st ->
+                                val merged = st.movies.toMutableList()
+                                val seen = merged.mapTo(HashSet()) { it.uuid }
+                                p.results.forEach { m ->
+                                    if (m.uuid !in seen) {
+                                        merged += m
+                                        seen += m.uuid
+                                    }
+                                }
+                                st.copy(movies = merged, totalCount = p.count)
+                            }
+                        }
+                        nextResult.exceptionOrNull()?.let { t ->
+                            Log.w(TAG, "VOD movies next-page fetch failed; stopping", t)
+                            nextUrl = null
+                        }
+                    }
                 },
                 onFailure = { t ->
                     Log.w(TAG, "getVODMovies failed", t)
@@ -150,6 +183,35 @@ class OnDemandViewModel @Inject constructor(
                             seriesTotalCount = page.count,
                             seriesError = null,
                         )
+                    }
+                    // Audit task #42: same next-cursor walk as movies above.
+                    // Series use `id` as the de-dup key. Stops on first error.
+                    var nextUrl = page.next
+                    while (nextUrl != null) {
+                        val captured = nextUrl
+                        val nextResult = runCatching {
+                            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                                dispatcharrClient.getVODSeriesPage(captured, key)
+                            }
+                        }
+                        nextUrl = nextResult.getOrNull()?.next
+                        nextResult.getOrNull()?.let { p ->
+                            _state.update { st ->
+                                val merged = st.series.toMutableList()
+                                val seen = merged.mapTo(HashSet()) { it.id }
+                                p.results.forEach { s ->
+                                    if (s.id !in seen) {
+                                        merged += s
+                                        seen += s.id
+                                    }
+                                }
+                                st.copy(series = merged, seriesTotalCount = p.count)
+                            }
+                        }
+                        nextResult.exceptionOrNull()?.let { t ->
+                            Log.w(TAG, "VOD series next-page fetch failed; stopping", t)
+                            nextUrl = null
+                        }
                     }
                 },
                 onFailure = { t ->
