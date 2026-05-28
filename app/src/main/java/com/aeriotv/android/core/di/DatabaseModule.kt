@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.aeriotv.android.core.data.db.AerioDatabase
+import com.aeriotv.android.core.data.db.dao.ChannelSnapshotDao
 import com.aeriotv.android.core.data.db.dao.EpgProgrammeDao
 import com.aeriotv.android.core.data.db.dao.FavoriteChannelDao
 import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
@@ -82,6 +83,43 @@ object DatabaseModule {
         }
     }
 
+    /**
+     * v13 -> v14: add the `channel_snapshot` disk cache (the iOS ChannelStore
+     * snapshot pattern, sister to the Phase 121 `epg_programme` cache). So a
+     * cold relaunch can paint the channel rail + cells from disk instantly
+     * instead of staring at an empty rail for ~10-20s while
+     * PlaylistRepository.refresh() round-trips the Dispatcharr / M3U fetch.
+     * Additive CREATE TABLE (not the destructive fallback) so playlists /
+     * favorites / EPG cache / watch progress survive. The table + index
+     * definitions must EXACTLY match what Room generates for
+     * ChannelSnapshotEntity (Phase 121 GOTCHA): autogen Long PK = "INTEGER NOT
+     * NULL ... PRIMARY KEY(`id`)" with no AUTOINCREMENT, nullable columns
+     * declared without NOT NULL, single-column index named
+     * `index_<table>_<column>`.
+     */
+    private val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `channel_snapshot` (" +
+                    "`id` INTEGER NOT NULL, " +
+                    "`playlistId` TEXT NOT NULL, " +
+                    "`channelId` TEXT NOT NULL, " +
+                    "`position` INTEGER NOT NULL, " +
+                    "`name` TEXT NOT NULL, " +
+                    "`url` TEXT NOT NULL, " +
+                    "`groupTitle` TEXT NOT NULL, " +
+                    "`tvgID` TEXT NOT NULL, " +
+                    "`tvgName` TEXT NOT NULL, " +
+                    "`tvgLogo` TEXT NOT NULL, " +
+                    "`channelNumber` TEXT, " +
+                    "`dispatcharrChannelId` INTEGER, " +
+                    "`fetchedAt` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`id`))",
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_channel_snapshot_playlistId` ON `channel_snapshot` (`playlistId`)")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AerioDatabase =
@@ -89,7 +127,7 @@ object DatabaseModule {
             // Preserve user data across known schema bumps where a clean ALTER
             // exists; fall back to a destructive rebuild only for un-mapped
             // version jumps (older dev builds).
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 
@@ -110,4 +148,7 @@ object DatabaseModule {
 
     @Provides
     fun provideEpgProgrammeDao(db: AerioDatabase): EpgProgrammeDao = db.epgProgrammeDao()
+
+    @Provides
+    fun provideChannelSnapshotDao(db: AerioDatabase): ChannelSnapshotDao = db.channelSnapshotDao()
 }

@@ -3,8 +3,10 @@ package com.aeriotv.android.core.data.repository
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.db.dao.ChannelSnapshotDao
 import com.aeriotv.android.core.data.db.dao.EpgProgrammeDao
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
+import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import android.content.Context
@@ -54,6 +56,7 @@ class PlaylistRepository @Inject constructor(
     private val dispatcharrTokenStore: DispatcharrTokenStore,
     private val appPreferences: AppPreferences,
     private val epgProgrammeDao: EpgProgrammeDao,
+    private val channelSnapshotDao: ChannelSnapshotDao,
 ) {
 
     /**
@@ -159,6 +162,13 @@ class PlaylistRepository @Inject constructor(
         } else {
             dao.upsert(entity)
         }
+        // Cache the first-load channels so the very next launch is instant
+        // (Phase 130 channel snapshot cache).
+        try {
+            saveChannelsToCache(playlistId, channels)
+        } catch (t: Throwable) {
+            android.util.Log.w("PlaylistRepository", "saveChannelsToCache failed (loadAndPersist)", t)
+        }
         entity to channels
     }
 
@@ -188,6 +198,14 @@ class PlaylistRepository @Inject constructor(
                 lastRefreshedAt = System.currentTimeMillis(),
             ),
         )
+        // Persist the freshly-fetched channels so the next cold launch repaints
+        // the rail INSTANTLY from disk (Phase 130 channel snapshot cache).
+        // Best-effort: a cache-write failure must NOT fail the refresh.
+        try {
+            saveChannelsToCache(playlist.id, channels)
+        } catch (t: Throwable) {
+            android.util.Log.w("PlaylistRepository", "saveChannelsToCache failed (refresh)", t)
+        }
         channels
     }
 
@@ -333,6 +351,30 @@ class PlaylistRepository @Inject constructor(
     }
 
     /**
+     * Disk-cached channel snapshot (iOS ChannelStore parity, sister to the EPG
+     * cache above). [loadCachedChannels] returns the last persisted channel
+     * list for a source so a cold launch can paint the Live TV rail INSTANTLY
+     * while a background refresh runs; [newestChannelFetch] drives the
+     * freshness check; and [saveChannelsToCache] replaces the source's rows
+     * after a successful network fetch (the [List.mapIndexed] preserves the
+     * exact order [fetchChannelsFor] produced, which is what the rail / list
+     * sort by).
+     */
+    suspend fun loadCachedChannels(playlistId: String): List<M3UChannel> =
+        channelSnapshotDao.forPlaylist(playlistId).map { it.toChannel() }
+
+    suspend fun newestChannelFetch(playlistId: String): Long? =
+        channelSnapshotDao.newestFetchedAt(playlistId)
+
+    suspend fun saveChannelsToCache(playlistId: String, channels: List<M3UChannel>) {
+        val now = System.currentTimeMillis()
+        channelSnapshotDao.replaceForPlaylist(
+            playlistId,
+            channels.mapIndexed { idx, ch -> ch.toCacheEntity(playlistId, idx, now) },
+        )
+    }
+
+    /**
      * Fetch the Dispatcharr channel profiles available for [playlist] so the
      * Edit Playlist screen can offer them as scoping options. Returns an empty
      * list for non-Dispatcharr sources. Routed through the AuthBroker so a
@@ -380,6 +422,12 @@ class PlaylistRepository @Inject constructor(
             )
         }
         dao.update(entity.copy(channelCount = channels.size, lastRefreshedAt = System.currentTimeMillis()))
+        // Cache the post-switch channel list (Phase 130 channel snapshot cache).
+        try {
+            saveChannelsToCache(entity.id, channels)
+        } catch (t: Throwable) {
+            android.util.Log.w("PlaylistRepository", "saveChannelsToCache failed (switchActive)", t)
+        }
         entity to channels
     }
 
@@ -550,6 +598,40 @@ private fun EPGProgramme.toCacheEntity(playlistId: String, fetchedAt: Long): Epg
         dispatcharrProgramId = dispatcharrProgramId,
         fetchedAt = fetchedAt,
     )
+
+/** Channel snapshot cache row <-> M3UChannel mapping. We deliberately drop
+ *  `rawAttributes` (write-only at parse time, never read after) so the cache
+ *  stays a single tabular Room row instead of needing a TypeConverter. */
+private fun ChannelSnapshotEntity.toChannel(): M3UChannel = M3UChannel(
+    id = channelId,
+    name = name,
+    url = url,
+    groupTitle = groupTitle,
+    tvgID = tvgID,
+    tvgName = tvgName,
+    tvgLogo = tvgLogo,
+    channelNumber = channelNumber,
+    dispatcharrChannelId = dispatcharrChannelId,
+)
+
+private fun M3UChannel.toCacheEntity(
+    playlistId: String,
+    position: Int,
+    fetchedAt: Long,
+): ChannelSnapshotEntity = ChannelSnapshotEntity(
+    playlistId = playlistId,
+    channelId = id,
+    position = position,
+    name = name,
+    url = url,
+    groupTitle = groupTitle,
+    tvgID = tvgID,
+    tvgName = tvgName,
+    tvgLogo = tvgLogo,
+    channelNumber = channelNumber,
+    dispatcharrChannelId = dispatcharrChannelId,
+    fetchedAt = fetchedAt,
+)
 
 /**
  * Format a Dispatcharr-API channel-number Double back to a display string,

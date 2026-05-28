@@ -81,6 +81,17 @@ class PlaylistViewModel @Inject constructor(
          * making quick app revisits zero-network.
          */
         private const val EPG_CACHE_TTL_MS = 30L * 60L * 1000L
+
+        /**
+         * Channel snapshots refresh on a much slower cadence than the EPG (a
+         * channel list adds/removes channels far less often than guide data
+         * changes), so the cache is treated as fresh for 24 h before a relaunch
+         * also hits the network. Within the window the cache paints and we
+         * skip the network entirely; outside it the cache still paints
+         * instantly but a background refresh runs. Per Archie: loading times
+         * shouldn't be an issue unless we're 24 hours removed from the cache.
+         */
+        private const val CHANNEL_CACHE_TTL_MS = 24L * 60L * 60L * 1000L
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -99,6 +110,15 @@ class PlaylistViewModel @Inject constructor(
             }
             val sourceType = SourceType.entries.firstOrNull { it.name == saved.sourceType }
                 ?: SourceType.M3uUrl
+
+            // Phase 130: paint the disk-cached channel list IMMEDIATELY so the
+            // Live TV rail + cells are never blank on a cold launch (Archie's
+            // observation: with caching working, loading times shouldn't be an
+            // issue under 24h). The network refresh below runs in parallel and
+            // swaps in fresh data when ready.
+            val cachedChannels = runCatching { repository.loadCachedChannels(saved.id) }
+                .getOrDefault(emptyList())
+            val hasChannelCache = cachedChannels.isNotEmpty()
             _state.update {
                 it.copy(
                     playlist = saved,
@@ -110,9 +130,35 @@ class PlaylistViewModel @Inject constructor(
                     apiKey = saved.apiKey.orEmpty(),
                     username = saved.username.orEmpty(),
                     password = saved.password.orEmpty(),
-                    isLoading = true,
+                    // If we have cached channels, skip straight to ChannelsReady
+                    // and don't show the spinner; otherwise stay in pre-bootstrap
+                    // phase with the spinner until the first-ever network fetch
+                    // lands.
+                    phase = if (hasChannelCache) Phase.ChannelsReady else it.phase,
+                    channels = cachedChannels,
+                    isLoading = !hasChannelCache,
                 )
             }
+            if (hasChannelCache) {
+                Log.i(TAG, "bootstrap: painted ${cachedChannels.size} cached channels")
+                // Start the EPG cache-first paint in parallel so the guide
+                // cells light up immediately too, instead of waiting on the
+                // channel network refresh.
+                loadEpgIfConfigured(saved)
+            }
+
+            // Freshness gate: within the TTL window, the cached rail is
+            // good enough and we skip the channel network round-trip entirely
+            // (the EPG cache has its own 30-min TTL).
+            val newest = runCatching { repository.newestChannelFetch(saved.id) }.getOrNull()
+            val freshChannels = hasChannelCache && newest != null &&
+                (System.currentTimeMillis() - newest) < CHANNEL_CACHE_TTL_MS
+            if (freshChannels) {
+                Log.i(TAG, "bootstrap: channel cache fresh, skipping network refresh")
+                return@launch
+            }
+
+            Log.i(TAG, "bootstrap: refreshing channels (hadCache=$hasChannelCache)")
             repository.refresh(saved).fold(
                 onSuccess = { channels ->
                     _state.update {
@@ -123,15 +169,28 @@ class PlaylistViewModel @Inject constructor(
                             error = null,
                         )
                     }
-                    loadEpgIfConfigured(saved)
+                    // First time we have channels, kick the EPG load now (if
+                    // we'd already done it above from cache, this is a no-op
+                    // for fresh-cache cases and a re-trigger for non-cached
+                    // cases - loadEpgIfConfigured is idempotent w.r.t. state).
+                    if (!hasChannelCache) loadEpgIfConfigured(saved)
                 },
                 onFailure = { t ->
-                    _state.update {
-                        it.copy(
-                            phase = Phase.NeedsUrl,
-                            isLoading = false,
-                            error = "Failed to refresh saved source: ${t.message ?: t::class.simpleName}",
-                        )
+                    if (hasChannelCache) {
+                        // Keep the cached rail visible; surface a soft log but
+                        // don't bounce the user to NeedsUrl - they had a
+                        // working playlist yesterday, the server is just
+                        // unreachable right now.
+                        Log.w(TAG, "channel refresh failed; cached rail still visible", t)
+                        _state.update { it.copy(isLoading = false) }
+                    } else {
+                        _state.update {
+                            it.copy(
+                                phase = Phase.NeedsUrl,
+                                isLoading = false,
+                                error = "Failed to refresh saved source: ${t.message ?: t::class.simpleName}",
+                            )
+                        }
                     }
                 },
             )
