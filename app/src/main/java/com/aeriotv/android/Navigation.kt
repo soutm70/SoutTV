@@ -730,7 +730,18 @@ fun AerioTVNavHost(
         // PLAYER route. Belongs at the NavController scope, hence here.
         androidx.compose.runtime.LaunchedEffect(Unit) {
             miniPlayerVm.session.resumeRequests.collect { channel ->
-                navController.navigate(Routes.player(channel.id))
+                android.util.Log.i(
+                    "MiniPlayerResume",
+                    "NavHost received resume for channel id=${channel.id}; navigating to PLAYER",
+                )
+                runCatching { navController.navigate(Routes.player(channel.id)) }
+                    .onFailure {
+                        android.util.Log.e(
+                            "MiniPlayerResume",
+                            "navController.navigate(PLAYER) threw",
+                            it,
+                        )
+                    }
             }
         }
     }

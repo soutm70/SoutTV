@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log
 import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -74,10 +75,28 @@ class MainActivity : ComponentActivity() {
             val sinceLast = now - lastSelectPressMs
             lastSelectPressMs = now
             val miniActive = miniPlayerSession.state.value is MiniPlayerSession.State.Active
-            if (miniActive && sinceLast in 1L..DOUBLE_PRESS_THRESHOLD_MS) {
-                miniPlayerSession.requestResume()
-                lastSelectPressMs = 0L
-                return true // consume - don't let the second press double-click anything.
+            Log.i(
+                "MiniPlayerResume",
+                "OK pressed: sinceLast=${sinceLast}ms miniActive=$miniActive " +
+                    "threshold=${DOUBLE_PRESS_THRESHOLD_MS}ms",
+            )
+            // Audit task #22 + Phase 162 crash fix: while the mini is Active,
+            // consume EVERY OK press, not just the second one. Otherwise the
+            // first press falls through to Compose and clicks whatever's
+            // focused in the guide (a programme cell, group chip, etc.),
+            // navigating to PLAYER -- and then the second press fires the
+            // resume which navigates to PLAYER *again*. Two NavController
+            // navigations within ~350ms of each other against the same
+            // singleTop route was producing the crash. Single OK while
+            // mini-Active is now a deliberate no-op; user knows from the hint
+            // chip that double-press is the resume gesture.
+            if (miniActive) {
+                if (sinceLast in 1L..DOUBLE_PRESS_THRESHOLD_MS) {
+                    Log.i("MiniPlayerResume", "Double-press detected -> requestResume()")
+                    miniPlayerSession.requestResume()
+                    lastSelectPressMs = 0L
+                }
+                return true
             }
         }
         return super.dispatchKeyEvent(event)

@@ -61,9 +61,22 @@ class MiniPlayerSession @Inject constructor() {
      * NavController to navigate on. No-op when the state isn't Active.
      */
     fun requestResume() {
-        val ch = (_state.value as? State.Active)?.channel ?: return
+        val current = _state.value
+        val ch = (current as? State.Active)?.channel
+        if (ch == null) {
+            android.util.Log.w(
+                "MiniPlayerResume",
+                "requestResume called but state=$current (expected Active); no-op",
+            )
+            return
+        }
+        android.util.Log.i(
+            "MiniPlayerResume",
+            "Active->Pending + emit channel id=${ch.id} name=${ch.name} urlBlank=${ch.url.isBlank()}",
+        )
         _state.value = State.Pending(ch)
-        _resumeRequests.tryEmit(ch)
+        val emitted = _resumeRequests.tryEmit(ch)
+        android.util.Log.i("MiniPlayerResume", "tryEmit returned $emitted")
     }
 
     /** Called when PlayerScreen mounts (or flips channel). Holding fullscreen
