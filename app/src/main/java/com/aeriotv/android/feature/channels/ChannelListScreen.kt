@@ -51,6 +51,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -231,7 +235,22 @@ fun ChannelListScreen(
             ),
         )
 
-        if (groups.size > 1) {
+        // Audit task #51 final piece: collapse the chip Row when the user
+        // scrolls past the top of the channel list, restore it when they
+        // scroll back to row 0. Listening on the LazyColumn's
+        // firstVisibleItemIndex via a hoisted state. The
+        // AnimatedVisibility's expand/shrink-vertically gives a smooth
+        // height collapse without snapping. Stays expanded on a
+        // not-yet-scrolled list (initial state).
+        val listState = rememberLazyListState()
+        val chipsVisible by remember {
+            derivedStateOf { listState.firstVisibleItemIndex == 0 }
+        }
+        AnimatedVisibility(
+            visible = chipsVisible && groups.size > 1,
+            enter = expandVertically(),
+            exit = shrinkVertically(),
+        ) {
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -307,6 +326,7 @@ fun ChannelListScreen(
             modifier = Modifier.fillMaxSize(),
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 // 104dp bottom clears the MainScaffold NavigationBar so the
                 // final channel row stays fully visible above the tab bar.
