@@ -1,12 +1,19 @@
 package com.aeriotv.android.core.playback
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import androidx.annotation.OptIn
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aeriotv.android.MainActivity
+import com.aeriotv.android.R
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -54,6 +61,26 @@ class AerioMediaPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Satisfy the API 31+ foreground-service-start deadline IMMEDIATELY.
+        //
+        // The system requires startForeground() within 5s of
+        // startForegroundService() or it kills the process with
+        // ForegroundServiceDidNotStartInTimeException. Media3's
+        // MediaNotificationManager only calls startForeground() once the
+        // player transitions to STATE_READY + isPlaying, which on the
+        // Streamer with a 4K HEVC live stream consistently takes longer
+        // than 5s (verified crash log: aerio crashed at 14:43:44.564
+        // after startForegroundService at 14:43:14.549, almost exactly
+        // 30s of the player buffering ch38 before the system gave up).
+        //
+        // Push a minimal placeholder notification right at onCreate so
+        // the deadline is satisfied unconditionally. Media3's media-
+        // style notification will replace this the moment the player
+        // first reports a playback state, so the user only ever sees
+        // the proper "Now playing" row.
+        ensureChannel()
+        startForegroundCompat(buildPlaceholderNotification())
+
         val player = exoHolder.acquireOrCreate(this)
 
         // Tap-to-resume PendingIntent. SINGLE_TOP so the running
@@ -100,7 +127,52 @@ class AerioMediaPlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val mgr = getSystemService(NotificationManager::class.java)
+        if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Background playback",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "Ongoing notification while AerioTV plays audio in the background."
+            setShowBadge(false)
+        }
+        mgr.createNotificationChannel(channel)
+    }
+
+    /** Bare-bones notification used only to satisfy the 5s
+     *  startForeground deadline. The real MediaStyle notification is
+     *  pushed by Media3's MediaNotificationManager once the player
+     *  reports its first playback state. */
+    private fun buildPlaceholderNotification(): Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle("AerioTV")
+            .setContentText("Starting playback...")
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+
+    private fun startForegroundCompat(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIF_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            startForeground(NOTIF_ID, notification)
+        }
+    }
+
     companion object {
+        private const val CHANNEL_ID = "aeriotv_background_playback"
+        private const val NOTIF_ID = 0xAF
+
         /** Start the service as foreground. Caller is typically
          *  PlayerScreen's phone-Back path when promoting to a
          *  background-audio mini. Replaces the legacy
