@@ -1,6 +1,7 @@
 package com.aeriotv.android
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -38,6 +39,16 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var miniPlayerSession: MiniPlayerSession
+
+    /**
+     * Most recent deep-link target the activity has received from a
+     * `aeriotv://channel/<id>` or `aeriotv://vod/<uuid>` Intent. Read by
+     * the Compose tree via [DeepLinkTargetHolder] / a CompositionLocal
+     * provider so NavHost can pop straight onto the target route once
+     * the active playlist is ready. Drained (set null) after consumption
+     * so a second tap on the same notification re-fires correctly.
+     */
+    private val deepLinkTarget = androidx.compose.runtime.mutableStateOf<DeepLinkTarget?>(null)
 
     /** Wall-clock timestamp of the last DPAD_CENTER press (uptimeMillis).
      *  Reset to 0 after a successful double-press detection so a fast triple
@@ -85,6 +96,32 @@ class MainActivity : ComponentActivity() {
         // Re-pin on resume so a fold/unfold display switch (the cover and inner
         // panels expose different display-mode ids) keeps the highest rate.
         requestHighestRefreshRate()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // singleTop means a second LAUNCH/aeriotv:// intent arrives here
+        // instead of recreating the activity. Capture the URI for the
+        // Compose tree.
+        captureDeepLinkFrom(intent)
+    }
+
+    /**
+     * Pull a deep-link target out of [intent.data] when the scheme is
+     * `aeriotv`. Supported hosts: `channel`, `vod`. Path is the id /
+     * uuid. Anything else is ignored.
+     */
+    private fun captureDeepLinkFrom(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (!data.scheme.equals("aeriotv", ignoreCase = true)) return
+        val host = data.host?.lowercase() ?: return
+        val path = data.pathSegments?.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val target = when (host) {
+            "channel" -> DeepLinkTarget.Channel(path)
+            "vod" -> DeepLinkTarget.Vod(path)
+            else -> null
+        } ?: return
+        deepLinkTarget.value = target
     }
 
     override fun onUserLeaveHint() {
@@ -173,6 +210,10 @@ class MainActivity : ComponentActivity() {
         val initialUrl = if (BuildConfig.DEBUG) intent?.getStringExtra("url") else null
         val initialEpgUrl = if (BuildConfig.DEBUG) intent?.getStringExtra("epg") else null
         val initialApiKey = if (BuildConfig.DEBUG) intent?.getStringExtra("apikey") else null
+        // Audit task #47: parse the launching intent's data URI for a
+        // aeriotv:// deep link. The Compose tree consumes deepLinkTarget
+        // via a top-level effect, navigates, then clears it.
+        captureDeepLinkFrom(intent)
         setContent {
             val theme by appPreferences.selectedTheme.collectAsState(initial = AppTheme.Aerio)
             val useCustomAccent by appPreferences.useCustomAccent.collectAsState(initial = false)
@@ -198,6 +239,8 @@ class MainActivity : ComponentActivity() {
                             initialUrl = initialUrl,
                             initialEpgUrl = initialEpgUrl,
                             initialApiKey = initialApiKey,
+                            deepLinkTarget = deepLinkTarget.value,
+                            onDeepLinkConsumed = { deepLinkTarget.value = null },
                         )
                     }
                 }

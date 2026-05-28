@@ -93,6 +93,8 @@ fun AerioTVNavHost(
     initialUrl: String? = null,
     initialEpgUrl: String? = null,
     initialApiKey: String? = null,
+    deepLinkTarget: DeepLinkTarget? = null,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
 
@@ -351,6 +353,37 @@ fun AerioTVNavHost(
                     if (state.phase == PlaylistViewModel.Phase.NeedsUrl) {
                         navController.navigate(Routes.WELCOME) {
                             popUpTo(Routes.MAIN) { inclusive = true }
+                        }
+                    }
+                }
+
+                // Audit task #47: resolve any pending aeriotv:// deep link
+                // once channels are ready. We deliberately wait until the
+                // playlist has loaded -- launching the player route before
+                // the channel exists in state.channels would show a stale
+                // / missing card. For Vod, we navigate to movie detail
+                // without needing the OnDemand state to be loaded; the
+                // detail screen has its own resolver.
+                LaunchedEffect(deepLinkTarget, state.channels.size) {
+                    val target = deepLinkTarget ?: return@LaunchedEffect
+                    when (target) {
+                        is DeepLinkTarget.Channel -> {
+                            val exists = state.channels.any {
+                                it.id == target.channelId && it.url.isNotBlank()
+                            }
+                            if (exists) {
+                                navController.navigate(Routes.player(target.channelId))
+                                onDeepLinkConsumed()
+                            } else if (state.phase == PlaylistViewModel.Phase.ChannelsReady) {
+                                // Channels are loaded but the id isn't here --
+                                // playlist might have changed since the deep
+                                // link was created. Drop it silently.
+                                onDeepLinkConsumed()
+                            }
+                        }
+                        is DeepLinkTarget.Vod -> {
+                            navController.navigate(Routes.movieDetail(target.movieUuid))
+                            onDeepLinkConsumed()
                         }
                     }
                 }

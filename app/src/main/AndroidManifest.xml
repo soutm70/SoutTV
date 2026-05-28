@@ -58,6 +58,29 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+
+            <!--
+                Audit task #47. aeriotv:// deep links for direct-to-content
+                launches.
+                  aeriotv://channel/<channelId>  jumps straight to the
+                    fullscreen player for that channel (used by future
+                    Android TV home-channel recommendations, the in-app
+                    reminder banner's tap-to-watch, and a possible CLI/web
+                    handoff).
+                  aeriotv://vod/<movieUuid>      jumps to the VOD movie
+                    detail screen for that movie uuid.
+                Both routes degrade gracefully: if the channel/movie no
+                longer exists in the active playlist the navigator just
+                lands on MAIN silently (see deepLinkTarget handling in
+                AerioTVNavHost).
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aeriotv" android:host="channel" />
+                <data android:scheme="aeriotv" android:host="vod" />
+            </intent-filter>
         </activity>
 
         <service
