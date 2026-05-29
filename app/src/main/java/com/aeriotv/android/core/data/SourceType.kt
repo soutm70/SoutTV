@@ -12,12 +12,14 @@ package com.aeriotv.android.core.data
  *  - [DispatcharrUserPass]: server base URL + admin username/password. Login
  *    flow exchanges them for a JWT pair, then runs API calls with Bearer auth.
  *    Wired in Phase 4b.
- *  - [XtreamCodes]: server base URL + Xtream username/password. M3U is
- *    generated via `/get.php?type=m3u_plus&username=&password=`. Wired in Phase 4c.
+ *  - [XtreamCodes]: server base URL + Xtream username/password. Live channels
+ *    come from `/get.php?type=m3u_plus&username=&password=` (parsed by
+ *    M3UParser); EPG from `/xmltv.php` (or a user-supplied XMLTV override).
+ *    The full fetch/EPG/refresh pipeline lives in PlaylistRepository.
  */
 enum class SourceType(val displayName: String, val isImplemented: Boolean) {
     M3uUrl("M3U URL", true),
     DispatcharrApiKey("Dispatcharr (API Key)", true),
     DispatcharrUserPass("Dispatcharr (Username & Password)", true),
-    XtreamCodes("Xtream Codes", false),
+    XtreamCodes("Xtream Codes", true),
 }

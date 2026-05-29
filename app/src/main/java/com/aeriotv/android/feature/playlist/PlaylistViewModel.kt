@@ -315,6 +315,11 @@ class PlaylistViewModel @Inject constructor(
             _state.update { it.copy(error = "Username and password are required") }
             return
         }
+        if (s.sourceType == SourceType.XtreamCodes &&
+            (s.username.isBlank() || s.password.isBlank())) {
+            _state.update { it.copy(error = "Username and password are required") }
+            return
+        }
         // EPG URL gets the same scheme-normalization as the server URL.
         val epgUrl = s.epgUrl.trim().takeIf { it.isNotEmpty() }?.let { normalizeSchemedUrl(it) }
         // LAN URL too -- typing "192.168.1.50:9191" should land as
