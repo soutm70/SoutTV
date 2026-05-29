@@ -681,6 +681,7 @@ private fun ChannelGuideRow(
     val atCap = multiviewSelected.size >= multiviewStore.maxTiles && !inMultiview
     val context = LocalContext.current
     var railMenuOpen by remember { mutableStateOf(false) }
+    val railMenuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
 
     // Compact rail sizing. On TV we keep it tight (narrow rail, small logo) so
     // more channels fit; legibility comes from the name/cell text, not bulk.
@@ -723,7 +724,7 @@ private fun ChannelGuideRow(
                 )
                 .combinedClickable(
                     onClick = onChannelClick,
-                    onLongClick = { railMenuOpen = true },
+                    onLongClick = { railMenuOpen = true; railMenuGuard.arm() },
                 )
                 // tvOS channelLabel uses .padding(.horizontal, 8) on a 240pt
                 // column -> proportional 4dp on the 120dp Android-TV column;
@@ -856,7 +857,7 @@ private fun ChannelGuideRow(
                     text = {
                         Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites")
                     },
-                    onClick = {
+                    onClick = railMenuGuard.wrap {
                         railMenuOpen = false
                         onToggleFavorite()
                     },
@@ -873,7 +874,7 @@ private fun ChannelGuideRow(
                                 },
                             )
                         },
-                        onClick = {
+                        onClick = railMenuGuard.wrap {
                             railMenuOpen = false
                             if (!atCap || inMultiview) multiviewStore.toggle(channel)
                         },
@@ -1016,6 +1017,7 @@ private fun ProgrammeCell(
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
+    val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
     val key = remember(programme, channelName) {
         reminderKey(channelName, programme.title, programme.startMillis)
     }
@@ -1095,7 +1097,7 @@ private fun ProgrammeCell(
                 // Single tap/click plays the channel; the program-info sheet +
                 // actions live behind a long press (the menu below). iOS parity.
                 onClick = onPlay,
-                onLongClick = { menuOpen = true },
+                onLongClick = { menuOpen = true; menuGuard.arm() },
             )
             // tvOS programCell uses .padding(.horizontal, 8) / .padding(.vertical, 6)
             // on a 110pt row -> proportional 4dp/3dp on the 55dp Android-TV row.
@@ -1113,7 +1115,7 @@ private fun ProgrammeCell(
         ) {
             DropdownMenuItem(
                 text = { Text("Program Info") },
-                onClick = {
+                onClick = menuGuard.wrap {
                     menuOpen = false
                     onShowInfo()
                 },
@@ -1122,7 +1124,7 @@ private fun ProgrammeCell(
                 text = {
                     Text(if (isReminderSet) "Cancel Reminder" else "Set Reminder")
                 },
-                onClick = {
+                onClick = menuGuard.wrap {
                     menuOpen = false
                     if (isReminderSet) {
                         remindersVm.cancelReminder(key)
@@ -1144,7 +1146,7 @@ private fun ProgrammeCell(
                     text = {
                         Text(if (inMultiview) "Remove from Multiview" else "Add to Multiview")
                     },
-                    onClick = {
+                    onClick = menuGuard.wrap {
                         menuOpen = false
                         onToggleMultiview()
                     },
@@ -1154,7 +1156,7 @@ private fun ProgrammeCell(
                 val recordLabel = if (isLive) "Record from Now" else "Record"
                 DropdownMenuItem(
                     text = { Text(recordLabel) },
-                    onClick = {
+                    onClick = menuGuard.wrap {
                         menuOpen = false
                         onRecord()
                     },

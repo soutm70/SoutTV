@@ -466,6 +466,7 @@ internal fun ChannelRow(
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
 
     // Category gradient runs cyan-of-card → category-tint when a now-playing
     // programme has a recognised category and the user has Category Colors on.
@@ -502,7 +503,7 @@ internal fun ChannelRow(
                     .fillMaxWidth()
                     .combinedClickable(
                         onClick = onPlay,
-                        onLongClick = { menuOpen = true },
+                        onLongClick = { menuOpen = true; menuGuard.arm() },
                     )
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -675,7 +676,7 @@ internal fun ChannelRow(
                     text = {
                         Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites")
                     },
-                    onClick = {
+                    onClick = menuGuard.wrap {
                         menuOpen = false
                         onToggleFavorite()
                     },
@@ -683,7 +684,7 @@ internal fun ChannelRow(
                 if (nowProgramme != null) {
                     DropdownMenuItem(
                         text = { Text("Program Info") },
-                        onClick = {
+                        onClick = menuGuard.wrap {
                             menuOpen = false
                             onShowProgramInfo(nowProgramme.toInfoTarget(channel.name, channel.dispatcharrChannelId))
                         },
@@ -708,7 +709,7 @@ internal fun ChannelRow(
                             )
                         },
                         text = { Text(recordLabel) },
-                        onClick = {
+                        onClick = menuGuard.wrap {
                             menuOpen = false
                             val now = System.currentTimeMillis()
                             val target = nowProgramme?.toInfoTarget(channel.name, channel.dispatcharrChannelId)
@@ -807,6 +808,7 @@ private fun UpcomingProgrammeRow(
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
+    val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
     val key = remember(programme, channelName) {
         reminderKey(channelName, programme.title, programme.startMillis)
     }
@@ -819,7 +821,7 @@ private fun UpcomingProgrammeRow(
                 .fillMaxWidth()
                 .combinedClickable(
                     onClick = onTap,
-                    onLongClick = { menuOpen = true },
+                    onLongClick = { menuOpen = true; menuGuard.arm() },
                 )
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.Top,
@@ -857,7 +859,7 @@ private fun UpcomingProgrammeRow(
         ) {
             DropdownMenuItem(
                 text = { Text("Program Info") },
-                onClick = {
+                onClick = menuGuard.wrap {
                     menuOpen = false
                     onTap()
                 },
@@ -866,7 +868,7 @@ private fun UpcomingProgrammeRow(
                 text = {
                     Text(if (isReminderSet) "Cancel Reminder" else "Set Reminder")
                 },
-                onClick = {
+                onClick = menuGuard.wrap {
                     menuOpen = false
                     if (isReminderSet) {
                         remindersVm.cancelReminder(key)
@@ -885,7 +887,7 @@ private fun UpcomingProgrammeRow(
             )
             DropdownMenuItem(
                 text = { Text("Record") },
-                onClick = {
+                onClick = menuGuard.wrap {
                     menuOpen = false
                     onShowRecord()
                 },
