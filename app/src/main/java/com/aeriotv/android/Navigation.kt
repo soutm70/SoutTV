@@ -36,7 +36,6 @@ import com.aeriotv.android.feature.onboarding.WelcomeScreen
 import com.aeriotv.android.feature.multiview.MultiviewScreen
 import com.aeriotv.android.feature.ondemand.OnDemandViewModel
 import com.aeriotv.android.feature.ondemand.SeriesDetailScreen
-import com.aeriotv.android.core.playback.PlaybackService
 import com.aeriotv.android.feature.main.MainScaffoldEntryPoint
 import com.aeriotv.android.feature.miniplayer.MiniPlayerSession
 import com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel
@@ -699,18 +698,14 @@ fun AerioTVNavHost(
                 MainScaffoldEntryPoint::class.java,
             )
         }
-        val miniMpvHolder = remember { miniEntry.mpvPlayerHolder() }
-        val miniMpvWindowState = remember { miniEntry.mpvWindowState() }
-        // The TV mini is a static card (channel logo + name + double-press
-        // hint), not a video window - re-parenting the SurfaceView between
-        // composables fights libmpv's render path. Audio continues via the
-        // PlayerScreen-installed PlaybackService; resume re-pushes the route
-        // and PlayerScreen's AndroidView factory restores video on the held
-        // MPV via mpvHolder.acquireOrCreate (vid="auto", first frame is
-        // instant because the decoder never tore down).
+        val miniExoHolder = remember { miniEntry.exoPlayerHolder() }
+        val miniExoWindowState = remember { miniEntry.exoWindowState() }
+        // The TV mini is a static chip (Double-press OK to resume).
+        // The video continues to be drawn by the activity-lifetime
+        // PersistentExoWindow at MainActivity root, which the mini
+        // BackHandler dismiss flips into Hidden mode + stop()'s.
         TvMiniPlayerOverlay(
             state = miniState,
-            mpvHolder = miniMpvHolder,
             onResume = {
                 val resumed = miniPlayerVm.resumeChannel()
                 if (resumed != null) {
@@ -718,16 +713,15 @@ fun AerioTVNavHost(
                 }
             },
             onDismiss = {
-                // Phase 172: stop() instead of destroy() so the held
-                // SurfaceView (mounted at MainActivity root, owned by
-                // PersistentMpvWindow) survives. The next channel tap
-                // plays instantly on the existing handle. destroy()
-                // wiped holder.view=null and subsequent taps couldn't
-                // find a view to play on, leaving channels stuck.
+                // Mini dismiss: stop the persistent player, hide its
+                // window, kill the MediaSessionService. The session +
+                // notification go away. Next channel tap goes through
+                // a fresh acquireOrCreate path.
                 miniPlayerVm.dismiss()
-                miniMpvWindowState.hide()
-                miniMpvHolder.stop()
-                PlaybackService.stop(miniContext)
+                miniExoWindowState.hide()
+                miniExoHolder.stop()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(miniContext)
             },
         )
         // Double-press D-pad Select event - MainActivity emits into the

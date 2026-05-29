@@ -15,7 +15,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.aeriotv.android.core.playback.MPVPlayerHolder
 
 /**
  * TV mini-player chrome overlay (Phase 165).
@@ -35,7 +34,6 @@ import com.aeriotv.android.core.playback.MPVPlayerHolder
 @Composable
 fun BoxScope.TvMiniPlayerOverlay(
     state: MiniPlayerSession.State,
-    @Suppress("UNUSED_PARAMETER") mpvHolder: MPVPlayerHolder,
     @Suppress("UNUSED_PARAMETER") onResume: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onDismiss: () -> Unit,
 ) {

@@ -23,7 +23,6 @@ import com.aeriotv.android.core.security.SafeUrlInterceptor
 import okhttp3.OkHttpClient
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.multiview.MultiviewStore
-import com.aeriotv.android.feature.player.MpvLibraryWarmup
 import com.aeriotv.android.feature.reminders.ReminderBannerBus
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -125,15 +124,10 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         // Track foreground state so reminders that fire while the app is open
         // surface as an in-app banner instead of a system notification.
         reminderBannerBus.bind()
-        // Process-wide libmpv warmup (Phase 94: the "don't-destroy" retry of
-        // the Phase 78/82 attempt). The original warmup called MPV.destroy()
-        // on its throwaway handle, whose nativeDestroy() released JNI globals
-        // the next nativeCreate() needed -- every subsequent stream came up
-        // dead. MpvLibraryWarmup now RETAINS the warmed handle for the process
-        // lifetime instead of destroying it, so the codec/protocol/hwdec
-        // registrations + JNI globals stay resident and the first channel tap
-        // hits libmpv's warm path. See MpvLibraryWarmup.warmHandle.
-        MpvLibraryWarmup.start(this)
+        // libmpv is gone (task #67). Media3's ExoPlayer + MediaCodec
+        // path doesn't need a process-wide warmup pre-pay -- the first
+        // ExoPlayer.Builder allocation handles the framework warm-up
+        // implicitly.
         // Audit task #37: periodic resource snapshots (PSS, FD count, thermal,
         // sys memory) into logcat, debug builds only. Diagnostic trail for the
         // "AerioTV crashes on the Google TV Streamer" reports - by the time a

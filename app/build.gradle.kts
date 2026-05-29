@@ -40,8 +40,8 @@ android {
         applicationId = "com.aeriotv.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.2.0"
         vectorDrawables { useSupportLibrary = true }
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -121,7 +121,13 @@ dependencies {
 
     implementation(libs.androidx.tv.material)
 
-    implementation(libs.mpv.android.lib)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.exoplayer.dash)
+    implementation(libs.androidx.media3.datasource.okhttp)
+    implementation(libs.androidx.media3.extractor)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.ui)
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ktor.client.core)

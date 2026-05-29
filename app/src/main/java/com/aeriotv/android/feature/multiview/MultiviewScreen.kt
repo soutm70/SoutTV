@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.multiview
 
+import android.content.res.Configuration
 import android.util.Log
 import android.view.ViewGroup
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -41,10 +42,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,10 +62,23 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.core.data.M3UChannel
-import com.aeriotv.android.feature.player.MPVPlayerView
+import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.bufferMillisFor
-import `is`.xyz.mpv.Utils
 
 private const val TAG = "MultiviewScreen"
 
@@ -91,6 +114,10 @@ fun MultiviewScreen(
     val tileRounded by settingsVm.multiviewTileCornersRounded.collectAsState(initial = false)
 
     var chromeVisible by remember { mutableStateOf(true) }
+    // Bumped whenever the user navigates between tiles (D-pad focus change)
+    // so the auto-hide timer re-arms instead of fading the channel names
+    // mid-navigation. Mirrors PlayerScreen's lastInteractionAt pattern.
+    var lastInteractionAt by remember { mutableStateOf(0L) }
     // Long-press a tile -> relocate mode. The next tap swaps positions with
     // the relocating tile. Tap the same tile again (or the close X) to cancel.
     var relocatingIndex by remember { mutableStateOf<Int?>(null) }
@@ -149,6 +176,13 @@ fun MultiviewScreen(
             tileRounded = tileRounded,
             chromeVisible = chromeVisible,
             focusFadedOut = focusFadedOut,
+            onTileFocused = {
+                // D-pad moved onto a tile: re-show the channel names + count
+                // chip and re-arm the auto-hide so they stay up while the
+                // user is actively navigating the grid.
+                chromeVisible = true
+                lastInteractionAt = android.os.SystemClock.uptimeMillis()
+            },
             onTileTap = { idx ->
                 val r = relocatingIndex
                 if (r != null && r != idx) {
@@ -217,7 +251,7 @@ fun MultiviewScreen(
         }
     }
 
-    LaunchedEffect(chromeVisible) {
+    LaunchedEffect(chromeVisible, lastInteractionAt) {
         if (chromeVisible) {
             kotlinx.coroutines.delay(4_000L)
             chromeVisible = false
@@ -275,11 +309,33 @@ private fun TileGrid(
     tileRounded: Boolean,
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
+    onTileFocused: () -> Unit,
     onTileTap: (Int) -> Unit,
     onTileLongPress: (Int) -> Unit,
     onTileDoubleTap: (Int) -> Unit,
     onReorder: (Int, Int) -> Unit,
 ) {
+    val isTv = (
+        LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK
+        ) == Configuration.UI_MODE_TYPE_TELEVISION
+
+    // D-pad navigation index (TV only). The tiles are placed with
+    // Modifier.offset for the persistent-composition architecture, which
+    // breaks Compose's spatial focus search across them (offset siblings
+    // don't yield a clean left/right/up/down graph). So we own focus
+    // ourselves: a single focusable host on the grid captures the D-pad
+    // keys and moves this index through the rows x cols arithmetic, and
+    // each tile draws its ring from `index == dpadIndex`. OK/Center acts
+    // on the selected tile.
+    var dpadIndex by remember(tiles.size) {
+        mutableStateOf(focusedIndex.coerceIn(0, (tiles.size - 1).coerceAtLeast(0)))
+    }
+    val gridFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (isTv) runCatching { gridFocusRequester.requestFocus() }
+    }
+    // Re-arm the chrome (channel names + count chip) on every navigation.
+    LaunchedEffect(dpadIndex) { if (isTv) onTileFocused() }
     // tvOS parity (MultiviewTileView.shouldPause): "fullscreen a tile" only
     // changes which tile is drawn full size -- NO tile is ever unmounted or
     // destroyed. Every tile's MPVPlayerView stays in the composition so its
@@ -302,7 +358,45 @@ private fun TileGrid(
     var dragSource by remember { mutableStateOf<Int?>(null) }
     var dragPos by remember { mutableStateOf(Offset.Zero) }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            // Single focusable host for the whole grid (TV). It captures
+            // the D-pad and we move dpadIndex by hand; returning true
+            // consumes the event so Compose's own focus search never
+            // pulls focus into an individual (offset-placed) tile, which
+            // is what made the ring vanish on first navigation.
+            .focusRequester(gridFocusRequester)
+            .focusable()
+            .onKeyEvent { ev ->
+                if (!isTv || anyFullscreen) return@onKeyEvent false
+                if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
+                val (gr, gc) = gridShapeFor(tiles.size)
+                val r = dpadIndex / gc
+                val c = dpadIndex % gc
+                fun idx(rr: Int, cc: Int) = rr * gc + cc
+                when (ev.key) {
+                    Key.DirectionRight -> {
+                        val n = idx(r, c + 1)
+                        if (c + 1 < gc && n < tiles.size) { dpadIndex = n; true } else false
+                    }
+                    Key.DirectionLeft -> {
+                        if (c > 0) { dpadIndex = idx(r, c - 1); true } else false
+                    }
+                    Key.DirectionDown -> {
+                        val n = idx(r + 1, c)
+                        if (r + 1 < gr && n < tiles.size) { dpadIndex = n; true } else false
+                    }
+                    Key.DirectionUp -> {
+                        if (r > 0) { dpadIndex = idx(r - 1, c); true } else false
+                    }
+                    Key.DirectionCenter, Key.Enter -> {
+                        onTileTap(dpadIndex); true
+                    }
+                    else -> false
+                }
+            },
+    ) {
         val gridW = maxWidth
         val gridH = maxHeight
         val cellWDp = gridW / cols
@@ -381,6 +475,9 @@ private fun TileGrid(
                     tileRounded = if (isFull) false else tileRounded,
                     chromeVisible = chromeVisible,
                     focusFadedOut = focusFadedOut,
+                    // D-pad selection ring (TV only): the tile the remote is
+                    // currently on. Suppressed in fullscreen (single tile).
+                    isDpadFocused = isTv && !anyFullscreen && index == dpadIndex,
                     onTap = { onTileTap(index) },
                     onDoubleTap = { onTileDoubleTap(index) },
                 )
@@ -403,18 +500,31 @@ private fun Tile(
     tileRounded: Boolean,
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
+    isDpadFocused: Boolean,
     onTap: () -> Unit,
     onDoubleTap: () -> Unit,
 ) {
     val shape = if (tileRounded) RoundedCornerShape(8.dp) else RoundedCornerShape(0.dp)
-    // Resolve the focus indicator for this tile. iOS canon:
+    // D-pad focus (which tile the remote is currently on) is owned by the
+    // grid host and passed in as [isDpadFocused]. Distinct from AUDIO focus
+    // (which tile is playing sound): the user moves the ring around the grid
+    // and presses OK to promote the ringed tile to audio focus. Without a
+    // visible ring the user can't tell which tile they're about to select.
+    val dpadFocused = isDpadFocused
+    // Resolve the AUDIO-focus indicator for this tile. iOS canon:
     //   centerIcon: speaker icon fades with the chrome
     //   grayPersistent: muted gray border always around the active tile
     //   themeFading: cyan border that auto-hides after 5s of inactivity
     val showCenterIcon = isAudioFocused && audioFocusStyle == "centerIcon" && chromeVisible
+    // Border priority: transient drag states first, then the D-pad focus
+    // ring (bright, always visible while navigating), then the audio-focus
+    // border styles, then the resting hairline. The D-pad ring deliberately
+    // outranks the audio-focus border so the navigation cursor is never
+    // ambiguous; the speaker icon still distinguishes the audio tile.
     val borderColor = when {
         isDropTarget -> MaterialTheme.colorScheme.tertiary
         isRelocating -> MaterialTheme.colorScheme.primary
+        dpadFocused -> Color.White
         isAudioFocused && audioFocusStyle == "grayPersistent" ->
             Color.White.copy(alpha = 0.5f)
         isAudioFocused && audioFocusStyle == "themeFading" && !focusFadedOut ->
@@ -423,6 +533,7 @@ private fun Tile(
     }
     val borderWidth = when {
         isDropTarget -> 4.dp
+        dpadFocused -> 4.dp
         isRelocating -> 3.dp
         isAudioFocused && (audioFocusStyle == "grayPersistent" ||
                 (audioFocusStyle == "themeFading" && !focusFadedOut)) -> 2.dp
@@ -438,85 +549,38 @@ private fun Tile(
                 onDoubleClick = onDoubleTap,
             ),
     ) {
-        // Tracks the URL the held MPV instance is currently playing. Lets
-        // `update` distinguish a channel-flip (URL changed) from an aid-only
-        // recomposition, so we call playFile (libmpv loadfile, replace mode)
-        // only when needed. Mirrors iOS swapStreamIfChanged + the in-place
-        // tile-swap pattern from commits e627ca7 / b34fa82 / 8fb0d5a.
-        val currentUrlRef = remember { mutableStateOf("") }
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                Utils.copyAssets(ctx)
-                val configDir = ctx.filesDir.path
-                val cacheDir = ctx.cacheDir.path
-                val view = MPVPlayerView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                    this.isLive = true
-                    this.caFilePath = "$configDir/cacert.pem"
-                    this.httpHeaders = httpHeaders
-                    this.cachingMs = cachingMs
-                }
-                view.initialize(configDir, cacheDir)
-                Log.i(TAG, "Tile MPV loading: ${channel.name}")
-                if (channel.url.isNotBlank()) {
-                    view.playFile(channel.url)
-                    currentUrlRef.value = channel.url
-                }
-                // Initial audio focus state. `mute` is the reliable gate: aid=no
-                // set right after playFile doesn't survive the async file load
-                // (mpv re-selects the default audio track on FILE_LOADED), which
-                // let every tile play sound at once. mute applies immediately and
-                // persists regardless of track-selection timing; aid still spares
-                // the CPU for non-focused tiles once it sticks.
-                view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
-                view.mpv.setPropertyString("mute", if (isAudioFocused) "no" else "yes")
-                // Pause non-fullscreen tiles (set when this tile is created while
-                // another is already fullscreen). Frees decode/GPU; resumes on exit.
-                view.mpv.setPropertyString("pause", if (paused) "yes" else "no")
-                view
-            },
-            update = { view ->
-                // In-place stream swap: when the positional Tile sees a new
-                // channel (via MultiviewStore.swap or replaceTile), don't
-                // teardown — just hand the new URL to the existing mpv handle.
-                if (channel.url.isNotBlank() && currentUrlRef.value != channel.url) {
-                    Log.i(TAG, "Tile MPV swap: ${currentUrlRef.value} -> ${channel.url}")
-                    view.playFile(channel.url)
-                    currentUrlRef.value = channel.url
-                }
-                view.mpv.setPropertyString("aid", if (isAudioFocused) "auto" else "no")
-                view.mpv.setPropertyString("mute", if (isAudioFocused) "no" else "yes")
-                // Fullscreen pause-not-destroy: a backgrounded (non-fullscreen)
-                // tile pauses to free decode/GPU/network; un-pauses on exit and
-                // resumes from its buffer (no reload). Surface + libmpv handle
-                // stay alive the whole time (the tile is only moved off-screen).
-                view.mpv.setPropertyString("pause", if (paused) "yes" else "no")
-            },
-            onRelease = { view ->
-                Log.i(TAG, "Tile MPV releasing: ${channel.name}")
-                view.destroy()
-            },
+        ExoTile(
+            url = channel.url,
+            channelName = channel.name,
+            httpHeaders = httpHeaders,
+            isAudioFocused = isAudioFocused,
+            paused = paused,
         )
-        // Channel-name overlay (top-left). Always shown — iOS canon keeps the
-        // tile's broadcast bug visible alongside the channel label.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(6.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color.Black.copy(alpha = 0.55f))
-                .padding(horizontal = 6.dp, vertical = 2.dp),
+        // Channel-name overlay (top-left). Fades with the chrome: it's up
+        // on launch + whenever the user interacts (tap toggles chrome,
+        // D-pad navigation re-arms it) and auto-hides after 4s so the tile
+        // is an unobstructed video cell at rest. AnimatedVisibility gives
+        // a soft cross-fade rather than a hard pop.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = chromeVisible,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut(),
+            modifier = Modifier.align(Alignment.TopStart),
         ) {
-            Text(
-                text = channel.name,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Box(
+                modifier = Modifier
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
         // Audio-focus indicator. centerIcon mode shows the speaker icon over
         // the active tile while the chrome is visible. grayPersistent and
@@ -531,5 +595,171 @@ private fun Tile(
                     .size(48.dp),
             )
         }
+    }
+}
+
+/**
+ * Per-tile Media3 ExoPlayer + PlayerView. Direct counterpart of the
+ * libmpv tile we deleted (task #63).
+ *
+ * Lifetime: factory builds one ExoPlayer per tile. update() handles
+ * channel swap (setMediaItem on the same player -- no rebuild),
+ * audio-focus changes (volume), and paused flag (playWhenReady).
+ * onRelease releases the player.
+ *
+ * Audio strategy: libmpv used `mute` because `aid=no` didn't survive
+ * the async file-load. Media3 exposes a direct `volume` (0f..1f) on
+ * Player that applies immediately and persists across setMediaItem,
+ * so the two-knob libmpv dance collapses to one knob here.
+ *
+ * Resource budget: each tile is one ExoPlayer = one MediaCodec
+ * instance + one AudioRenderer. The Streamer (MediaTek, modest 32-bit
+ * SoC) caps at ~8 concurrent MediaCodec instances; the existing
+ * Multiview UI already exposes N=1..9 tiles. If we hit
+ * MediaCodec.CONFIGURE_ERROR / INSUFFICIENT_RESOURCE we surface
+ * the failure via the player's Listener; the existing N-aware audio
+ * strategy + thermal/soft-limit/OOM guards (task #35) still apply.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun ExoTile(
+    url: String,
+    channelName: String,
+    httpHeaders: Map<String, String>,
+    isAudioFocused: Boolean,
+    paused: Boolean,
+) {
+    val currentUrlRef = remember { mutableStateOf("") }
+    val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx ->
+            // Live-stream tuning. Tighter than the VOD profile because
+            // a 9-tile grid wants every tile to start ASAP, even at
+            // the cost of an occasional rebuffer.
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(2_500, 5_000, 500, 2_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+            val dataSourceFactory = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(30_000)
+                .setReadTimeoutMs(30_000)
+            if (httpHeaders.isNotEmpty()) {
+                dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                httpHeaders.entries
+                    .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+                    ?.value
+                    ?.let(dataSourceFactory::setUserAgent)
+            }
+            val renderersFactory = DefaultRenderersFactory(ctx)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            // Route raw .ts / /proxy/ts via TsExtractor like the Live
+            // TV holder; HLS via HlsMediaSource; everything else via
+            // the default factory. Same routing logic as
+            // AerioExoPlayerHolder.buildMediaSource. The factory is
+            // constructed per-prepare in buildTileMediaSource below
+            // rather than being passed as a top-level MediaSource.Factory,
+            // because we route by URL shape at call time.
+            val player = ExoPlayer.Builder(ctx)
+                .setRenderersFactory(renderersFactory)
+                .setLoadControl(loadControl)
+                .setHandleAudioBecomingNoisy(false) // tile is muted-by-default; don't react
+                .build()
+                .apply {
+                    // CRITICAL multiview audio-budget gate. Each tile is a
+                    // separate ExoPlayer; if every tile decodes audio, the
+                    // device's audio HAL runs out of AudioTrack sinks and
+                    // throws "Audio sink error" -> ExoPlaybackException,
+                    // which is FATAL to that tile's player (it stops and the
+                    // surface goes black). On the Streamer, 4 concurrent
+                    // AC-3 5.1 decoders is already over the limit.
+                    //
+                    // Setting volume=0 is NOT enough -- it mutes output but
+                    // still allocates the decoder + sink. We must disable the
+                    // audio TRACK entirely so the renderer never selects it
+                    // and no sink is created. This is the Media3 equivalent
+                    // of the libmpv `aid=no` knob the original multiview used
+                    // (the migration wrongly collapsed aid+mute to volume).
+                    trackSelectionParameters = trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !isAudioFocused)
+                        .build()
+                    volume = 1f
+                    playWhenReady = !paused
+                }
+            playerRef.value = player
+
+            Log.i(TAG, "Tile ExoPlayer loading: $channelName")
+            if (url.isNotBlank()) {
+                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                player.prepare()
+                currentUrlRef.value = url
+            }
+
+            PlayerView(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                useController = false
+                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                setPlayer(player)
+            }
+        },
+        update = { _ ->
+            val player = playerRef.value ?: return@AndroidView
+            // In-place stream swap: the positional Tile sees a new
+            // channel (via MultiviewStore.swap or replaceTile). Don't
+            // teardown -- hand the new URL to the same player.
+            if (url.isNotBlank() && currentUrlRef.value != url) {
+                Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
+                val dataSourceFactory = DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
+                if (httpHeaders.isNotEmpty()) {
+                    dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                }
+                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                player.prepare()
+                currentUrlRef.value = url
+            }
+            // Flip audio on focus change. Disabling the track releases the
+            // AC-3 decoder + AudioTrack sink for non-focused tiles; enabling
+            // it on the newly-focused tile re-selects audio. Single-knob
+            // (track enable/disable) keeps exactly one audio sink alive
+            // across the whole grid, which is what the audio HAL can sustain.
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !isAudioFocused)
+                .build()
+            player.playWhenReady = !paused
+        },
+        onRelease = { _ ->
+            Log.i(TAG, "Tile ExoPlayer releasing: $channelName")
+            playerRef.value?.release()
+            playerRef.value = null
+        },
+    )
+}
+
+@OptIn(UnstableApi::class)
+private fun buildTileMediaSource(
+    url: String,
+    dataSourceFactory: androidx.media3.datasource.DataSource.Factory,
+): androidx.media3.exoplayer.source.MediaSource {
+    val mediaItem = MediaItem.fromUri(url)
+    return when {
+        url.endsWith(".m3u8", ignoreCase = true) ->
+            HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        url.endsWith(".ts", ignoreCase = true) ||
+            url.contains("/proxy/ts/", ignoreCase = true) -> {
+            val extractors = DefaultExtractorsFactory()
+                .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
+            ProgressiveMediaSource.Factory(dataSourceFactory, extractors)
+                .createMediaSource(mediaItem)
+        }
+        else -> DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem)
     }
 }

@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.player
 
 import android.util.Log
 import android.view.ViewGroup
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -65,9 +66,17 @@ import com.aeriotv.android.core.pip.supportsPip
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.bufferMillisFor
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
-import `is`.xyz.mpv.MPV
-import `is`.xyz.mpv.MPVNode
-import `is`.xyz.mpv.Utils
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.delay
@@ -76,13 +85,20 @@ private const val TAG = "VODPlayerScreen"
 private const val AUTO_HIDE_MS = 4_000L
 
 /**
- * VOD playback. Same MPV pipeline as the live PlayerScreen but with a much
- * thinner chrome: tap-to-toggle + close button + title overlay. Phase 10c
- * adds the iOS-canon scrubber + position/duration row.
+ * VOD playback. Task #62: rebuilt on Media3 ExoPlayer.
  *
- * `isLive = false` flips the buffer floor off (live forces a 5s minimum that
- * delays VOD startup unnecessarily) and lets MPV pick smooth-resume defaults.
+ * The earlier libmpv version owned a per-screen MPVPlayerView and
+ * polled `time-pos` / `duration` / `pause` via setOptionString every
+ * 500ms. We now spin up a dedicated ExoPlayer for the lifetime of
+ * this screen (we don't share the Live TV persistent holder -- VOD
+ * has its own buffering profile, doesn't need surface persistence
+ * across nav transitions, and the lifetimes don't overlap usefully).
+ *
+ * Position + duration come from Player.contentPosition /
+ * contentDuration; play/pause/seek are direct Player API calls.
+ * Save / resume continues to use WatchProgress unchanged.
  */
+@OptIn(UnstableApi::class)
 @Composable
 fun VODPlayerScreen(
     streamUrl: String,
@@ -115,7 +131,7 @@ fun VODPlayerScreen(
     }
 
     var chromeVisible by remember { mutableStateOf(true) }
-    var mpvView by remember { mutableStateOf<MPVPlayerView?>(null) }
+    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
 
     // Player progress, polled every 500ms while the player is mounted. Backs
     // the scrubber + position/duration row. positionMs is the canonical
@@ -187,106 +203,133 @@ fun VODPlayerScreen(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                Utils.copyAssets(ctx)
-                val configDir = ctx.filesDir.path
-                val cacheDir = ctx.cacheDir.path
+                // VOD-friendly buffer windows. Bigger than the live numbers
+                // in AerioExoPlayerHolder because VOD users tolerate a
+                // slightly slower start in exchange for smoother seeking
+                // and fewer rebuffers across the duration of a long film.
+                val loadControl = DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        /* minBufferMs */ 15_000,
+                        /* maxBufferMs */ 50_000,
+                        /* bufferForPlaybackMs */ 2_000,
+                        /* bufferForPlaybackAfterRebufferMs */ 5_000,
+                    )
+                    .build()
 
-                val view = MPVPlayerView(ctx).apply {
+                val dataSourceFactory = DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
+                    .setConnectTimeoutMs(30_000)
+                    .setReadTimeoutMs(30_000)
+                if (httpHeaders.isNotEmpty()) {
+                    dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                    httpHeaders.entries
+                        .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+                        ?.value
+                        ?.let(dataSourceFactory::setUserAgent)
+                }
+
+                val renderersFactory = DefaultRenderersFactory(ctx)
+                    .setEnableDecoderFallback(true)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
+                val mediaSourceFactory = DefaultMediaSourceFactory(ctx)
+                    .setDataSourceFactory(dataSourceFactory)
+
+                val player = ExoPlayer.Builder(ctx)
+                    .setRenderersFactory(renderersFactory)
+                    .setLoadControl(loadControl)
+                    .setMediaSourceFactory(mediaSourceFactory)
+                    .setHandleAudioBecomingNoisy(true)
+                    .build()
+                    .apply {
+                        addListener(object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e(TAG, "VOD ExoPlayer error: ${error.errorCodeName}", error)
+                            }
+                        })
+                        playWhenReady = true
+                        setMediaItem(MediaItem.fromUri(streamUrl))
+                        prepare()
+                    }
+
+                Log.i(TAG, "Loading VOD on ExoPlayer: $streamUrl")
+                exoPlayer = player
+
+                PlayerView(ctx).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
-                    this.isLive = false
-                    this.caFilePath = "$configDir/cacert.pem"
-                    this.httpHeaders = httpHeaders
-                    this.cachingMs = bufferMillisFor(streamBufferSize)
+                    useController = false
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    setPlayer(player)
                 }
-                view.initialize(configDir, cacheDir)
-
-                view.mpv.addLogObserver(object : MPV.LogObserver {
-                    override fun logMessage(prefix: String, level: Int, text: String) {
-                        // Phase 144: gate the per-mpv-message relay behind DEBUG.
-                        // mpv emits dozens of lines per second during playback;
-                        // Log.i is a syscall that wakes logd and serialises
-                        // through a single Binder channel, adding measurable
-                        // CPU to a passively-cooled TV. PlayerScreen already
-                        // gates the equivalent (Phase 141); VOD missed it.
-                        if (BuildConfig.DEBUG) Log.i(TAG, "[mpv $prefix/L$level] ${text.trimEnd()}")
-                    }
-                })
-                view.mpv.addObserver(object : MPV.EventObserver {
-                    override fun eventProperty(property: String) {}
-                    override fun eventProperty(property: String, value: Long) {}
-                    override fun eventProperty(property: String, value: Boolean) {}
-                    override fun eventProperty(property: String, value: String) {}
-                    override fun eventProperty(property: String, value: Double) {}
-                    override fun eventProperty(property: String, value: MPVNode) {}
-                    override fun event(eventId: Int, data: MPVNode) {}
-                })
-
-                Log.i(TAG, "Loading VOD: $streamUrl")
-                if (streamUrl.isNotBlank()) view.playFile(streamUrl)
-                mpvView = view
-                view
             },
             onRelease = { view ->
-                Log.i(TAG, "Releasing VOD MPV")
-                mpvView = null
-                view.destroy()
+                Log.i(TAG, "Releasing VOD ExoPlayer")
+                exoPlayer?.release()
+                exoPlayer = null
+                view.player = null
             },
         )
 
-        // Resume from saved position. Waits 1.5s for MPV to settle into playback
-        // before seeking - seeking before PLAYBACK_RESTART tends to be a no-op
-        // since the demuxer hasn't reported duration yet.
-        LaunchedEffect(mpvView, savedPositionMs) {
-            val view = mpvView ?: return@LaunchedEffect
+        // Resume from saved position. Wait until the player reports a
+        // sane duration before issuing seekTo -- ExoPlayer accepts
+        // seekTo in STATE_IDLE but it's a no-op until the manifest is
+        // parsed and contentDuration arrives.
+        LaunchedEffect(exoPlayer, savedPositionMs) {
+            val player = exoPlayer ?: return@LaunchedEffect
             val pos = savedPositionMs ?: return@LaunchedEffect
             if (pos <= 0L) return@LaunchedEffect
-            delay(1_500L)
-            view.mpv.setPropertyString("time-pos", (pos / 1000.0).toString())
-            Log.i(TAG, "Resumed from ${pos}ms")
+            // Spin until the player has parsed duration. Bail out after
+            // ~6s so a broken / DRM-locked stream doesn't leak this
+            // coroutine.
+            var waited = 0L
+            while (player.contentDuration <= 0L && waited < 6_000L) {
+                delay(200L)
+                waited += 200L
+            }
+            if (player.contentDuration > 0L) {
+                player.seekTo(pos)
+                Log.i(TAG, "Resumed from ${pos}ms")
+            }
         }
 
         // Periodic save. Mirrors iOS NowPlayingManager.currentWatchProgress's
-        // ~5s persistence cadence. Bails if the player hasn't reported a
-        // valid position/duration yet (live streams, early-load, etc).
-        LaunchedEffect(mpvView, videoId) {
-            val view = mpvView ?: return@LaunchedEffect
+        // ~5s persistence cadence. Same logic, just reading from ExoPlayer
+        // instead of libmpv property-strings.
+        LaunchedEffect(exoPlayer, videoId) {
+            val player = exoPlayer ?: return@LaunchedEffect
             if (videoId.isNullOrBlank()) return@LaunchedEffect
             while (true) {
                 delay(5_000L)
-                val posStr = view.mpv.getPropertyString("time-pos") ?: continue
-                val durStr = view.mpv.getPropertyString("duration") ?: continue
-                val posSecs = posStr.toDoubleOrNull() ?: continue
-                val durSecs = durStr.toDoubleOrNull() ?: continue
-                if (posSecs <= 0.0 || durSecs <= 0.0) continue
+                val pos = player.contentPosition
+                val dur = player.contentDuration
+                if (pos <= 0L || dur <= 0L) continue
                 watchVm.save(
                     videoId = videoId,
                     title = title,
                     posterUrl = posterUrl,
-                    positionMs = (posSecs * 1000).toLong(),
-                    durationMs = (durSecs * 1000).toLong(),
+                    positionMs = pos,
+                    durationMs = dur,
                 )
             }
         }
 
-        // Tight 500ms poll for scrubber state. Cheaper than wiring an MPV
-        // EventObserver to time-pos / duration / pause (those fire on every
-        // frame) and only running while VOD is mounted, so battery impact is
-        // negligible. Skipped while dragging so the scrubber tracks the user's
-        // finger instead of fighting the player.
-        LaunchedEffect(mpvView) {
-            val view = mpvView ?: return@LaunchedEffect
+        // Tight 500ms poll for scrubber state. ExoPlayer exposes the
+        // values directly; no string parsing. The poll-instead-of-
+        // observe trade is the same as the libmpv version: cheaper than
+        // wiring listener callbacks for properties that fire on every
+        // frame, and only runs while VOD is mounted.
+        LaunchedEffect(exoPlayer) {
+            val player = exoPlayer ?: return@LaunchedEffect
             while (true) {
                 delay(500L)
                 if (isDragging) continue
-                val posStr = view.mpv.getPropertyString("time-pos")
-                val durStr = view.mpv.getPropertyString("duration")
-                val pauseStr = view.mpv.getPropertyString("pause")
-                posStr?.toDoubleOrNull()?.let { positionMs = (it * 1000).toLong() }
-                durStr?.toDoubleOrNull()?.let { durationMs = (it * 1000).toLong() }
-                pauseStr?.let { isPaused = it == "yes" }
+                positionMs = player.contentPosition.coerceAtLeast(0L)
+                durationMs = player.contentDuration.coerceAtLeast(0L)
+                isPaused = !player.playWhenReady
             }
         }
 
@@ -378,30 +421,27 @@ fun VODPlayerScreen(
                     onDragChanged = { dragFraction = it },
                     onDragEnd = { fraction ->
                         val target = (fraction * durationMs).toLong()
-                        mpvView?.mpv?.setPropertyString(
-                            "time-pos",
-                            (target / 1000.0).toString(),
-                        )
+                        exoPlayer?.seekTo(target)
                         positionMs = target
                         isDragging = false
                     },
                     onTogglePlay = {
-                        val view = mpvView ?: return@BottomChrome
-                        val now = view.mpv.getPropertyString("pause") == "yes"
-                        view.mpv.setPropertyString("pause", if (now) "no" else "yes")
-                        isPaused = !now
+                        val player = exoPlayer ?: return@BottomChrome
+                        val nowPaused = !player.playWhenReady
+                        player.playWhenReady = nowPaused  // toggling: paused -> resume
+                        isPaused = !nowPaused
                     },
                     onSkipBack = {
-                        val view = mpvView ?: return@BottomChrome
+                        val player = exoPlayer ?: return@BottomChrome
                         val target = max(0L, positionMs - 10_000L)
-                        view.mpv.setPropertyString("time-pos", (target / 1000.0).toString())
+                        player.seekTo(target)
                         positionMs = target
                     },
                     onSkipForward = {
-                        val view = mpvView ?: return@BottomChrome
+                        val player = exoPlayer ?: return@BottomChrome
                         val maxPos = if (durationMs > 0) durationMs else Long.MAX_VALUE
                         val target = min(maxPos, positionMs + 10_000L)
-                        view.mpv.setPropertyString("time-pos", (target / 1000.0).toString())
+                        player.seekTo(target)
                         positionMs = target
                     },
                     modifier = Modifier

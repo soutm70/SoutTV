@@ -17,7 +17,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.aeriotv.android.core.pip.enterPip16x9
-import com.aeriotv.android.core.playback.PlaybackService
+import com.aeriotv.android.core.playback.AerioMediaPlaybackService
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,12 +27,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.aeriotv.android.core.pip.PipState
-import com.aeriotv.android.core.playback.MPVPlayerHolder
+import com.aeriotv.android.core.playback.AerioExoPlayerHolder
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.core.system.NotificationPermissionGate
 import com.aeriotv.android.feature.miniplayer.MiniPlayerSession
-import com.aeriotv.android.feature.player.MpvWindowState
-import com.aeriotv.android.feature.player.PersistentMpvWindow
+import com.aeriotv.android.feature.player.ExoWindowState
+import com.aeriotv.android.feature.player.PersistentExoWindow
 import com.aeriotv.android.feature.splash.SplashGate
 import com.aeriotv.android.ui.theme.AerioTVTheme
 import com.aeriotv.android.ui.theme.AppTheme
@@ -44,8 +44,8 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var miniPlayerSession: MiniPlayerSession
-    @Inject lateinit var mpvHolder: MPVPlayerHolder
-    @Inject lateinit var mpvWindowState: MpvWindowState
+    @Inject lateinit var exoHolder: AerioExoPlayerHolder
+    @Inject lateinit var exoWindowState: ExoWindowState
 
     /**
      * Most recent deep-link target the activity has received from a
@@ -155,12 +155,9 @@ class MainActivity : ComponentActivity() {
             // Audio-only: never enter PiP. Keep a foreground media notification
             // alive so audio continues with status-bar + lock-screen controls.
             PipState.audioPlaybackActive.value -> {
-                PlaybackService.startBackground(
-                    this,
-                    PipState.nowPlayingTitle,
-                    PipState.nowPlayingSubtitle,
-                    PipState.nowPlayingLogo,
-                )
+                // MediaSession picks up title / subtitle / artwork from
+                // MediaItem.mediaMetadata automatically; no extras needed.
+                AerioMediaPlaybackService.startBackground(this)
             }
             // Video on API < 31 has no setAutoEnterEnabled, so trigger PiP here.
             // API 31+ auto-enters via the params synced in syncAutoEnterPip.
@@ -279,9 +276,17 @@ class MainActivity : ComponentActivity() {
                         // punch-through (video) -- chrome IS in state
                         // but never reaches the pixels.
                         Box(modifier = Modifier.fillMaxSize()) {
-                            PersistentMpvWindow(
-                                mpvHolder = mpvHolder,
-                                state = mpvWindowState,
+                            // PersistentExoWindow is declared FIRST so it
+                            // sits at the bottom of the z-stack. Fullscreen
+                            // mode = NavHost (containing PlayerScreen
+                            // chrome) paints OVER the video; Mini mode
+                            // lifts via zIndex(1f) (Phase 175 fix). Live
+                            // TV mounts here; VOD owns its own per-screen
+                            // PlayerView; multiview owns per-tile
+                            // PlayerViews.
+                            PersistentExoWindow(
+                                holder = exoHolder,
+                                state = exoWindowState,
                             )
                             AerioTVNavHost(
                                 initialUrl = initialUrl,

@@ -31,9 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
-import com.aeriotv.android.core.playback.MPVPlayerHolder
 import com.aeriotv.android.core.pip.PipState
-import com.aeriotv.android.core.playback.PlaybackService
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
 import com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel
 import com.aeriotv.android.feature.multiview.AddToMultiviewSheet
@@ -43,13 +41,8 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import `is`.xyz.mpv.MPV
-import `is`.xyz.mpv.MPVNode
-import `is`.xyz.mpv.Utils
 import kotlinx.coroutines.delay
-import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 private const val TAG = "PlayerScreen"
 private const val AUTO_HIDE_MS = 4_000L
@@ -92,8 +85,8 @@ fun PlayerScreen(
             PlayerScreenEntryPoint::class.java,
         )
     }
-    val mpvHolder = remember { playerEntry.mpvPlayerHolder() }
-    val mpvWindowState = remember { playerEntry.mpvWindowState() }
+    val exoHolder = remember { playerEntry.exoPlayerHolder() }
+    val exoWindowState = remember { playerEntry.exoWindowState() }
 
     // Channel-flip state. The MPV view stays alive across flips; only the
     // current channel index changes and we call playFile again with the new URL.
@@ -132,24 +125,48 @@ fun PlayerScreen(
     // so the SurfaceView (mounted at MainActivity root) fills the screen
     // beneath our chrome overlays.
     LaunchedEffect(Unit) {
-        PlaybackService.stop(context)
-        mpvHolder.setVideoEnabled(true)
-        mpvWindowState.requestFullscreen()
+        // Apply Dispatcharr / Xtream auth headers + custom User-Agent
+        // before the first setMediaSource so the DataSource picks them
+        // up. Replays on every mount so reentering the player after a
+        // settings change (e.g. swapping API key) takes effect on the
+        // next channel tap.
+        exoHolder.httpHeaders = httpHeaders
+        exoWindowState.requestFullscreen()
+        // Bring up the MediaSessionService so the session is alive
+        // before the first frame. Idempotent -- if it's already
+        // running this is a no-op.
+        com.aeriotv.android.core.playback.AerioMediaPlaybackService
+            .startBackground(context)
     }
 
-    // Channel-switch / first-mount playFile: when the held MPV is on a
-    // different channel than the user just selected, swap streams. Because
-    // the SurfaceView is persistent (Phase 165) we never have to wait for
-    // it to attach -- if mpvHolder.view exists, vo is already wired.
+    // Channel-switch / first-mount setMediaItem: when the held Exo
+    // player is on a different channel than the user just selected,
+    // swap streams via setMediaSource. The PlayerView at MainActivity
+    // root holds the surface across this so no reattach is required.
     LaunchedEffect(currentChannel?.id) {
         val channelId = currentChannel?.id ?: return@LaunchedEffect
-        val url = currentChannel?.url ?: return@LaunchedEffect
+        val ch = currentChannel ?: return@LaunchedEffect
+        val url = ch.url
         if (url.isBlank()) return@LaunchedEffect
-        val view = mpvHolder.view
-        if (view != null && mpvHolder.currentChannelId != channelId) {
-            Log.i(TAG, "Channel switch on persistent view -> $url")
-            view.playFile(url)
-            mpvHolder.currentChannelId = channelId
+        if (exoHolder.currentChannelId != channelId) {
+            Log.i(TAG, "Channel switch on Exo persistent player -> $url")
+            // Refresh headers each switch -- some Dispatcharr deployments
+            // rotate the API key per stream.
+            exoHolder.httpHeaders = httpHeaders
+            // Pass title / subtitle / logo to the MediaItem so
+            // MediaSessionService renders the right notification +
+            // lock-screen art (task #64). The mediaMetadata fields
+            // flow through Player.currentMediaItem.mediaMetadata to
+            // the session.
+            val artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
+                ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() }
+            exoHolder.playUrl(
+                url = url,
+                title = ch.name,
+                subtitle = nowProgramme?.title.orEmpty(),
+                artworkUri = artworkUri,
+            )
+            exoHolder.currentChannelId = channelId
         }
     }
 
@@ -194,21 +211,23 @@ fun PlayerScreen(
             if (!chromeVisible) {
                 chromeVisible = true
             } else {
-                mpvWindowState.requestMini()
+                exoWindowState.requestMini()
                 miniPlayerVm.showMiniPlayer()
                 onClose()
             }
         } else {
+            // Phone Back: promote to bottom-bar audio-only mini chip,
+            // hide the persistent video window, keep playback going
+            // via the AerioMediaPlaybackService. The MediaItem metadata
+            // already carries title / subtitle / logo (set in the
+            // channel-switch LaunchedEffect above) so the service's
+            // notification renders correctly the moment we
+            // foreground it.
             miniPlayerVm.showMiniPlayer()
-            currentChannel?.let { ch ->
-                mpvHolder.setVideoEnabled(false)
-                mpvWindowState.hide()
-                PlaybackService.startBackground(
-                    context = context,
-                    title = ch.name,
-                    subtitle = nowProgramme?.title.orEmpty(),
-                    logoUrl = ch.tvgLogo.takeIf { it.isNotBlank() },
-                )
+            currentChannel?.let { _ ->
+                exoWindowState.hide()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .startBackground(context)
             }
             onClose()
         }
@@ -264,18 +283,13 @@ fun PlayerScreen(
 
     val streamUrl = currentChannel?.url.orEmpty()
 
-    // Phase 165: the video SurfaceView is no longer created here. It's
-    // mounted at MainActivity root by PersistentMpvWindow and resized via
-    // MpvWindowState (requested fullscreen in the LaunchedEffect above).
-    // Our chrome (controls, tap-target, dim, sheets) renders ABOVE the
-    // root-level video automatically thanks to SurfaceView's default
-    // z-order, which composites the surface BELOW the window's main UI
-    // layer. The wrapping Box here is the chrome canvas -- transparent
-    // background so the persistent video shows through.
-    //
-    // mpvView is a derived view-into-the-holder so the chrome callbacks
-    // (onShowStreamInfo / onShowSubtitles / etc.) keep working.
-    val mpvView: MPVPlayerView? = mpvHolder.view
+    // The video PlayerView is mounted at MainActivity root via
+    // PersistentExoWindow (state-driven Fullscreen / Mini / Hidden).
+    // Our chrome (controls, tap-target, dim, sheets) renders ABOVE
+    // it automatically because the surface uses Android's default
+    // SurfaceView z-order (window UI layer above the dedicated
+    // surface). Box below is the chrome canvas -- transparent
+    // background so the video shows through.
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -341,15 +355,16 @@ fun PlayerScreen(
             // stuck.
             onClose = {
                 miniPlayerVm.dismiss()
-                mpvWindowState.hide()
-                mpvHolder.stop()
-                PlaybackService.stop(context)
+                exoWindowState.hide()
+                exoHolder.stop()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(context)
                 onClose()
             },
             onAddToMultiview = { multiviewPickerOpen = true },
             onShowRecord = { target -> recordTarget = target },
             onShowStreamInfo = {
-                streamInfo = mpvView?.captureStreamInfo() ?: StreamInfoSnapshot(
+                streamInfo = exoHolder.player?.captureStreamInfo() ?: StreamInfoSnapshot(
                     videoLines = listOf("(player not ready)"),
                     audioLines = emptyList(),
                     cacheLines = emptyList(),
@@ -357,36 +372,40 @@ fun PlayerScreen(
                 )
             },
             onShowSubtitles = {
-                val view = mpvView ?: return@PlayerChromeOverlay
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
                 subtitles = SubtitlesState(
-                    tracks = view.readSubtitleTracks(),
-                    currentSid = view.readCurrentSid(),
+                    tracks = player.readSubtitleTracks(),
+                    currentSid = player.readCurrentSid(),
                 )
             },
             onShowAudioTracks = {
-                val view = mpvView ?: return@PlayerChromeOverlay
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
                 audioTracks = AudioTracksState(
-                    tracks = view.readAudioTracks(),
-                    currentAid = view.readCurrentAid(),
+                    tracks = player.readAudioTracks(),
+                    currentAid = player.readCurrentAid(),
                 )
             },
             onShowPlaybackSpeed = {
-                val view = mpvView ?: return@PlayerChromeOverlay
-                playbackSpeedSheet = view.readSpeed()
+                val player = exoHolder.player ?: return@PlayerChromeOverlay
+                playbackSpeedSheet = player.readSpeed()
             },
             onToggleAudioOnly = {
                 audioOnly = !audioOnly
-                val view = mpvView
+                val player = exoHolder.player
                 if (audioOnly) {
-                    view?.mpv?.setPropertyString("vid", "no")
+                    // Disable the video track on the current selection.
+                    // The audio renderer keeps running -- this is the
+                    // Media3 equivalent of libmpv `vid=no` without the
+                    // need to reload the stream when toggling back.
+                    player?.trackSelectionParameters = player?.trackSelectionParameters
+                        ?.buildUpon()
+                        ?.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                        ?.build() ?: return@PlayerChromeOverlay
                 } else {
-                    // Re-enabling video: on Android, vid=auto alone doesn't bring
-                    // the picture back -- libmpv released the video output when vid
-                    // went to "no" and doesn't re-bind it to the (still-attached)
-                    // SurfaceView. Reloading the current stream in place (the same
-                    // path a channel flip uses) re-inits the VO and restores video.
-                    view?.mpv?.setPropertyString("vid", "auto")
-                    currentChannel?.url?.takeIf { it.isNotBlank() }?.let { view?.playFile(it) }
+                    player?.trackSelectionParameters = player?.trackSelectionParameters
+                        ?.buildUpon()
+                        ?.setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, false)
+                        ?.build() ?: return@PlayerChromeOverlay
                 }
             },
             audioOnly = audioOnly,
@@ -453,7 +472,7 @@ fun PlayerScreen(
             tracks = state.tracks,
             currentTrackId = state.currentSid,
             onSelect = { sid ->
-                mpvView?.mpv?.setPropertyString("sid", sid?.toString() ?: "no")
+                exoHolder.player?.selectSubtitleTrack(sid)
                 subtitles = null
             },
             onDismiss = { subtitles = null },
@@ -464,7 +483,7 @@ fun PlayerScreen(
             tracks = state.tracks,
             currentTrackId = state.currentAid,
             onSelect = { aid ->
-                mpvView?.mpv?.setPropertyString("aid", aid.toString())
+                exoHolder.player?.selectAudioTrack(aid)
                 audioTracks = null
             },
             onDismiss = { audioTracks = null },
@@ -474,7 +493,7 @@ fun PlayerScreen(
         PlaybackSpeedSheet(
             currentSpeed = current,
             onSelect = { speed ->
-                mpvView?.mpv?.setPropertyString("speed", speed.toString())
+                exoHolder.player?.applySpeed(speed)
                 playbackSpeedSheet = null
             },
             onDismiss = { playbackSpeedSheet = null },
@@ -496,144 +515,19 @@ private data class AudioTracksState(
     val currentAid: Int?,
 )
 
-private fun MPVPlayerView.captureStreamInfo(): StreamInfoSnapshot {
-    val m = mpv
-    val width = m.getPropertyString("width").orZero()
-    val height = m.getPropertyString("height").orZero()
-    val fps = m.getPropertyString("estimated-vf-fps").orEmpty()
-    val pixFmt = m.getPropertyString("video-params/pixelformat").orEmpty()
-    val hwdec = m.getPropertyString("hwdec-current").orEmpty().ifBlank { "no" }
-    val videoFmt = m.getPropertyString("video-format").orEmpty()
-    val videoCodec = m.getPropertyString("video-codec").orEmpty()
-
-    val audioCodec = m.getPropertyString("audio-codec").orEmpty()
-    val audioRate = m.getPropertyString("audio-params/samplerate").orEmpty()
-    val audioChannels = m.getPropertyString("audio-params/channels").orEmpty()
-    val audioName = m.getPropertyString("audio-codec-name").orEmpty()
-
-    val cacheSecs = m.getPropertyString("demuxer-cache-duration").orEmpty()
-    val cacheKbps = m.getPropertyString("cache-speed").orEmpty()
-
-    val avSync = m.getPropertyString("avsync").orEmpty()
-    val drops = m.getPropertyString("frame-drop-count").orEmpty()
-
-    val videoLines = buildList {
-        if (videoCodec.isNotBlank()) add(videoCodec)
-        val dim = "${width}x${height}".takeIf { width.isNotBlank() && height.isNotBlank() }
-        listOfNotNull(
-            dim,
-            fps.takeIf { it.isNotBlank() }?.let { "${it.toDoubleOrNull()?.roundToOneDecimal() ?: it}fps" },
-            pixFmt.takeIf { it.isNotBlank() },
-        ).joinToString("  ").takeIf { it.isNotBlank() }?.let(::add)
-        if (videoFmt.isNotBlank()) add("format $videoFmt")
-        add("hwdec: $hwdec")
-    }
-    val audioLines = buildList {
-        if (audioCodec.isNotBlank()) add(audioCodec)
-        val tail = listOfNotNull(
-            audioRate.takeIf { it.isNotBlank() }?.let { "${it}Hz" },
-            audioChannels.takeIf { it.isNotBlank() }?.let { "${it}ch" },
-            audioName.takeIf { it.isNotBlank() },
-        ).joinToString("  ")
-        if (tail.isNotBlank()) add(tail)
-    }
-    val cacheLines = buildList {
-        val secs = cacheSecs.toDoubleOrNull()?.roundToOneDecimal() ?: cacheSecs
-        val kbps = cacheKbps.toDoubleOrNull()?.let { (it / 1024).roundToOneDecimal() } ?: cacheKbps
-        if (cacheSecs.isNotBlank() || cacheKbps.isNotBlank()) {
-            add(listOfNotNull(
-                "${secs}s".takeIf { cacheSecs.isNotBlank() },
-                "${kbps} kbps".takeIf { cacheKbps.isNotBlank() },
-            ).joinToString("  "))
-        }
-    }
-    val syncLines = buildList {
-        val asy = avSync.toDoubleOrNull()?.roundToOneDecimal() ?: avSync
-        if (avSync.isNotBlank() || drops.isNotBlank()) {
-            add(listOfNotNull(
-                "${asy}s".takeIf { avSync.isNotBlank() },
-                "drops: $drops".takeIf { drops.isNotBlank() },
-            ).joinToString("  "))
-        }
-    }
-    return StreamInfoSnapshot(videoLines, audioLines, cacheLines, syncLines)
-}
-
-private fun MPVPlayerView.readSubtitleTracks(): List<SubtitleTrack> {
-    val m = mpv
-    val countStr = m.getPropertyString("track-list/count") ?: return emptyList()
-    val count = countStr.toIntOrNull() ?: return emptyList()
-    val out = mutableListOf<SubtitleTrack>()
-    for (i in 0 until count) {
-        val type = m.getPropertyString("track-list/$i/type").orEmpty()
-        if (type != "sub") continue
-        val id = m.getPropertyString("track-list/$i/id")?.toIntOrNull() ?: continue
-        val title = m.getPropertyString("track-list/$i/title").orEmpty()
-        val lang = m.getPropertyString("track-list/$i/lang").orEmpty()
-        out += SubtitleTrack(id = id, title = title, lang = lang)
-    }
-    return out
-}
-
-private fun MPVPlayerView.readCurrentSid(): Int? {
-    val raw = mpv.getPropertyString("sid") ?: return null
-    if (raw == "no" || raw == "auto") return null
-    return raw.toIntOrNull()
-}
-
-/** Sister to [readSubtitleTracks] - audio tracks only. Surfaces codec +
- *  channel layout because audio-track choices on a live stream usually mean
- *  picking between e.g. an AAC stereo English vs an AC3 5.1 spanish rendition. */
-private fun MPVPlayerView.readAudioTracks(): List<AudioTrack> {
-    val m = mpv
-    val countStr = m.getPropertyString("track-list/count") ?: return emptyList()
-    val count = countStr.toIntOrNull() ?: return emptyList()
-    val out = mutableListOf<AudioTrack>()
-    for (i in 0 until count) {
-        val type = m.getPropertyString("track-list/$i/type").orEmpty()
-        if (type != "audio") continue
-        val id = m.getPropertyString("track-list/$i/id")?.toIntOrNull() ?: continue
-        val title = m.getPropertyString("track-list/$i/title").orEmpty()
-        val lang = m.getPropertyString("track-list/$i/lang").orEmpty()
-        val codec = m.getPropertyString("track-list/$i/codec").orEmpty()
-        val channels = m.getPropertyString("track-list/$i/demux-channel-count").orEmpty()
-            .let { n ->
-                when (n.toIntOrNull()) {
-                    1 -> "mono"
-                    2 -> "stereo"
-                    6 -> "5.1"
-                    8 -> "7.1"
-                    null, 0 -> ""
-                    else -> "${n}ch"
-                }
-            }
-        out += AudioTrack(id = id, title = title, lang = lang, codec = codec, channels = channels)
-    }
-    return out
-}
-
-private fun MPVPlayerView.readCurrentAid(): Int? {
-    val raw = mpv.getPropertyString("aid") ?: return null
-    if (raw == "no" || raw == "auto") return null
-    return raw.toIntOrNull()
-}
-
-/** mpv `speed` property as a Float. Defaults to 1.0 if the property is
- *  unavailable (e.g. handle not fully attached yet) so the picker shows
- *  Normal as selected rather than no selection. */
-private fun MPVPlayerView.readSpeed(): Float =
-    mpv.getPropertyString("speed")?.toFloatOrNull() ?: 1.0f
-
-private fun String?.orZero(): String = if (this.isNullOrBlank()) "" else this
-private fun Double.roundToOneDecimal(): String = String.format(Locale.US, "%.1f", this)
-
 /**
- * EntryPoint accessor so this Composable can grab the MPV singleton without
- * routing through hiltViewModel (which would create the holder per-instance).
+ * EntryPoint accessor so this Composable can grab the holder + window
+ * state singletons without routing through hiltViewModel (which would
+ * create them per-instance).
+ *
+ * The capture-stream-info / read-tracks / read-speed extension
+ * functions that used to live here moved to ExoPlayerReaders.kt
+ * (task #66). All chrome callbacks now read from / write to the
+ * ExoPlayer directly via those extensions.
  */
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface PlayerScreenEntryPoint {
-    fun mpvPlayerHolder(): MPVPlayerHolder
-    fun mpvWindowState(): MpvWindowState
+    fun exoPlayerHolder(): com.aeriotv.android.core.playback.AerioExoPlayerHolder
+    fun exoWindowState(): ExoWindowState
 }

@@ -42,8 +42,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.M3UChannel
-import com.aeriotv.android.core.playback.MPVPlayerHolder
-import com.aeriotv.android.core.playback.PlaybackService
+import com.aeriotv.android.core.playback.AerioExoPlayerHolder
 import com.aeriotv.android.feature.dvr.DvrTabContent
 import com.aeriotv.android.feature.dvr.DvrViewModel
 import com.aeriotv.android.feature.favorites.FavoritesTabContent
@@ -144,20 +143,20 @@ fun MainScaffold(
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val miniPlayerState by miniPlayerVm.state.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val mpvHolder = remember {
+    val exoHolder = remember {
         dagger.hilt.android.EntryPointAccessors.fromApplication(
             context.applicationContext,
             MainScaffoldEntryPoint::class.java,
-        ).mpvPlayerHolder()
+        ).exoPlayerHolder()
     }
-    // Poll pause state from the held MPV instance while the mini-player is
-    // visible so the Pause/Play icon stays accurate when the notification
-    // action toggles playback. 500ms cadence is cheap and matches VOD chrome.
+    // Poll pause state from the held ExoPlayer so the mini-player's
+    // Pause/Play icon stays accurate when the notification action /
+    // BT button toggles playback elsewhere.
     var miniPaused by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(miniPlayerState) {
         if (miniPlayerState !is com.aeriotv.android.feature.miniplayer.MiniPlayerSession.State.Active) return@LaunchedEffect
         while (true) {
-            miniPaused = mpvHolder.isPaused()
+            miniPaused = exoHolder.isPaused()
             kotlinx.coroutines.delay(500L)
         }
     }
@@ -290,13 +289,14 @@ fun MainScaffold(
                             if (resumed != null) onChannelClick(resumed)
                         },
                         onTogglePause = {
-                            mpvHolder.setPaused(!mpvHolder.isPaused())
-                            miniPaused = mpvHolder.isPaused()
+                            exoHolder.setPaused(!exoHolder.isPaused())
+                            miniPaused = exoHolder.isPaused()
                         },
                         onDismiss = {
                             miniPlayerVm.dismiss()
-                            mpvHolder.destroy()
-                            PlaybackService.stop(context)
+                            exoHolder.destroy()
+                            com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                                .stop(context)
                         },
                     )
                 }
@@ -603,8 +603,8 @@ internal fun visibleTabs(
 @dagger.hilt.EntryPoint
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
 interface MainScaffoldEntryPoint {
-    fun mpvPlayerHolder(): MPVPlayerHolder
-    fun mpvWindowState(): com.aeriotv.android.feature.player.MpvWindowState
+    fun exoPlayerHolder(): AerioExoPlayerHolder
+    fun exoWindowState(): com.aeriotv.android.feature.player.ExoWindowState
 }
 
 /** Two-step Add Playlist flow embedded in the Settings tab. None = closed. */
