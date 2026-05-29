@@ -53,6 +53,7 @@ import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.core.data.M3UChannel
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -560,7 +561,25 @@ private fun ExoTile(
                 .setHandleAudioBecomingNoisy(false) // tile is muted-by-default; don't react
                 .build()
                 .apply {
-                    volume = if (isAudioFocused) 1f else 0f
+                    // CRITICAL multiview audio-budget gate. Each tile is a
+                    // separate ExoPlayer; if every tile decodes audio, the
+                    // device's audio HAL runs out of AudioTrack sinks and
+                    // throws "Audio sink error" -> ExoPlaybackException,
+                    // which is FATAL to that tile's player (it stops and the
+                    // surface goes black). On the Streamer, 4 concurrent
+                    // AC-3 5.1 decoders is already over the limit.
+                    //
+                    // Setting volume=0 is NOT enough -- it mutes output but
+                    // still allocates the decoder + sink. We must disable the
+                    // audio TRACK entirely so the renderer never selects it
+                    // and no sink is created. This is the Media3 equivalent
+                    // of the libmpv `aid=no` knob the original multiview used
+                    // (the migration wrongly collapsed aid+mute to volume).
+                    trackSelectionParameters = trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !isAudioFocused)
+                        .build()
+                    volume = 1f
                     playWhenReady = !paused
                 }
             playerRef.value = player
@@ -599,7 +618,15 @@ private fun ExoTile(
                 player.prepare()
                 currentUrlRef.value = url
             }
-            player.volume = if (isAudioFocused) 1f else 0f
+            // Flip audio on focus change. Disabling the track releases the
+            // AC-3 decoder + AudioTrack sink for non-focused tiles; enabling
+            // it on the newly-focused tile re-selects audio. Single-knob
+            // (track enable/disable) keeps exactly one audio sink alive
+            // across the whole grid, which is what the audio HAL can sustain.
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !isAudioFocused)
+                .build()
             player.playWhenReady = !paused
         },
         onRelease = { _ ->
