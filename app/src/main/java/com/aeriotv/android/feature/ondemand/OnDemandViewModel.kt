@@ -19,6 +19,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -421,66 +422,111 @@ class OnDemandViewModel @Inject constructor(
 
     private fun PlaylistEntity.isXtream(): Boolean = sourceType == SourceType.XtreamCodes.name
 
+    private fun XtreamCodesApi.XtreamVod.toMovie(): DispatcharrVODMovie = DispatcharrVODMovie(
+        id = streamId,
+        uuid = "$XC_MOVIE_PREFIX$streamId-$containerExtension",
+        title = name,
+        plot = plot,
+        genre = genre,
+        rating = rating,
+        year = year,
+        logo = icon?.let { DispatcharrVODLogo(url = it) },
+    )
+
+    private fun XtreamCodesApi.XtreamSeries.toSeries(): DispatcharrVODSeries = DispatcharrVODSeries(
+        id = seriesId,
+        uuid = "xc-series-$seriesId",
+        name = name,
+        plot = plot,
+        genre = genre,
+        rating = rating,
+        year = year,
+        logo = cover?.let { DispatcharrVODLogo(url = it) },
+    )
+
     private suspend fun loadXtreamMovies(playlist: PlaylistEntity) {
         val user = playlist.username
         val pass = playlist.password
+        val base = playlist.urlString
         if (user.isNullOrBlank() || pass == null) {
             _state.update { it.copy(unsupportedSource = true, movies = emptyList(), isLoading = false) }
             return
         }
         _state.update { it.copy(isLoading = true, error = null, unsupportedSource = false) }
-        runCatching { xtreamApi.getVodStreams(playlist.urlString, user, pass) }.fold(
-            onSuccess = { vods ->
-                val movies = vods.map { v ->
-                    DispatcharrVODMovie(
-                        id = v.streamId,
-                        uuid = "$XC_MOVIE_PREFIX${v.streamId}-${v.containerExtension}",
-                        title = v.name,
-                        plot = v.plot,
-                        genre = v.genre,
-                        rating = v.rating,
-                        year = v.year,
-                        logo = v.icon?.let { DispatcharrVODLogo(url = it) },
-                    )
+        // Fast path: a standard Xtream panel returns the entire VOD library on
+        // an unfiltered get_vod_streams (one request, matches iOS).
+        val fast = runCatching { xtreamApi.getVodStreams(base, user, pass) }
+            .onFailure { Log.w(TAG, "XC getVodStreams failed", it) }
+            .getOrDefault(emptyList())
+        if (fast.isNotEmpty()) {
+            val movies = fast.map { it.toMovie() }
+            _state.update { it.copy(isLoading = false, movies = movies, totalCount = movies.size, error = null) }
+            return
+        }
+        // Fallback: bridges that 500 / return empty on an unfiltered query
+        // (Dispatcharr's XC shim) must be walked per-category. Fetch the
+        // category ids, then pull each concurrently -- the OkHttp dispatcher
+        // caps in-flight requests, and every merge runs on the VM's single
+        // Main dispatcher so the shared accumulator needs no locking. State is
+        // pushed as each category lands so the grid fills progressively while
+        // the spinner (isLoading) is still up.
+        val cats = runCatching { xtreamApi.getVodCategoryIds(base, user, pass) }.getOrDefault(emptyList())
+        if (cats.isEmpty()) {
+            _state.update { it.copy(isLoading = false, movies = emptyList(), totalCount = 0) }
+            return
+        }
+        Log.i(TAG, "XC VOD: unfiltered empty; enumerating ${cats.size} categories")
+        val acc = LinkedHashMap<Int, DispatcharrVODMovie>()
+        coroutineScope {
+            cats.forEach { cat ->
+                launch {
+                    val items = runCatching { xtreamApi.getVodStreams(base, user, pass, cat) }.getOrDefault(emptyList())
+                    if (items.isNotEmpty()) {
+                        items.forEach { acc[it.streamId] = it.toMovie() }
+                        _state.update { it.copy(movies = acc.values.toList(), totalCount = acc.size) }
+                    }
                 }
-                _state.update { it.copy(isLoading = false, movies = movies, totalCount = movies.size, error = null) }
-            },
-            onFailure = { t ->
-                Log.w(TAG, "XC getVodStreams failed", t)
-                _state.update { it.copy(isLoading = false, error = t.message ?: t::class.simpleName) }
-            },
-        )
+            }
+        }
+        _state.update { it.copy(isLoading = false) }
     }
 
     private suspend fun loadXtreamSeries(playlist: PlaylistEntity) {
         val user = playlist.username
         val pass = playlist.password
+        val base = playlist.urlString
         if (user.isNullOrBlank() || pass == null) {
             _state.update { it.copy(unsupportedSource = true, series = emptyList(), isLoadingSeries = false) }
             return
         }
         _state.update { it.copy(isLoadingSeries = true, seriesError = null, unsupportedSource = false) }
-        runCatching { xtreamApi.getSeries(playlist.urlString, user, pass) }.fold(
-            onSuccess = { list ->
-                val series = list.map { s ->
-                    DispatcharrVODSeries(
-                        id = s.seriesId,
-                        uuid = "xc-series-${s.seriesId}",
-                        name = s.name,
-                        plot = s.plot,
-                        genre = s.genre,
-                        rating = s.rating,
-                        year = s.year,
-                        logo = s.cover?.let { DispatcharrVODLogo(url = it) },
-                    )
+        val fast = runCatching { xtreamApi.getSeries(base, user, pass) }
+            .onFailure { Log.w(TAG, "XC getSeries failed", it) }
+            .getOrDefault(emptyList())
+        if (fast.isNotEmpty()) {
+            val series = fast.map { it.toSeries() }
+            _state.update { it.copy(isLoadingSeries = false, series = series, seriesTotalCount = series.size, seriesError = null) }
+            return
+        }
+        val cats = runCatching { xtreamApi.getSeriesCategoryIds(base, user, pass) }.getOrDefault(emptyList())
+        if (cats.isEmpty()) {
+            _state.update { it.copy(isLoadingSeries = false, series = emptyList(), seriesTotalCount = 0) }
+            return
+        }
+        Log.i(TAG, "XC series: unfiltered empty; enumerating ${cats.size} categories")
+        val acc = LinkedHashMap<Int, DispatcharrVODSeries>()
+        coroutineScope {
+            cats.forEach { cat ->
+                launch {
+                    val items = runCatching { xtreamApi.getSeries(base, user, pass, cat) }.getOrDefault(emptyList())
+                    if (items.isNotEmpty()) {
+                        items.forEach { acc[it.seriesId] = it.toSeries() }
+                        _state.update { it.copy(series = acc.values.toList(), seriesTotalCount = acc.size) }
+                    }
                 }
-                _state.update { it.copy(isLoadingSeries = false, series = series, seriesTotalCount = series.size, seriesError = null) }
-            },
-            onFailure = { t ->
-                Log.w(TAG, "XC getSeries failed", t)
-                _state.update { it.copy(isLoadingSeries = false, seriesError = t.message ?: t::class.simpleName) }
-            },
-        )
+            }
+        }
+        _state.update { it.copy(isLoadingSeries = false) }
     }
 
     private suspend fun loadXtreamEpisodes(playlist: PlaylistEntity, seriesId: Int) {

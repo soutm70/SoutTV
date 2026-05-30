@@ -106,8 +106,21 @@ class XtreamCodesApi @Inject constructor() {
 
     // ─────────────────────────── Fetches ──────────────────────────
 
-    suspend fun getVodStreams(base: String, username: String, password: String): List<XtreamVod> {
-        val arr = fetchArray(base, username, password, "get_vod_streams") ?: return emptyList()
+    /**
+     * VOD streams. Pass [categoryId] to scope to one category. The standard
+     * Xtream panel returns the FULL library when [categoryId] is null (the
+     * fast path the caller tries first); some bridges -- notably Dispatcharr's
+     * XC shim -- 500 or return empty on an unfiltered query and must be walked
+     * per-category instead (the caller's fallback).
+     */
+    suspend fun getVodStreams(
+        base: String,
+        username: String,
+        password: String,
+        categoryId: String? = null,
+    ): List<XtreamVod> {
+        val extra = categoryId?.let { arrayOf("category_id" to it) } ?: emptyArray()
+        val arr = fetchArray(base, username, password, "get_vod_streams", *extra) ?: return emptyList()
         return arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val id = o.flexInt("stream_id") ?: return@mapNotNull null
@@ -124,8 +137,15 @@ class XtreamCodesApi @Inject constructor() {
         }
     }
 
-    suspend fun getSeries(base: String, username: String, password: String): List<XtreamSeries> {
-        val arr = fetchArray(base, username, password, "get_series") ?: return emptyList()
+    /** Series list. [categoryId] behaves exactly like [getVodStreams]. */
+    suspend fun getSeries(
+        base: String,
+        username: String,
+        password: String,
+        categoryId: String? = null,
+    ): List<XtreamSeries> {
+        val extra = categoryId?.let { arrayOf("category_id" to it) } ?: emptyArray()
+        val arr = fetchArray(base, username, password, "get_series", *extra) ?: return emptyList()
         return arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val id = o.flexInt("series_id") ?: return@mapNotNull null
@@ -140,6 +160,28 @@ class XtreamCodesApi @Inject constructor() {
                     ?: o.str("year")?.let { yearFrom(it) },
             )
         }
+    }
+
+    /**
+     * Category ids for VOD / series. Used only by the per-category fallback
+     * when an unfiltered [getVodStreams] / [getSeries] comes back empty (the
+     * Dispatcharr XC bridge case). We only need the ids; names already arrive
+     * on each stream/series row as `category_id`.
+     */
+    suspend fun getVodCategoryIds(base: String, username: String, password: String): List<String> =
+        fetchCategoryIds(base, username, password, "get_vod_categories")
+
+    suspend fun getSeriesCategoryIds(base: String, username: String, password: String): List<String> =
+        fetchCategoryIds(base, username, password, "get_series_categories")
+
+    private suspend fun fetchCategoryIds(
+        base: String,
+        username: String,
+        password: String,
+        action: String,
+    ): List<String> {
+        val arr = fetchArray(base, username, password, action) ?: return emptyList()
+        return arr.mapNotNull { (it as? JsonObject)?.str("category_id") }
     }
 
     /**
@@ -201,9 +243,11 @@ class XtreamCodesApi @Inject constructor() {
         username: String,
         password: String,
         action: String,
+        vararg extra: Pair<String, String>,
     ): JsonArray? {
-        val body = fetchText(base, username, password, action) ?: return null
-        // Some panels return false / null / an object for an empty library.
+        val body = fetchText(base, username, password, action, *extra) ?: return null
+        // Some panels return false / null / an object / a 500 HTML page for an
+        // empty or unavailable library -- all of which fail the array cast.
         return runCatching { json.parseToJsonElement(body) }.getOrNull() as? JsonArray
     }
 
