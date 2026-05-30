@@ -9,6 +9,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.encodeURLParameter
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -66,8 +68,8 @@ class XtreamCodesApi @Inject constructor() {
                 // series fetches are interleaved by the caller so neither starves.
                 dispatcher(
                     Dispatcher().apply {
-                        maxRequests = 8
-                        maxRequestsPerHost = 4
+                        maxRequests = 6
+                        maxRequestsPerHost = 3
                     },
                 )
             }
@@ -122,10 +124,14 @@ class XtreamCodesApi @Inject constructor() {
         username: String,
         password: String,
         categoryId: String? = null,
-    ): List<XtreamVod> {
+    ): List<XtreamVod> = withContext(Dispatchers.Default) {
+        // Parsing + mapping runs on Default, NOT the caller's (Main) dispatcher.
+        // A full-library enumeration is hundreds of these; doing the JSON decode
+        // on Main would jank the UI / ANR while the On Demand grid fills.
         val extra = categoryId?.let { arrayOf("category_id" to it) } ?: emptyArray()
-        val arr = fetchArray(base, username, password, "get_vod_streams", *extra) ?: return emptyList()
-        return arr.mapNotNull { el ->
+        val arr = fetchArray(base, username, password, "get_vod_streams", *extra)
+            ?: return@withContext emptyList()
+        arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val id = o.flexInt("stream_id") ?: return@mapNotNull null
             XtreamVod(
@@ -147,10 +153,11 @@ class XtreamCodesApi @Inject constructor() {
         username: String,
         password: String,
         categoryId: String? = null,
-    ): List<XtreamSeries> {
+    ): List<XtreamSeries> = withContext(Dispatchers.Default) {
         val extra = categoryId?.let { arrayOf("category_id" to it) } ?: emptyArray()
-        val arr = fetchArray(base, username, password, "get_series", *extra) ?: return emptyList()
-        return arr.mapNotNull { el ->
+        val arr = fetchArray(base, username, password, "get_series", *extra)
+            ?: return@withContext emptyList()
+        arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val id = o.flexInt("series_id") ?: return@mapNotNull null
             XtreamSeries(
@@ -183,9 +190,9 @@ class XtreamCodesApi @Inject constructor() {
         username: String,
         password: String,
         action: String,
-    ): List<String> {
-        val arr = fetchArray(base, username, password, action) ?: return emptyList()
-        return arr.mapNotNull { (it as? JsonObject)?.str("category_id") }
+    ): List<String> = withContext(Dispatchers.Default) {
+        val arr = fetchArray(base, username, password, action) ?: return@withContext emptyList()
+        arr.mapNotNull { (it as? JsonObject)?.str("category_id") }
     }
 
     /**

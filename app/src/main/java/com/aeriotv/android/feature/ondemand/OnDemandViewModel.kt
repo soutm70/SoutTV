@@ -49,6 +49,11 @@ class OnDemandViewModel @Inject constructor(
         val totalCount: Int = 0,
         val searchQuery: String = "",
         val unsupportedSource: Boolean = false,
+        // XC only: the cheap init probe found VOD/series categories but the
+        // expensive per-category enumeration is deferred until the On Demand tab
+        // is opened. Keeps the tab visible without doing the heavy work up front
+        // (which used to hammer the device while the guide was still loading).
+        val hasDeferredXtreamContent: Boolean = false,
         // Series state — separate from movies so each sub-tab's search /
         // loading flow is independent. Both share the same playlist context.
         val isLoadingSeries: Boolean = false,
@@ -106,7 +111,7 @@ class OnDemandViewModel @Inject constructor(
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
                     sourceType == SourceType.DispatcharrUserPass
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
-                ensureXtreamLoad(playlist)
+                ensureXtreamProbe(playlist)
                 return@launch
             }
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
@@ -177,7 +182,7 @@ class OnDemandViewModel @Inject constructor(
             val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
                     sourceType == SourceType.DispatcharrUserPass
             if (playlist != null && sourceType == SourceType.XtreamCodes) {
-                ensureXtreamLoad(playlist)
+                ensureXtreamProbe(playlist)
                 return@launch
             }
             if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
@@ -444,32 +449,36 @@ class OnDemandViewModel @Inject constructor(
         logo = cover?.let { DispatcharrVODLogo(url = it) },
     )
 
-    // XC On Demand loads movies + series as ONE interleaved pass. refresh() and
-    // refreshSeries() are both called on init; routing both through this guarded
-    // entry point means the work runs once, not twice (which would double the
-    // request count and worsen the gate contention).
-    private var xtreamLoadJob: kotlinx.coroutines.Job? = null
+    // XC On Demand is loaded LAZILY. At init a cheap probe runs (a standard
+    // panel returns its whole library in one request; Dispatcharr's XC bridge
+    // needs only the category-id lists to know the tab has content). The
+    // expensive per-category enumeration is DEFERRED to loadXtreamItemsIfNeeded,
+    // triggered when the On Demand tab is actually opened, so it never hammers
+    // the device while the guide is still loading.
+    private var xtreamProbeJob: kotlinx.coroutines.Job? = null
+    private var xtreamItemsJob: kotlinx.coroutines.Job? = null
+    private var pendingMovieCats: List<String> = emptyList()
+    private var pendingSeriesCats: List<String> = emptyList()
+    private var xtreamItemsLoaded = false
+    private var xtreamPlaylist: PlaylistEntity? = null
 
-    private fun ensureXtreamLoad(playlist: PlaylistEntity) {
-        if (xtreamLoadJob?.isActive == true) return
-        xtreamLoadJob = viewModelScope.launch { loadXtreamOnDemand(playlist) }
+    private fun ensureXtreamProbe(playlist: PlaylistEntity) {
+        if (xtreamProbeJob?.isActive == true) return
+        xtreamPlaylist = playlist
+        xtreamProbeJob = viewModelScope.launch { probeXtream(playlist) }
     }
 
     private enum class XcKind { MOVIE, SERIES }
 
     /**
-     * Loads the XC VOD + series libraries together. Standard panels return the
-     * whole library on an unfiltered query (fast path, matches iOS); Dispatcharr's
-     * XC bridge 500s / returns empty without a category_id, so we fall back to
-     * per-category enumeration. Crucially the movie and series category fetches
-     * are INTERLEAVED into one work list (movie, series, movie, series, ...) so
-     * the shared request gate alternates between them -- otherwise whichever
-     * library wins the category-list race monopolises the gate and the other
-     * sub-tab stays empty until it finishes (the "movies load but series don't"
-     * bug on large libraries). All merges run on the VM Main dispatcher, so the
-     * accumulators need no locking; state is pushed as each category lands.
+     * Cheap init probe. A standard Xtream panel returns the whole library on an
+     * unfiltered query, so that fills the grids directly (and there's nothing to
+     * defer). Dispatcharr's XC bridge 500s / returns empty without a
+     * category_id, so we only fetch the VOD + series category-id lists here --
+     * enough to show the On Demand tab -- and defer the per-category walk to
+     * [loadXtreamItemsIfNeeded].
      */
-    private suspend fun loadXtreamOnDemand(playlist: PlaylistEntity) {
+    private suspend fun probeXtream(playlist: PlaylistEntity) {
         val user = playlist.username
         val pass = playlist.password
         val base = playlist.urlString
@@ -479,15 +488,10 @@ class OnDemandViewModel @Inject constructor(
                     unsupportedSource = true,
                     movies = emptyList(), series = emptyList(),
                     isLoading = false, isLoadingSeries = false,
+                    hasDeferredXtreamContent = false,
                 )
             }
             return
-        }
-        _state.update {
-            it.copy(
-                isLoading = true, isLoadingSeries = true,
-                error = null, seriesError = null, unsupportedSource = false,
-            )
         }
         val movieFast = runCatching { xtreamApi.getVodStreams(base, user, pass) }
             .onFailure { Log.w(TAG, "XC getVodStreams failed", it) }.getOrDefault(emptyList())
@@ -495,59 +499,92 @@ class OnDemandViewModel @Inject constructor(
             .onFailure { Log.w(TAG, "XC getSeries failed", it) }.getOrDefault(emptyList())
         if (movieFast.isNotEmpty()) {
             val movies = movieFast.map { it.toMovie() }
-            _state.update { it.copy(isLoading = false, movies = movies, totalCount = movies.size, error = null) }
+            _state.update { it.copy(movies = movies, totalCount = movies.size) }
         }
         if (seriesFast.isNotEmpty()) {
             val series = seriesFast.map { it.toSeries() }
-            _state.update { it.copy(isLoadingSeries = false, series = series, seriesTotalCount = series.size, seriesError = null) }
+            _state.update { it.copy(series = series, seriesTotalCount = series.size) }
         }
-        val movieCats = if (movieFast.isEmpty())
+        pendingMovieCats = if (movieFast.isEmpty())
             runCatching { xtreamApi.getVodCategoryIds(base, user, pass) }.getOrDefault(emptyList()) else emptyList()
-        val seriesCats = if (seriesFast.isEmpty())
+        pendingSeriesCats = if (seriesFast.isEmpty())
             runCatching { xtreamApi.getSeriesCategoryIds(base, user, pass) }.getOrDefault(emptyList()) else emptyList()
-        if (movieFast.isEmpty() && movieCats.isEmpty()) {
-            _state.update { it.copy(isLoading = false, movies = emptyList(), totalCount = 0) }
+        // Nothing left to walk: a standard panel already filled above, or the
+        // source genuinely has no VOD/series. Mark loaded so the lazy trigger
+        // is a no-op.
+        if (pendingMovieCats.isEmpty() && pendingSeriesCats.isEmpty()) xtreamItemsLoaded = true
+        _state.update {
+            it.copy(
+                unsupportedSource = false,
+                isLoading = false, isLoadingSeries = false,
+                hasDeferredXtreamContent = pendingMovieCats.isNotEmpty() || pendingSeriesCats.isNotEmpty(),
+            )
         }
-        if (seriesFast.isEmpty() && seriesCats.isEmpty()) {
-            _state.update { it.copy(isLoadingSeries = false, series = emptyList(), seriesTotalCount = 0) }
-        }
-        if (movieCats.isEmpty() && seriesCats.isEmpty()) {
-            _state.update { it.copy(isLoading = false, isLoadingSeries = false) }
-            return
-        }
-        Log.i(TAG, "XC On Demand: enumerating ${movieCats.size} movie + ${seriesCats.size} series categories (interleaved)")
-        val work = ArrayList<Pair<XcKind, String>>(movieCats.size + seriesCats.size)
-        var mi = 0
-        var si = 0
-        while (mi < movieCats.size || si < seriesCats.size) {
-            if (mi < movieCats.size) work += XcKind.MOVIE to movieCats[mi++]
-            if (si < seriesCats.size) work += XcKind.SERIES to seriesCats[si++]
-        }
-        val movieAcc = LinkedHashMap<Int, DispatcharrVODMovie>()
-        val seriesAcc = LinkedHashMap<Int, DispatcharrVODSeries>()
-        coroutineScope {
-            work.forEach { (kind, cat) ->
-                launch {
-                    when (kind) {
-                        XcKind.MOVIE -> {
-                            val items = runCatching { xtreamApi.getVodStreams(base, user, pass, cat) }.getOrDefault(emptyList())
-                            if (items.isNotEmpty()) {
+    }
+
+    /**
+     * Walk the per-category lists captured by [probeXtream] and fill the grids.
+     * Triggered once when the On Demand tab is opened. Movie + series category
+     * fetches are INTERLEAVED (movie, series, movie, series, ...) so neither
+     * sub-tab starves on the shared request gate. JSON parsing runs off the Main
+     * dispatcher (see XtreamCodesApi) and state is flushed in batches rather than
+     * once per category, so a large library doesn't ANR / churn the UI. Safe to
+     * call repeatedly -- guarded by [xtreamItemsLoaded] and the active job.
+     */
+    fun loadXtreamItemsIfNeeded() {
+        if (xtreamItemsLoaded || xtreamItemsJob?.isActive == true) return
+        val movieCats = pendingMovieCats
+        val seriesCats = pendingSeriesCats
+        if (movieCats.isEmpty() && seriesCats.isEmpty()) return
+        val playlist = xtreamPlaylist ?: return
+        val user = playlist.username ?: return
+        val pass = playlist.password ?: return
+        val base = playlist.urlString
+        xtreamItemsJob = viewModelScope.launch {
+            _state.update { it.copy(isLoading = movieCats.isNotEmpty(), isLoadingSeries = seriesCats.isNotEmpty()) }
+            Log.i(TAG, "XC On Demand: enumerating ${movieCats.size} movie + ${seriesCats.size} series categories (interleaved)")
+            val work = ArrayList<Pair<XcKind, String>>(movieCats.size + seriesCats.size)
+            var mi = 0
+            var si = 0
+            while (mi < movieCats.size || si < seriesCats.size) {
+                if (mi < movieCats.size) work += XcKind.MOVIE to movieCats[mi++]
+                if (si < seriesCats.size) work += XcKind.SERIES to seriesCats[si++]
+            }
+            val movieAcc = LinkedHashMap<Int, DispatcharrVODMovie>()
+            val seriesAcc = LinkedHashMap<Int, DispatcharrVODSeries>()
+            // Push both lists at most every STATE_FLUSH_EVERY categories.
+            // Rebuilding the full lists on every one of hundreds of categories is
+            // O(n^2) work plus a grid recomposition each time -- the source of
+            // the On Demand lag / crash on large libraries.
+            fun flush() = _state.update {
+                it.copy(
+                    movies = movieAcc.values.toList(), totalCount = movieAcc.size,
+                    series = seriesAcc.values.toList(), seriesTotalCount = seriesAcc.size,
+                )
+            }
+            var done = 0
+            coroutineScope {
+                work.forEach { (kind, cat) ->
+                    launch {
+                        when (kind) {
+                            XcKind.MOVIE -> {
+                                val items = runCatching { xtreamApi.getVodStreams(base, user, pass, cat) }.getOrDefault(emptyList())
                                 items.forEach { movieAcc[it.streamId] = it.toMovie() }
-                                _state.update { it.copy(movies = movieAcc.values.toList(), totalCount = movieAcc.size) }
                             }
-                        }
-                        XcKind.SERIES -> {
-                            val items = runCatching { xtreamApi.getSeries(base, user, pass, cat) }.getOrDefault(emptyList())
-                            if (items.isNotEmpty()) {
+                            XcKind.SERIES -> {
+                                val items = runCatching { xtreamApi.getSeries(base, user, pass, cat) }.getOrDefault(emptyList())
                                 items.forEach { seriesAcc[it.seriesId] = it.toSeries() }
-                                _state.update { it.copy(series = seriesAcc.values.toList(), seriesTotalCount = seriesAcc.size) }
                             }
                         }
+                        done++
+                        if (done % STATE_FLUSH_EVERY == 0) flush()
                     }
                 }
             }
+            flush()
+            _state.update { it.copy(isLoading = false, isLoadingSeries = false) }
+            xtreamItemsLoaded = true
         }
-        _state.update { it.copy(isLoading = false, isLoadingSeries = false) }
     }
 
     private suspend fun loadXtreamEpisodes(playlist: PlaylistEntity, seriesId: Int) {
@@ -616,5 +653,7 @@ class OnDemandViewModel @Inject constructor(
         const val TAG = "OnDemandViewModel"
         const val XC_MOVIE_PREFIX = "xc-movie-"
         const val XC_EP_PREFIX = "xc-ep-"
+        // Batch size for XC enumeration state flushes (see loadXtreamItemsIfNeeded).
+        const val STATE_FLUSH_EVERY = 16
     }
 }

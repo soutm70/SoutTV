@@ -84,6 +84,10 @@ fun OnDemandTabContent(
     viewModel: OnDemandViewModel = hiltViewModel(),
 ) {
     var section by rememberSaveable { mutableStateOf(OnDemandSection.Movies) }
+    // XC libraries are probed cheaply at init but the heavy per-category walk is
+    // deferred until the tab is actually shown -- kick it off here (no-op for
+    // non-XC sources and once already loaded).
+    LaunchedEffect(Unit) { viewModel.loadXtreamItemsIfNeeded() }
     val settingsVm: SettingsViewModel = hiltViewModel()
     val scale by settingsVm.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
 

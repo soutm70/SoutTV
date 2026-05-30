@@ -128,7 +128,10 @@ fun MainScaffold(
         onDemandState.movies.isNotEmpty() ||
             onDemandState.series.isNotEmpty() ||
             onDemandState.isLoading ||
-            onDemandState.isLoadingSeries
+            onDemandState.isLoadingSeries ||
+            // XC: the cheap probe found categories but deferred the heavy walk
+            // until the tab is opened -- show the tab on the probe result alone.
+            onDemandState.hasDeferredXtreamContent
         )
     val dvrVm: DvrViewModel = hiltViewModel()
     val dvrState by dvrVm.state.collectAsStateWithLifecycle()
