@@ -142,6 +142,7 @@ fun GuideScreen(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val epgWindowHours by settingsVm.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
+    val showChannelLogos by settingsVm.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
     val multiviewStore = rememberMultiviewStoreHandle()
     // Audit task #22: staged-channel banner. When the user has added at
     // least one channel to Multiview (via the row context menu / long
@@ -610,6 +611,7 @@ fun GuideScreen(
                     onToggleFavorite = { favoritesVm.toggle(channel) },
                     palette = palette,
                     multiviewStore = multiviewStore,
+                    showLogo = showChannelLogos,
                 )
                 HorizontalDivider(color = guideDivider, thickness = 0.5.dp)
             }
@@ -676,6 +678,7 @@ private fun ChannelGuideRow(
     onToggleFavorite: () -> Unit,
     palette: CategoryPaletteState,
     multiviewStore: MultiviewStoreHandle,
+    showLogo: Boolean = true,
 ) {
     val multiviewSelected by multiviewStore.selected.collectAsStateWithLifecycle()
     val inMultiview = multiviewSelected.any { it.id == channel.id }
@@ -756,6 +759,9 @@ private fun ChannelGuideRow(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
+                    // iOS Issue #28: omit the channel logo when "Show Channel
+                    // Logos" is off so the name takes the full space.
+                    if (showLogo) {
                     // Landscape logo box, tvOS 72x48pt proportional on the 540dp
                     // canvas -> 36x24dp (matching the channel column's tvOS ratios).
                     Box(
@@ -792,6 +798,7 @@ private fun ChannelGuideRow(
                         }
                     }
                     Spacer(Modifier.height(2.dp))
+                    }
                     Text(
                         text = channel.name,
                         style = nameStyle,
@@ -812,6 +819,7 @@ private fun ChannelGuideRow(
                     )
                 }
                 Spacer(Modifier.width(4.dp))
+                if (showLogo) {
                 Box(
                     modifier = Modifier
                         .size(logoBox)
@@ -841,6 +849,7 @@ private fun ChannelGuideRow(
                     }
                 }
                 Spacer(Modifier.width(6.dp))
+                }
                 Text(
                     text = channel.name,
                     style = nameStyle,
