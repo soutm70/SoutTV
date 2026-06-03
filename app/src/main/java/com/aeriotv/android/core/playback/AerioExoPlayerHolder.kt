@@ -3,6 +3,7 @@ package com.aeriotv.android.core.playback
 import android.content.Context
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -64,6 +65,29 @@ class AerioExoPlayerHolder @Inject constructor() {
     var httpHeaders: Map<String, String> = emptyMap()
 
     /**
+     * Dynamic HTTP DataSource.Factory used ONLY by the player's MediaSource
+     * factory, i.e. the Android Auto path where a MediaController calls
+     * setMediaItems(uri) and the player resolves the source itself. It reads
+     * [httpHeaders] fresh on every createDataSource so the active source's
+     * Dispatcharr key rides along. The foreground path bypasses this entirely
+     * (it calls player.setMediaSource(buildMediaSource(...)) directly), so this
+     * factory never affects PlayerScreen playback.
+     */
+    private val autoDataSourceFactory = DataSource.Factory {
+        val f = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(30_000)
+        val h = httpHeaders
+        if (h.isNotEmpty()) {
+            f.setDefaultRequestProperties(h)
+            h.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+                ?.value?.let(f::setUserAgent)
+        }
+        f.createDataSource()
+    }
+
+    /**
      * Return the active ExoPlayer, creating it once on first call.
      * The caller is expected to bind it to a PlayerView via
      * `playerView.player = holder.acquireOrCreate(...)`.
@@ -103,6 +127,16 @@ class AerioExoPlayerHolder @Inject constructor() {
         val fresh = ExoPlayer.Builder(context)
             .setRenderersFactory(renderersFactory)
             .setLoadControl(loadControl)
+            // Header-aware + TS-aware MediaSource factory for the Android Auto
+            // path (a controller's setMediaItems(uri) -> the player resolves the
+            // source itself). The foreground path bypasses this with
+            // setMediaSource(buildMediaSource(...)), so this only governs Auto.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    autoDataSourceFactory,
+                    DefaultExtractorsFactory().setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT),
+                ),
+            )
             // Persistent-view architecture: handleAudioBecomingNoisy
             // pauses on headphone unplug. This is Media3's built-in
             // equivalent of the audio focus handling we hand-rolled
@@ -207,6 +241,9 @@ class AerioExoPlayerHolder @Inject constructor() {
             Log.w(TAG, "playUrl called before acquireOrCreate")
             return
         }
+        // Foreground playback wants video; re-enable it in case an Android Auto
+        // session previously dropped the video track on this shared player.
+        setVideoTrackEnabled(true)
         val source = buildMediaSource(url, title, subtitle, artworkUri)
         p.setMediaSource(source)
         p.prepare()
@@ -269,6 +306,21 @@ class AerioExoPlayerHolder @Inject constructor() {
     }
 
     fun isPaused(): Boolean = player?.playWhenReady?.not() ?: true
+
+    /**
+     * Enable / disable the video track on the shared player. Android Auto plays
+     * audio-only (no video on the car screen while driving), so the Auto session
+     * disables video to avoid decoding frames with no surface; the foreground
+     * PlayerScreen re-enables it via [playUrl]. Must be called on the main
+     * thread (ExoPlayer requirement).
+     */
+    fun setVideoTrackEnabled(enabled: Boolean) {
+        val p = player ?: return
+        p.trackSelectionParameters = p.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enabled)
+            .build()
+    }
 
     /** Full teardown for the X-close button. Releases the codec,
      *  audio renderer, and DataSource. Next acquire creates fresh. */

@@ -107,14 +107,27 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!--
+            Media3 MediaLibraryService: background audio + lock-screen controls
+            AND the Android Auto browse tree. exported=true so Android Auto can
+            bind to it. The android.media.browse.MediaBrowserService action is
+            what Auto (a legacy MediaBrowser client) discovers; Media3 bridges
+            that bind to our MediaLibrarySession automatically.
+        -->
         <service
             android:name=".core.playback.AerioMediaPlaybackService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <!-- Declares AerioTV as an Android Auto media app (form factor). -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <receiver
             android:name=".feature.reminders.ReminderBroadcastReceiver"
