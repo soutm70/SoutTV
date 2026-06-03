@@ -148,39 +148,35 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Sub-second cold launches",
-            body = "Channels and the guide now paint from a local cache while " +
-                "a background refresh runs. Returning to AerioTV is instant; the " +
-                "20-second empty-rail wait is gone.",
+            title = "Play your DVR recordings",
+            body = "Recordings on your Dispatcharr DVR now play right in the " +
+                "app. Open the DVR tab and tap a completed recording to watch it.",
         ),
         WhatsNewItem(
-            title = "Sharper Android TV layout",
-            body = "Every guide proportion now mirrors the tvOS app on the same " +
-                "screen: full channel names under landscape logos, denser rows, " +
-                "tighter time header. Calmer single-tone cells with the now-airing " +
-                "program highlighted plus a live progress bar.",
+            title = "Save recordings for offline",
+            body = "Save to Device downloads a recording to your Downloads " +
+                "folder so you can watch it with no connection. Prefer somewhere " +
+                "else? Pick a custom folder in DVR Settings.",
         ),
         WhatsNewItem(
-            title = "Returns to where you left off",
-            body = "Open the guide after closing a stream and AerioTV scrolls " +
-                "back to the channel you were watching, like the tvOS app.",
+            title = "Smoother on Android TV",
+            body = "Focus and D-pad navigation animate smoothly now, closer to " +
+                "the tvOS app, and the guide no longer lags as you move around.",
         ),
         WhatsNewItem(
-            title = "Audio track selection",
-            body = "Streams with multiple audio tracks (foreign-language dub, " +
-                "5.1 vs stereo) now have a picker in the player's More menu.",
+            title = "Syncing indicator",
+            body = "A small pill shows when AerioTV is refreshing your playlist, " +
+                "guide, or On Demand library in the background.",
         ),
         WhatsNewItem(
-            title = "Smoother playback under load",
-            body = "Networking is gated so a busy server isn't overwhelmed " +
-                "by simultaneous EPG, logo, and channel-list fetches, which " +
-                "previously surfaced as UI stutter on the Google TV Streamer.",
+            title = "Player aspect ratio",
+            body = "Switch the picture between Fit, Fill, and Zoom from the " +
+                "player's More menu.",
         ),
         WhatsNewItem(
-            title = "Multiview safety net",
-            body = "When the system reports critical memory pressure during " +
-                "heavy multiview use, AerioTV now sheds inactive tiles to keep " +
-                "your primary viewing alive instead of being killed.",
+            title = "Hide channel logos",
+            body = "A new Appearance toggle hides logos in the channel list and " +
+                "guide for a cleaner, text-only layout.",
         ),
     )
 }
