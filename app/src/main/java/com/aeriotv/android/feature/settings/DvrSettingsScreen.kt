@@ -227,7 +227,7 @@ fun DvrSettingsScreen(
             item {
                 Card(
                     header = "Output Folder",
-                    footer = "Local recordings save here. Picked via Storage Access Framework so AerioTV retains read+write access across reboots.",
+                    footer = "Local recordings save to your Downloads folder (in an AerioTV subfolder) by default, so you can find them in any file manager. Choose Folder picks a custom location via the Storage Access Framework, retained across reboots.",
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text(
@@ -432,13 +432,13 @@ private val ROLL_OPTIONS: List<Int> = listOf(0, 5, 10, 15, 30, 60)
 /**
  * Render a SAF tree URI as a human-readable label by extracting the
  * tail of the document path, or fall back to the URI's authority. Blank
- * input → "App default (Android/data/.../files/Recordings)". Skipping
- * a full DocumentFile lookup here keeps the row cheap to render — names
- * shift to canonical only after the picker callback resolves the URI.
+ * input → the default Downloads/AerioTV location. Skipping a full
+ * DocumentFile lookup here keeps the row cheap to render; names shift to
+ * canonical only after the picker callback resolves the URI.
  */
 private fun formatCustomFolderLabel(uriString: String): String {
     if (uriString.isBlank()) {
-        return "App default folder"
+        return "Device Downloads (AerioTV folder)"
     }
     return runCatching {
         val uri = Uri.parse(uriString)

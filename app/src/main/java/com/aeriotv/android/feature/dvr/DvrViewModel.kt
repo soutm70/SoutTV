@@ -217,7 +217,7 @@ class DvrViewModel @Inject constructor(
                     val rows = localRecordingDao.observeAll().first()
                     val match = rows.firstOrNull { it.id == rowId }
                     if (match != null) {
-                        runCatching { java.io.File(match.filePath).delete() }
+                        deleteLocalFile(match.filePath)
                         localRecordingDao.delete(rowId)
                     }
                 }
@@ -376,6 +376,23 @@ class DvrViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Delete a local recording's bytes, handling the public-Downloads /
+     * SAF content:// URI, a file:// URI, and a bare filesystem path (the
+     * app-private fallback). Best-effort; the Room row is dropped regardless.
+     */
+    private fun deleteLocalFile(path: String) {
+        runCatching {
+            when {
+                path.startsWith("content://") ->
+                    appContext.contentResolver.delete(android.net.Uri.parse(path), null, null)
+                path.startsWith("file://") ->
+                    android.net.Uri.parse(path).path?.let { java.io.File(it).delete() }
+                else -> java.io.File(path).delete()
+            }
+        }
+    }
+
     private companion object {
         const val TAG = "DvrViewModel"
     }
@@ -455,7 +472,12 @@ private fun LocalRecordingEntity.toRecording(): DvrViewModel.Recording {
     val isPlayable = status == DvrViewModel.Recording.Status.Completed ||
         status == DvrViewModel.Recording.Status.Stopped
     val playable = if (isPlayable && filePath.isNotBlank()) {
-        android.net.Uri.fromFile(java.io.File(filePath)).toString()
+        // A recording saved to the public Downloads (MediaStore) or a SAF
+        // custom folder is stored as a content:// URI; a path from the
+        // app-private dir needs wrapping in file://. ExoPlayer's
+        // DefaultDataSource resolves both schemes.
+        if (filePath.startsWith("content://") || filePath.startsWith("file://")) filePath
+        else android.net.Uri.fromFile(java.io.File(filePath)).toString()
     } else null
     return DvrViewModel.Recording(
         id = "local-$id",

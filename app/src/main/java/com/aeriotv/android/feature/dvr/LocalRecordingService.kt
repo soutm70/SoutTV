@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.provider.MediaStore
 import android.util.Log
 import android.net.Uri
 import androidx.core.app.NotificationCompat
@@ -181,8 +182,10 @@ class LocalRecordingService : Service() {
             }.onFailure { t ->
                 Log.w(TAG, "Recording aborted", t)
             }
-            // Persist the row so the DVR tab can surface it. Skip persistence
-            // if no bytes were written (file would mislead the user).
+            // Persist the row so the DVR tab can surface it. Finalize on any
+            // bytes (a stopped partial is still a valid recording); discard an
+            // empty write so a 0-byte file isn't left in Downloads.
+            if (bytesWritten > 0L) sink.finalize() else sink.discard()
             val finalBytes = sink.resolveBytes() ?: bytesWritten
             if (finalBytes > 0L) {
                 runCatching {
@@ -291,8 +294,13 @@ class LocalRecordingService : Service() {
             }.onFailure { t ->
                 Log.w(TAG, "Save to Device aborted", t)
             }
+            // A partial download is a truncated, useless video: only keep a
+            // fully-completed pull, and discard anything else so it doesn't
+            // linger in the user's Downloads.
+            val complete = status == "completed" && bytesWritten > 0L
+            if (complete) sink.finalize() else sink.discard()
             val finalBytes = sink.resolveBytes() ?: bytesWritten
-            val ok = status == "completed" && finalBytes > 0L
+            val ok = complete && finalBytes > 0L
             if (ok) {
                 runCatching {
                     localRecordingDao.insert(
@@ -370,26 +378,32 @@ class LocalRecordingService : Service() {
         val output: java.io.OutputStream,
         val displayPath: String,
         val resolveBytes: () -> Long?,
+        /** Mark the written file as final (clears MediaStore IS_PENDING so it
+         *  becomes visible in Downloads). No-op for plain File / SAF sinks. */
+        val finalize: () -> Unit = {},
+        /** Tear down a partial/failed write (delete the MediaStore entry, SAF
+         *  doc, or File) so a broken recording isn't left in the user's
+         *  Downloads. */
+        val discard: () -> Unit = {},
     )
 
     /**
-     * Resolve the output sink. Empty [customUri] picks the legacy
-     * external-files Recordings/ directory; a non-empty URI is treated as a
-     * SAF tree URI and we create a new file under it via [DocumentFile].
-     * Returns null when the target isn't writable so the caller can fall
-     * back to the default location or abort.
+     * Resolve the output sink. Empty [customUri] uses the DEFAULT location:
+     * the public Downloads/AerioTV folder via MediaStore on API 29+ (so the
+     * user can find recordings in their file manager, no permission needed),
+     * or the app-private external Recordings/ dir on older devices (writing to
+     * public storage there needs WRITE_EXTERNAL_STORAGE + a runtime grant we
+     * avoid). A non-empty URI is a user-picked SAF tree; we create a file
+     * under it via [DocumentFile]. Returns null when the target isn't writable
+     * so the caller can fall back or abort.
      */
     private fun openSink(customUri: String, fileName: String): RecordingSink? {
         if (customUri.isBlank()) {
-            return runCatching {
-                val outDir = File(getExternalFilesDir(null), "Recordings").apply { mkdirs() }
-                val outFile = File(outDir, fileName)
-                RecordingSink(
-                    output = outFile.outputStream(),
-                    displayPath = outFile.absolutePath,
-                    resolveBytes = { if (outFile.exists()) outFile.length() else null },
-                )
-            }.getOrNull()
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                openDownloadsSink(fileName) ?: openAppPrivateSink(fileName)
+            } else {
+                openAppPrivateSink(fileName)
+            }
         }
         return runCatching {
             val treeUri = Uri.parse(customUri)
@@ -404,9 +418,64 @@ class LocalRecordingService : Service() {
                 output = out,
                 displayPath = doc.uri.toString(),
                 resolveBytes = { runCatching { doc.length().takeIf { it > 0 } }.getOrNull() },
+                discard = { runCatching { doc.delete() } },
             )
         }.getOrNull()
     }
+
+    /**
+     * Default sink on API 29+: a new item in the public Downloads collection
+     * under the AerioTV/ subfolder. Written with IS_PENDING=1 so it stays
+     * hidden until [RecordingSink.finalize] clears it on success; a failed
+     * write calls [RecordingSink.discard] to delete the half-written entry.
+     */
+    private fun openDownloadsSink(fileName: String): RecordingSink? = runCatching {
+        val resolver = contentResolver
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val values = android.content.ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "video/mp2t")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/AerioTV")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val itemUri = resolver.insert(collection, values) ?: return@runCatching null
+        val out = resolver.openOutputStream(itemUri) ?: run {
+            runCatching { resolver.delete(itemUri, null, null) }
+            return@runCatching null
+        }
+        RecordingSink(
+            output = out,
+            displayPath = itemUri.toString(),
+            resolveBytes = {
+                runCatching {
+                    resolver.query(itemUri, arrayOf(MediaStore.Downloads.SIZE), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getLong(0).takeIf { it > 0 } else null }
+                }.getOrNull()
+            },
+            finalize = {
+                runCatching {
+                    val done = android.content.ContentValues()
+                        .apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                    resolver.update(itemUri, done, null, null)
+                }
+            },
+            discard = { runCatching { resolver.delete(itemUri, null, null) } },
+        )
+    }.getOrNull()
+
+    /** Fallback sink: the app-private external Recordings/ dir (not visible in
+     *  a file manager, removed on uninstall). Used on API < 29 and if the
+     *  MediaStore insert fails. */
+    private fun openAppPrivateSink(fileName: String): RecordingSink? = runCatching {
+        val outDir = File(getExternalFilesDir(null), "Recordings").apply { mkdirs() }
+        val outFile = File(outDir, fileName)
+        RecordingSink(
+            output = outFile.outputStream(),
+            displayPath = outFile.absolutePath,
+            resolveBytes = { if (outFile.exists()) outFile.length() else null },
+            discard = { runCatching { outFile.delete() } },
+        )
+    }.getOrNull()
 
     override fun onDestroy() {
         super.onDestroy()
