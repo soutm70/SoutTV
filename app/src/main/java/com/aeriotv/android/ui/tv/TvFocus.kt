@@ -54,10 +54,21 @@ fun Modifier.tvFocusScale(
         ),
         label = "tvFocusScale",
     )
-    return this
-        .zIndex(if (focused) 1f else 0f)
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        }
+    // CRITICAL for perf: only attach the render layer (and zIndex) while the
+    // element is actually focused or mid-animation. Applying graphicsLayer
+    // unconditionally put a permanent layer on EVERY element using this
+    // modifier; on a dense surface (a guide with 50-100 cells) that made a
+    // low-power Android TV box composite that many layers per frame and lagged
+    // D-pad navigation. Gating on `focused || scale != 1f` means at most the
+    // one focused element (plus the one animating back) ever owns a layer.
+    return if (focused || scale != 1f) {
+        this
+            .zIndex(1f)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+    } else {
+        this
+    }
 }
