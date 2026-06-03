@@ -240,15 +240,28 @@ fun DvrTabContent(
                         }
                     },
                     onSaveToDevice = {
-                        // iOS "Save to Device" walks the recording over to the
-                        // local DVR slot via DownloadManager + a confirmation
-                        // sheet. Needs MANAGE_EXTERNAL_STORAGE or scoped storage
-                        // wiring; deferred to a dedicated phase.
-                        Toast.makeText(
-                            context,
-                            "Save to Device lands in the next phase.",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        // Audit task #43: download the finalized server
+                        // recording to local storage via the foreground
+                        // LocalRecordingService; it reappears as a Local copy
+                        // playable offline. Mirrors iOS downloadRecording.
+                        scope.launch {
+                            viewModel.saveToDevice(rec).fold(
+                                onSuccess = {
+                                    Toast.makeText(
+                                        context,
+                                        "Saving \"${rec.title}\" to device…",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                                onFailure = { t ->
+                                    Toast.makeText(
+                                        context,
+                                        "Save to Device failed: ${t.message ?: t::class.simpleName}",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                            )
+                        }
                     },
                     onRemoveCommercials = {
                         scope.launch {
@@ -512,7 +525,11 @@ private fun RecordingRow(
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                 .combinedClickable(
-                    onClick = {},
+                    // Single tap plays a finalized recording (Completed /
+                    // Stopped carry a playbackUrl); non-playable rows no-op on
+                    // tap and use the long-press menu. Mirrors iOS tvOS
+                    // playIfCompleted (MyRecordingsView.swift line 469).
+                    onClick = { if (!rec.playbackUrl.isNullOrBlank()) onPlay() },
                     onLongClick = { menuOpen = true },
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -563,7 +580,6 @@ private fun RecordingRow(
             onDismiss = { menuOpen = false },
             onEdit = onEdit,
             onDelete = onDelete,
-            onPlay = onPlay,
             onWatchLive = onWatchLive,
             onSaveToDevice = onSaveToDevice,
             onRemoveCommercials = onRemoveCommercials,
@@ -632,7 +648,6 @@ private fun RecordingActionMenu(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onPlay: () -> Unit,
     onWatchLive: () -> Unit,
     onSaveToDevice: () -> Unit,
     onRemoveCommercials: () -> Unit,
@@ -648,24 +663,21 @@ private fun RecordingActionMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
     ) {
-        if (isCompleted) {
+        // Play is now a single tap on the row (see combinedClickable above), so
+        // the long-press menu carries only the secondary actions. A completed
+        // server recording can be saved locally or comskip'd; a completed local
+        // recording has neither, so it drops straight to Delete below.
+        if (isCompleted && isServer) {
             DropdownMenuItem(
-                text = { Text("Play") },
-                leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = { onDismiss(); onPlay() },
+                text = { Text("Save to Device") },
+                leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                onClick = { onDismiss(); onSaveToDevice() },
             )
-            if (isServer) {
-                DropdownMenuItem(
-                    text = { Text("Save to Device") },
-                    leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    onClick = { onDismiss(); onSaveToDevice() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Remove Commercials") },
-                    leadingIcon = { Icon(Icons.Outlined.ContentCut, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    onClick = { onDismiss(); onRemoveCommercials() },
-                )
-            }
+            DropdownMenuItem(
+                text = { Text("Remove Commercials") },
+                leadingIcon = { Icon(Icons.Outlined.ContentCut, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                onClick = { onDismiss(); onRemoveCommercials() },
+            )
         }
 
         if (isInProgress && isServer) {

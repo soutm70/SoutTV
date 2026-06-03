@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.dvr
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,6 +12,7 @@ import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrRecording
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -33,6 +35,7 @@ import kotlinx.coroutines.launch
  */
 @HiltViewModel
 class DvrViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val playlistRepository: PlaylistRepository,
     private val dispatcharrClient: DispatcharrClient,
     private val dispatcharrAuth: DispatcharrAuthBroker,
@@ -341,6 +344,35 @@ class DvrViewModel @Inject constructor(
                 dispatcharrClient.stopRecording(playlist.urlString, key, intId)
             }
             refresh()
+        }
+    }
+
+    /**
+     * Save to Device (audit #43): download a finalized server recording to
+     * local storage via the foreground [LocalRecordingService], after which it
+     * appears in the DVR tab as a Local copy playable offline. Mirrors iOS
+     * downloadDispatcharrRecording. Server recordings only; the playbackUrl is
+     * the same /file/ URL used for streaming, fetched with the source's
+     * X-API-Key.
+     */
+    suspend fun saveToDevice(recording: Recording): Result<Unit> {
+        if (recording.source != Source.Server) {
+            return Result.failure(IllegalStateException("Save to Device is for server recordings."))
+        }
+        val url = recording.playbackUrl
+            ?: return Result.failure(IllegalStateException("This recording has no file to download yet."))
+        val playlist = playlistRepository.activePlaylist()
+            ?: return Result.failure(IllegalStateException("No playlist loaded."))
+        val key = playlist.apiKey?.takeIf { it.isNotBlank() }
+            ?: return Result.failure(IllegalStateException("Active source is not Dispatcharr-backed."))
+        return runCatching {
+            LocalRecordingService.download(
+                context = appContext,
+                fileUrl = url,
+                title = recording.title,
+                channelName = recording.title,
+                apiKey = key,
+            )
         }
     }
 

@@ -103,6 +103,14 @@ class LocalRecordingService : Service() {
             ACTION_STOP -> {
                 stopRecording()
             }
+            ACTION_DOWNLOAD -> {
+                val fileUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
+                val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
+                val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
+                val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
+                currentChannelName = channelName
+                startDownload(fileUrl, title, apiKey)
+            }
         }
         return START_NOT_STICKY
     }
@@ -212,6 +220,116 @@ class LocalRecordingService : Service() {
         releaseWakeLock()
         stopForegroundCompat()
         stopSelf()
+    }
+
+    /**
+     * Save to Device (audit #43): download a finalized Dispatcharr server
+     * recording's /file/ URL to local storage and persist a
+     * [LocalRecordingEntity] so it appears in the DVR tab as a Local copy,
+     * playable offline. Unlike [startRecording] this reads to EOF (the whole
+     * finite file) rather than stopping at a duration deadline. Mirrors iOS
+     * downloadDispatcharrRecording (RecordingCoordinator.swift): fetch the
+     * playback URL with the source's auth headers, write it to the recordings
+     * directory, record the byte size.
+     */
+    private fun startDownload(fileUrl: String, title: String, apiKey: String) {
+        if (fileUrl.isBlank()) {
+            stopSelf()
+            return
+        }
+        ensureNotificationChannel()
+        startForegroundCompat(buildNotification(title, "Saving to device…"))
+
+        recordingJob = scope.launch {
+            // A multi-GB recording can take minutes; hold the CPU awake (gated
+            // by the same DVR keep-awake toggle) so doze doesn't stall the
+            // read loop. Generous 6h cap as a leak backstop.
+            if (runCatching { appPreferences.dvrKeepAwakeOnce() }.getOrDefault(true)) {
+                acquireWakeLock(6 * 60 * 60 * 1000L)
+            }
+            val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            val safeTitle = title.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40)
+            val fileName = "$ts-$safeTitle.ts"
+            val customUri = runCatching { appPreferences.dvrCustomFolderUriOnce() }.getOrDefault("")
+            val sink: RecordingSink = openSink(customUri, fileName)
+                ?: openSink("", fileName)
+                ?: run {
+                    Log.w(TAG, "No writable folder for download - aborting")
+                    stopSelf()
+                    return@launch
+                }
+            val startedAt = System.currentTimeMillis()
+            Log.i(TAG, "Save to Device -> ${sink.displayPath}")
+            var status = "failed"
+            var bytesWritten = 0L
+            runCatching {
+                val request = Request.Builder()
+                    .url(fileUrl)
+                    .header("X-API-Key", apiKey)
+                    .header("Authorization", "ApiKey $apiKey")
+                    .build()
+                okHttp.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("HTTP ${response.code} fetching recording file")
+                    }
+                    val body = response.body ?: throw IllegalStateException("empty body")
+                    body.byteStream().use { input ->
+                        sink.output.use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (isActive) {
+                                val read = input.read(buffer)
+                                if (read < 0) break // EOF: whole file pulled
+                                output.write(buffer, 0, read)
+                                bytesWritten += read
+                            }
+                            output.flush()
+                        }
+                    }
+                }
+                status = if (isActive) "completed" else "stopped"
+                Log.i(TAG, "Save to Device $status: $bytesWritten bytes")
+            }.onFailure { t ->
+                Log.w(TAG, "Save to Device aborted", t)
+            }
+            val finalBytes = sink.resolveBytes() ?: bytesWritten
+            val ok = status == "completed" && finalBytes > 0L
+            if (ok) {
+                runCatching {
+                    localRecordingDao.insert(
+                        LocalRecordingEntity(
+                            channelName = currentChannelName.ifBlank { title },
+                            title = title,
+                            filePath = sink.displayPath,
+                            startedAt = startedAt,
+                            endedAt = System.currentTimeMillis(),
+                            byteSize = finalBytes,
+                            status = "completed",
+                            playlistId = playlistDao.firstActive()?.id,
+                        ),
+                    )
+                }.onFailure { Log.w(TAG, "Couldn't persist downloaded recording", it) }
+            }
+            releaseWakeLock()
+            postDownloadResult(title, ok)
+            stopSelf()
+        }
+    }
+
+    /**
+     * Persisted (non-ongoing) notification so the user learns a Save to Device
+     * finished after the foreground notification is torn down. Distinct id so
+     * it survives stopForeground/stopSelf.
+     */
+    private fun postDownloadResult(title: String, success: Boolean) {
+        val mgr = getSystemService(NotificationManager::class.java) ?: return
+        val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(if (success) "Saved to device" else "Save to device failed")
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        mgr.notify(DOWNLOAD_DONE_NOTIF_ID, notif)
     }
 
     @android.annotation.SuppressLint("WakelockTimeout")
@@ -360,10 +478,12 @@ class LocalRecordingService : Service() {
     companion object {
         private const val TAG = "LocalRecordingService"
         private const val NOTIF_ID = 0xAE
+        private const val DOWNLOAD_DONE_NOTIF_ID = 0xAD
         private const val CHANNEL_ID = "aeriotv_local_recording"
 
         const val ACTION_START = "com.aeriotv.android.RECORDING_START"
         const val ACTION_STOP = "com.aeriotv.android.RECORDING_STOP"
+        const val ACTION_DOWNLOAD = "com.aeriotv.android.RECORDING_DOWNLOAD"
         const val EXTRA_STREAM_URL = "streamUrl"
         const val EXTRA_TITLE = "title"
         const val EXTRA_CHANNEL_NAME = "channelName"
@@ -385,6 +505,34 @@ class LocalRecordingService : Service() {
                 putExtra(EXTRA_CHANNEL_NAME, channelName)
                 putExtra(EXTRA_API_KEY, apiKey)
                 putExtra(EXTRA_DURATION_MS, durationMs)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        /**
+         * Save to Device: download a finalized server recording to local
+         * storage as a foreground service so it survives backgrounding. The
+         * [fileUrl] is the recording's /file/ playback URL; [apiKey]
+         * authenticates the fetch (the endpoint is auth-gated on some
+         * Dispatcharr deployments).
+         */
+        fun download(
+            context: Context,
+            fileUrl: String,
+            title: String,
+            channelName: String,
+            apiKey: String,
+        ) {
+            val intent = Intent(context, LocalRecordingService::class.java).apply {
+                action = ACTION_DOWNLOAD
+                putExtra(EXTRA_STREAM_URL, fileUrl)
+                putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
+                putExtra(EXTRA_API_KEY, apiKey)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
