@@ -1,5 +1,6 @@
 package com.aeriotv.android.feature.main
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +71,7 @@ import com.aeriotv.android.feature.settings.SettingsScreen
 import com.aeriotv.android.feature.settings.SettingsSection
 import com.aeriotv.android.feature.settings.SettingsSubScreenPlaceholder
 import com.aeriotv.android.feature.settings.SettingsViewModel
+import com.aeriotv.android.ui.tv.tvFocusScale
 
 /**
  * App-scoped [FocusRequester] for the Android TV top tab bar's "current"
@@ -199,6 +202,40 @@ fun MainScaffold(
         if (selectedTab !in tabs) selectedTab = AppTab.LiveTV
     }
 
+    // iOS BackgroundWork activity pill (HomeView.swift). ORs the content-fetch
+    // flags so the "Syncing" indicator shows while the channel list, EPG/guide,
+    // or On Demand library is still loading -- an activity light, NOT a
+    // cross-device-sync status. Vanishes the moment the flags clear.
+    val syncLabels = remember(
+        state.isLoading,
+        state.isEpgLoading,
+        onDemandState.isLoading,
+        onDemandState.isLoadingSeries,
+    ) {
+        buildList {
+            if (state.isLoading) add("Loading channels")
+            if (state.isEpgLoading) add("Loading guide")
+            if (onDemandState.isLoading) add("Loading Movies")
+            if (onDemandState.isLoadingSeries) add("Loading Series")
+        }
+    }
+    val anyBackgroundWork = syncLabels.isNotEmpty()
+
+    // iOS Issue #24: when the app returns to the foreground, refresh the guide
+    // if it has gone stale (>30min). Skip the first ON_START (cold launch
+    // already loads the EPG) so a normal launch never double-fetches.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var sawFirstStart by remember { mutableStateOf(false) }
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                if (sawFirstStart) viewModel.refreshEpgIfStale() else sawFirstStart = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // Android TV / Google TV: a 10-foot top tab bar instead of the phone
     // bottom NavigationBar. D-pad friendly, overscan-safe, and mirrors the
     // tvOS TabView. Phone / tablet / fold keep the bottom nav below.
@@ -220,6 +257,7 @@ fun MainScaffold(
         // route D-pad UP from their topmost focusable here.
         val topNavRequester = remember { FocusRequester() }
         CompositionLocalProvider(LocalTvTopNavFocusRequester provides topNavRequester) {
+            Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -259,6 +297,18 @@ fun MainScaffold(
                         .weight(1f)
                         .fillMaxWidth(),
                 )
+            }
+            // iOS "Syncing" pill, top-left. The centered nav pills + right-edge
+            // mini-player leave this corner clear. Non-focusable on TV (see
+            // SyncActivityPill) so it never steals D-pad focus.
+            SyncActivityPill(
+                active = anyBackgroundWork,
+                labels = syncLabels,
+                isTv = true,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 24.dp, top = 18.dp),
+            )
             }
         }
         return
@@ -333,17 +383,30 @@ fun MainScaffold(
             }
         },
     ) { padding ->
-        MainTabContent(
-            selectedTab = selectedTab,
-            onChannelClick = onChannelClick,
-            onMovieClick = onMovieClick,
-            onSeriesClick = onSeriesClick,
-            onEpisodeResume = onEpisodeResume,
-            onPlayRecording = onPlayRecording,
-            onLaunchMultiview = onLaunchMultiview,
-            onWatchLive = onWatchLive,
-            modifier = Modifier.padding(padding),
-        )
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            MainTabContent(
+                selectedTab = selectedTab,
+                onChannelClick = onChannelClick,
+                onMovieClick = onMovieClick,
+                onSeriesClick = onSeriesClick,
+                onEpisodeResume = onEpisodeResume,
+                onPlayRecording = onPlayRecording,
+                onLaunchMultiview = onLaunchMultiview,
+                onWatchLive = onWatchLive,
+                modifier = Modifier.fillMaxSize(),
+            )
+            // iOS "Syncing" pill, top-left over content (below the status bar).
+            // Tappable on phone -> background-activity details.
+            SyncActivityPill(
+                active = anyBackgroundWork,
+                labels = syncLabels,
+                isTv = false,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 16.dp, top = 8.dp),
+            )
+        }
     }
 }
 
@@ -474,24 +537,31 @@ private fun TvTab(
     onFocused: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val background = when {
-        focused -> MaterialTheme.colorScheme.primary
-        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-        else -> Color.Transparent
-    }
-    val foreground = when {
-        focused -> MaterialTheme.colorScheme.onPrimary
-        selected -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val background by animateColorAsState(
+        targetValue = when {
+            focused -> MaterialTheme.colorScheme.primary
+            selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            else -> Color.Transparent
+        },
+        label = "tvTabBackground",
+    )
+    val foreground by animateColorAsState(
+        targetValue = when {
+            focused -> MaterialTheme.colorScheme.onPrimary
+            selected -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        label = "tvTabForeground",
+    )
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(26.dp))
-            .background(background)
             .onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             }
+            .tvFocusScale(focused)
+            .clip(RoundedCornerShape(26.dp))
+            .background(background)
             .focusable()
             .padding(horizontal = 20.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,

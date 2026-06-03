@@ -511,6 +511,27 @@ class PlaylistViewModel @Inject constructor(
     }
 
     /**
+     * iOS Issue #24: when the app returns to the foreground after a while,
+     * refresh the guide if it has gone stale (cached fetch older than
+     * [maxAgeMillis], default 30 min) AND nothing is already loading. EPG only
+     * -- it does NOT re-pull channels or VOD. Gated on staleness so ordinary
+     * app-switching never refetches. A source with no cached guide yet is left
+     * to the normal cold-launch load path (no double-fetch).
+     */
+    fun refreshEpgIfStale(maxAgeMillis: Long = 30L * 60L * 1000L) {
+        viewModelScope.launch {
+            val s = _state.value
+            if (s.isLoading || s.isEpgLoading) return@launch
+            val active = repository.activePlaylist() ?: return@launch
+            val newest = repository.newestEpgFetch(active.id) ?: return@launch
+            val ageMs = System.currentTimeMillis() - newest
+            if (ageMs <= maxAgeMillis) return@launch
+            Log.i(TAG, "refreshEpgIfStale: guide is ${ageMs / 60000}min old, refreshing on foreground")
+            loadEpgIfConfigured(active, forceRefresh = true)
+        }
+    }
+
+    /**
      * Apply user edits to the active playlist. Reuses [PlaylistRepository.loadAndPersist]
      * with `existingId` so the row's UUID stays stable. Mirrors iOS Edit Playlist
      * Save action — connection details + auth credentials + EPG URL can change

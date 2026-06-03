@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -94,6 +96,38 @@ class OnDemandViewModel @Inject constructor(
     init {
         refresh()
         refreshSeries()
+        // React to the active playlist changing (switch) or being deleted.
+        // iOS Issue #25: when a playlist is removed, On Demand must drop the
+        // old source's movies/series instead of leaving stale, unplayable
+        // entries on screen. `drop(1)` skips the initial emission because the
+        // `refresh()/refreshSeries()` above already kicked off the first load.
+        viewModelScope.launch {
+            playlistRepository.observeActiveId()
+                .drop(1)
+                .collect {
+                    resetVodState()
+                    refresh()
+                    refreshSeries()
+                }
+        }
+    }
+
+    /**
+     * Drop all VOD state for the previous source: cancel any in-flight Xtream
+     * probe / enumeration, clear the deferred-category bookkeeping, and reset
+     * the UI state to empty so the next source starts clean. Mirrors iOS
+     * `VODStore.clear()`.
+     */
+    private fun resetVodState() {
+        xtreamProbeJob?.cancel()
+        xtreamItemsJob?.cancel()
+        xtreamProbeJob = null
+        xtreamItemsJob = null
+        pendingMovieCats = emptyList()
+        pendingSeriesCats = emptyList()
+        xtreamItemsLoaded = false
+        xtreamPlaylist = null
+        _state.value = UiState()
     }
 
     fun setSearchQuery(value: String) {

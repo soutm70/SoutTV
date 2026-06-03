@@ -28,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -447,6 +449,16 @@ class PlaylistRepository @Inject constructor(
 
     /** All stored playlists, observed for the multi-playlist switcher. */
     fun observeAll(): kotlinx.coroutines.flow.Flow<List<PlaylistEntity>> = dao.observeAll()
+
+    /**
+     * The active playlist's id, or null when none is active. Emits on
+     * switch / add / delete (the playlists table changes), so observers can
+     * react to the active source changing -- e.g. On Demand clears the previous
+     * source's movies/series so stale, unplayable VOD never lingers after a
+     * playlist is deleted or switched (iOS Issue #25).
+     */
+    fun observeActiveId(): kotlinx.coroutines.flow.Flow<String?> =
+        dao.observeActive().map { it.firstOrNull()?.id }.distinctUntilChanged()
     suspend fun allOnce(): List<PlaylistEntity> = dao.allOnce()
 
     /**

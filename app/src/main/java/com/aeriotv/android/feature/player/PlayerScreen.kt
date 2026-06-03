@@ -79,6 +79,7 @@ fun PlayerScreen(
     val miniPlayerVm: MiniPlayerViewModel = hiltViewModel()
     val appleTVChannelFlip by settingsVm.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
+    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
     val playerEntry = remember {
         EntryPointAccessors.fromApplication(
             context.applicationContext,
@@ -389,6 +390,12 @@ fun PlayerScreen(
                 val player = exoHolder.player ?: return@PlayerChromeOverlay
                 playbackSpeedSheet = player.readSpeed()
             },
+            aspectModeLabel = when (aspectMode) {
+                "zoom" -> "Zoom"
+                "fill" -> "Fill"
+                else -> "Fit"
+            },
+            onCycleAspect = { settingsVm.cyclePlayerAspectMode(aspectMode) },
             onToggleAudioOnly = {
                 audioOnly = !audioOnly
                 val player = exoHolder.player

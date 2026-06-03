@@ -68,6 +68,7 @@ fun FavoritesTabContent(
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(
         initialValue = CategoryPaletteState.Default,
     )
+    val showChannelLogos by settingsVm.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
     val favoriteIds by remember(favorites) {
         derivedStateOf { favorites.asSequence().map { it.channelId }.toHashSet() }
     }
@@ -169,6 +170,7 @@ fun FavoritesTabContent(
                         onShowProgramInfo = { programInfoTarget = it },
                         onShowRecord = { recordTarget = it },
                         palette = palette,
+                        showLogo = showChannelLogos,
                         reorderHandle = {
                             Icon(
                                 imageVector = Icons.Filled.Menu,

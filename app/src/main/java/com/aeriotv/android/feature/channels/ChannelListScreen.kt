@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -64,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,6 +81,7 @@ import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.livetv.LiveTVViewMode
+import com.aeriotv.android.ui.tv.tvFocusScale
 import com.aeriotv.android.feature.livetv.ManageGroupsSheet
 import com.aeriotv.android.feature.livetv.ProgramInfoSheet
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
@@ -108,6 +111,7 @@ fun ChannelListScreen(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val hiddenGroups by settingsVm.hiddenGroups.collectAsStateWithLifecycle(initialValue = emptySet())
+    val showChannelLogos by settingsVm.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
@@ -351,6 +355,7 @@ fun ChannelListScreen(
                         onShowProgramInfo = { programInfoTarget = it },
                         onShowRecord = { recordTarget = it },
                         palette = palette,
+                        showLogo = showChannelLogos,
                     )
                 }
             }
@@ -454,6 +459,9 @@ internal fun ChannelRow(
     onShowProgramInfo: (ProgramInfoTarget) -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
     palette: CategoryPaletteState,
+    /** iOS Issue #28: when false the channel logo is omitted so long channel
+     *  names use the full row width. */
+    showLogo: Boolean = true,
     /**
      * Optional leading drag handle, rendered at the very start of the row
      * before the channel number. Only the Favorites tab passes this (to back
@@ -466,6 +474,7 @@ internal fun ChannelRow(
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
 
     // Category gradient runs cyan-of-card → category-tint when a now-playing
@@ -494,8 +503,21 @@ internal fun ChannelRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .tvFocusScale(focused)
             .clip(RoundedCornerShape(12.dp))
-            .background(cardBrush),
+            .background(cardBrush)
+            .then(
+                // D-pad focus ring for the TV List view (the guide is the TV
+                // default, but the List/Guide toggle reaches this row too).
+                // Phone rows never gain focus, so `focused` stays false and
+                // this is a no-op there.
+                if (focused) Modifier.border(
+                    2.dp,
+                    MaterialTheme.colorScheme.primary,
+                    RoundedCornerShape(12.dp),
+                ) else Modifier,
+            ),
     ) {
         Box {
             Row(
@@ -535,34 +557,36 @@ internal fun ChannelRow(
                 // user provided shows ESPN/NBC/NFL logos floating directly
                 // on the card. The container is wider than tall so wider
                 // logos like NBC Sports fit comfortably without cropping.
-                Box(
-                    modifier = Modifier
-                        .width(50.dp)
-                        .height(32.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (channel.tvgLogo.isNotBlank()) {
-                        AsyncImage(
-                            model = channel.tvgLogo,
-                            contentDescription = null,
-                            // Fit preserves aspect ratio and centers within
-                            // the 50x32 container, matching iOS SwiftUI's
-                            // default Image.resizable + scaledToFit() pair.
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .width(50.dp)
-                                .height(32.dp),
-                        )
-                    } else {
-                        Text(
-                            text = channel.name.take(2).uppercase(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                        )
+                if (showLogo) {
+                    Box(
+                        modifier = Modifier
+                            .width(50.dp)
+                            .height(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (channel.tvgLogo.isNotBlank()) {
+                            AsyncImage(
+                                model = channel.tvgLogo,
+                                contentDescription = null,
+                                // Fit preserves aspect ratio and centers within
+                                // the 50x32 container, matching iOS SwiftUI's
+                                // default Image.resizable + scaledToFit() pair.
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .width(50.dp)
+                                    .height(32.dp),
+                            )
+                        } else {
+                            Text(
+                                text = channel.name.take(2).uppercase(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
+                    Spacer(Modifier.width(12.dp))
                 }
-                Spacer(Modifier.width(12.dp))
 
                 // Uniform-height channel-info column. iOS lets the description
                 // wrap 0-2 lines, which lets cards spring up and down by

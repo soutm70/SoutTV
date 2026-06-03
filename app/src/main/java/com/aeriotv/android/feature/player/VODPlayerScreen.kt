@@ -116,6 +116,7 @@ fun VODPlayerScreen(
 
     val settingsVm: SettingsViewModel = hiltViewModel()
     val streamBufferSize by settingsVm.streamBufferSize.collectAsStateWithLifecycle(initialValue = "default")
+    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
     val watchVm: WatchProgressViewModel = hiltViewModel()
 
     val context = LocalContext.current
@@ -264,6 +265,14 @@ fun VODPlayerScreen(
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setPlayer(player)
+                }
+            },
+            update = { view ->
+                // iOS Issue #26: live aspect-ratio toggle (Fit / Zoom / Fill).
+                view.resizeMode = when (aspectMode) {
+                    "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
             },
             onRelease = { view ->

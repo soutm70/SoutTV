@@ -65,6 +65,7 @@ import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
 import com.aeriotv.android.ui.scale.WithDisplayScale
+import com.aeriotv.android.ui.tv.tvFocusScale
 
 /**
  * On Demand tab shell. Mirrors iOS OnDemandView (Aerio/Features/VOD/OnDemandView.swift):
@@ -421,6 +422,7 @@ private fun SeriesPoster(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
+            .tvFocusScale(focused)
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {
@@ -706,6 +708,7 @@ private fun MoviePoster(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
+            .tvFocusScale(focused)
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
     ) {

@@ -65,6 +65,26 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_USE_CUSTOM_ACCENT] = value }
     }
 
+    /**
+     * iOS Issue #28 (`ui.showChannelLogos`). When off, the Live TV list hides
+     * each channel's logo so long channel names use the full row width.
+     * Default ON.
+     */
+    val showChannelLogos: Flow<Boolean> = store.data.map { it[KEY_SHOW_CHANNEL_LOGOS] ?: true }
+    suspend fun setShowChannelLogos(value: Boolean) {
+        store.edit { it[KEY_SHOW_CHANNEL_LOGOS] = value }
+    }
+
+    /**
+     * iOS Issue #26 player aspect mode: "fit" (letterbox, default), "zoom"
+     * (crop to fill while preserving aspect), or "fill" (stretch). Maps to
+     * Media3 AspectRatioFrameLayout RESIZE_MODE_FIT / ZOOM / FILL in the player.
+     */
+    val playerAspectMode: Flow<String> = store.data.map { it[KEY_PLAYER_ASPECT_MODE] ?: "fit" }
+    suspend fun setPlayerAspectMode(value: String) {
+        store.edit { it[KEY_PLAYER_ASPECT_MODE] = value }
+    }
+
     val customAccentHex: Flow<String> = store.data.map { it[KEY_CUSTOM_ACCENT_HEX] ?: "" }
     suspend fun setCustomAccentHex(value: String) {
         store.edit { prefs ->
@@ -328,9 +348,13 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_MULTIVIEW_AUDIO_FOCUS_STYLE] = value }
     }
 
-    /** iOS `multiviewTilePadding` parity. Adds gaps between tiles. */
+    /**
+     * iOS `multiviewTilePadding` parity. Adds gaps between tiles. Default ON
+     * (iOS 56fe163ad flipped the default to 8pt gutters); users who set it
+     * explicitly keep their choice.
+     */
     val multiviewTilePadding: Flow<Boolean> = store.data.map {
-        it[KEY_MULTIVIEW_TILE_PADDING] ?: false
+        it[KEY_MULTIVIEW_TILE_PADDING] ?: true
     }
     suspend fun setMultiviewTilePadding(value: Boolean) {
         store.edit { it[KEY_MULTIVIEW_TILE_PADDING] = value }
@@ -604,6 +628,8 @@ class AppPreferences @Inject constructor(
         val KEY_RECENT_CHANNEL_IDS = stringPreferencesKey("recent_channel_ids")
         val KEY_SELECTED_THEME = stringPreferencesKey("selected_theme")
         val KEY_USE_CUSTOM_ACCENT = booleanPreferencesKey("use_custom_accent")
+        val KEY_SHOW_CHANNEL_LOGOS = booleanPreferencesKey("ui_show_channel_logos")
+        val KEY_PLAYER_ASPECT_MODE = stringPreferencesKey("player_aspect_mode")
         val KEY_CUSTOM_ACCENT_HEX = stringPreferencesKey("custom_accent_hex")
         val KEY_DEFAULT_LIVE_TV_VIEW = stringPreferencesKey("default_live_tv_view")
         val KEY_SKIP_LOADING_SCREEN = booleanPreferencesKey("app_behaviors_skip_loading_screen")

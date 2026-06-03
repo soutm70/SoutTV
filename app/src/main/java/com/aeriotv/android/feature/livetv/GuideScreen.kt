@@ -46,6 +46,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester
+import com.aeriotv.android.ui.tv.tvFocusScale
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MAX
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MIN
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -1085,6 +1086,12 @@ private fun ProgrammeCell(
                 if (isTv) Modifier.padding(end = 1.dp)
                 else Modifier.padding(start = 1.dp, end = 1.dp, top = 4.dp, bottom = 4.dp),
             )
+            // Subtle tvOS-style focus grow. Smaller than the poster/pill scale
+            // (1.04 vs 1.08) because guide cells sit in a dense, contiguous EPG
+            // grid -- a big scale would break the timeline alignment. The
+            // zIndex bump inside tvFocusScale lifts the focused cell above its
+            // neighbours so the grown edge is never clipped.
+            .tvFocusScale(focused, focusedScale = 1.04f)
             .clip(cellShape)
             .background(cellBg)
             .then(

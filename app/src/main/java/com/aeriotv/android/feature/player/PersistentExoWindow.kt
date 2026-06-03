@@ -24,7 +24,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.core.playback.AerioExoPlayerHolder
+import com.aeriotv.android.feature.settings.SettingsViewModel
 
 /**
  * The single, activity-lifetime Media3 [PlayerView]. Direct counterpart of
@@ -57,6 +59,8 @@ fun BoxScope.PersistentExoWindow(
 ) {
     val mode by state.mode.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val settingsVm: SettingsViewModel = hiltViewModel()
+    val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
 
     // See PersistentMpvWindow for the long form of the z-index rationale.
     // tl;dr: NavHost paints over PersistentExoWindow by declaration order;
@@ -109,6 +113,14 @@ fun BoxScope.PersistentExoWindow(
                     // Surface mode is set via the bundled layout
                     // exo_player_view.xml's surface_type=surface_view default.
                     setPlayer(player)
+                }
+            },
+            update = { view ->
+                // iOS Issue #26: live aspect-ratio toggle (Fit / Zoom / Fill).
+                view.resizeMode = when (aspectMode) {
+                    "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
             },
             modifier = Modifier.fillMaxSize(),

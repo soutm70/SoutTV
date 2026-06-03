@@ -38,6 +38,26 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setUseCustomAccent(value) }
     }
 
+    val showChannelLogos: Flow<Boolean> = prefs.showChannelLogos
+    fun setShowChannelLogos(value: Boolean) {
+        viewModelScope.launch { prefs.setShowChannelLogos(value) }
+    }
+
+    val playerAspectMode: Flow<String> = prefs.playerAspectMode
+    fun setPlayerAspectMode(value: String) {
+        viewModelScope.launch { prefs.setPlayerAspectMode(value) }
+    }
+
+    /** Cycle Fit -> Zoom -> Fill -> Fit (iOS Issue #26 aspect toggle). */
+    fun cyclePlayerAspectMode(current: String) {
+        val next = when (current) {
+            "fit" -> "zoom"
+            "zoom" -> "fill"
+            else -> "fit"
+        }
+        setPlayerAspectMode(next)
+    }
+
     val customAccentHex: Flow<String> = prefs.customAccentHex
     fun setCustomAccentHex(value: String) {
         viewModelScope.launch { prefs.setCustomAccentHex(value) }

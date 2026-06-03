@@ -87,6 +87,7 @@ fun AppearanceSettingsScreen(
     val scaleLiveTV by viewModel.displayScaleLiveTV.collectAsStateWithLifecycle(initialValue = 1.0f)
     val useCustomAccent by viewModel.useCustomAccent.collectAsStateWithLifecycle(initialValue = false)
     val customAccentHex by viewModel.customAccentHex.collectAsStateWithLifecycle(initialValue = "")
+    val showChannelLogos by viewModel.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
 
     var pickerTarget by remember { mutableStateOf<ProgramCategory?>(null) }
     var accentPickerOpen by remember { mutableStateOf(false) }
@@ -203,6 +204,20 @@ fun AppearanceSettingsScreen(
                         subtitle = "Apply category tints to the guide and channel rows.",
                         checked = palette.masterEnabled,
                         onCheckedChange = viewModel::setCategoryColorsEnabled,
+                    )
+                }
+
+                // Channel List card (iOS Issue #28). Hide logos so long
+                // channel names get the full row width.
+                settingsCard(
+                    header = "Channel List",
+                    footer = "Turn logos off to give long channel names the full row width.",
+                ) {
+                    ToggleRow(
+                        title = "Show Channel Logos",
+                        subtitle = "Display each channel's logo in the Live TV list.",
+                        checked = showChannelLogos,
+                        onCheckedChange = viewModel::setShowChannelLogos,
                     )
                 }
 

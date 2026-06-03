@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -110,6 +111,8 @@ fun PlayerChromeOverlay(
     onShowSubtitles: () -> Unit,
     onShowAudioTracks: () -> Unit,
     onShowPlaybackSpeed: () -> Unit,
+    aspectModeLabel: String,
+    onCycleAspect: () -> Unit,
     onToggleAudioOnly: () -> Unit,
     audioOnly: Boolean,
     onSetSleepMinutes: (Int) -> Unit,
@@ -212,6 +215,8 @@ fun PlayerChromeOverlay(
                         canRecord = nowProgramme != null && channel?.dispatcharrChannelId != null,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
+                        aspectLabel = aspectModeLabel,
+                        onCycleAspect = onCycleAspect,
                         onSubtitles = {
                             moreOpen = false
                             onShowSubtitles()
@@ -388,6 +393,8 @@ private fun PlayerMoreMenu(
     canRecord: Boolean,
     audioOnly: Boolean,
     sleepActive: Boolean,
+    aspectLabel: String,
+    onCycleAspect: () -> Unit,
     onSubtitles: () -> Unit,
     onAudioTracks: () -> Unit,
     onPlaybackSpeed: () -> Unit,
@@ -438,6 +445,19 @@ private fun PlayerMoreMenu(
             },
             text = { Text("Playback Speed") },
             onClick = onPlaybackSpeed,
+        )
+        // iOS Issue #26: cycle Fit -> Zoom -> Fill. Stays open so repeated
+        // presses cycle; the label reflects the current mode.
+        DropdownMenuItem(
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Outlined.AspectRatio,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            },
+            text = { Text("Aspect Ratio: $aspectLabel") },
+            onClick = onCycleAspect,
         )
         if (canRecord) {
             DropdownMenuItem(
