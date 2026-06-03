@@ -11,6 +11,7 @@ import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.feature.playlist.nowPlaying
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,9 +20,17 @@ import javax.inject.Singleton
  * Android Auto browse tree + playback resolution, mirroring the iOS CarPlay
  * design (App/CarPlaySceneDelegate.swift):
  *
- *   root
- *     - Favorites  (only when the user has favorites; else Groups is the root)
- *     - Groups -> <group> -> channels
+ *   root  (Android Auto renders root children as the horizontal top tabs)
+ *     - Favorites                       (tab; only when favorites exist)
+ *     - Groups -> <group> -> channels   (always; the sole tab when none)
+ *
+ * Individual groups live UNDER the Groups tab as a vertical list, never as
+ * root children: root children become Android Auto's top tabs, so putting the
+ * groups there turned them INTO the tabs (Sports/General/News across the top)
+ * instead of the scrollable Group > Channel drill-down CarPlay shows. CarPlay
+ * uses a Favorites/Groups CPTabBarTemplate with each group pushed as its own
+ * list; one "Groups" tab wrapping the vertical group list is the Android-
+ * idiomatic equivalent.
  *
  * Each channel row shows the channel name, the now-playing programme as the
  * subtitle, and the channel logo as artwork -- the same fields CarPlay renders.
@@ -72,8 +81,12 @@ class AutoBrowseTree @Inject constructor(
                         browsable(GROUPS_ID, "Groups"),
                     )
                 } else {
-                    // No favorites: Groups is the whole experience (CarPlay parity).
-                    groupNodes(channels)
+                    // No favorites: a single "Groups" tab. Its contents (one
+                    // level down, via GROUPS_ID) are the vertical group list,
+                    // so the groups are a scrollable Group > Channel drill-down
+                    // rather than becoming the top tabs themselves. CarPlay
+                    // parity: with no favorites, Groups is the whole experience.
+                    listOf(browsable(GROUPS_ID, "Groups"))
                 }
             }
             parentId == FAVORITES_ID -> {
@@ -140,14 +153,47 @@ class AutoBrowseTree @Inject constructor(
         return repository.refresh(playlist).getOrDefault(emptyList())
     }
 
-    /** Map of channel EPG key (tvg-id) -> now-playing programme title. */
-    private suspend fun nowPlayingByChannelKey(playlist: PlaylistEntity): Map<String, String> {
+    /** Map of channel EPG key (tvg-id) -> the now-playing programme. */
+    private suspend fun nowPlayingByChannelKey(playlist: PlaylistEntity): Map<String, EPGProgramme> {
         val epg: List<EPGProgramme> = runCatching { repository.loadCachedEpg(playlist.id) }
             .getOrDefault(emptyList())
         if (epg.isEmpty()) return emptyMap()
         return epg.groupBy { it.channelId }
-            .mapNotNull { (key, list) -> list.nowPlaying()?.title?.let { key to it } }
+            .mapNotNull { (key, list) -> list.nowPlaying()?.let { key to it } }
             .toMap()
+    }
+
+    /**
+     * Channel-row secondary line, mirroring CarPlay's programDetail
+     * (App/CarPlaySceneDelegate.swift): "<programme> · <time left> · <desc>"
+     * joined with a middle dot, so the most glanceable bits lead and the head
+     * unit's width truncation trims the description first, never the programme
+     * or the time. Falls back to the group name when there is no EPG. Built at
+     * browse time, so the time-left can lag a few minutes between refreshes
+     * (same as CarPlay, which is not on a per-second ticker either).
+     */
+    private fun programDetail(channel: M3UChannel, programme: EPGProgramme?): String? {
+        val parts = mutableListOf<String>()
+        programme?.title?.trim()?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+        programme?.endMillis?.let { timeRemaining(it) }?.let { parts.add(it) }
+        programme?.description?.trim()?.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+        if (parts.isEmpty()) return channel.groupTitle.takeIf { it.isNotBlank() }
+        return parts.joinToString(" · ")
+    }
+
+    /**
+     * Human "time left" in the current programme, or null when it has
+     * effectively ended (30s or less remaining, or already past). CarPlay
+     * parity (timeRemaining(until:)).
+     */
+    private fun timeRemaining(endMillis: Long, now: Long = System.currentTimeMillis()): String? {
+        val secondsLeft = (endMillis - now) / 1000.0
+        if (secondsLeft <= 30) return null
+        val minutesLeft = (secondsLeft / 60.0).roundToInt()
+        if (minutesLeft < 60) return "$minutesLeft min left"
+        val hours = minutesLeft / 60
+        val mins = minutesLeft % 60
+        return if (mins == 0) "$hours hr left" else "${hours}h ${mins}m left"
     }
 
     private fun groupNodes(channels: List<M3UChannel>): List<MediaItem> =
@@ -177,9 +223,8 @@ class AutoBrowseTree @Inject constructor(
     }
 
     /** Browse-display channel item (no URI; resolved at play time). */
-    private fun channelItem(channel: M3UChannel, nowByTvg: Map<String, String>): MediaItem {
-        val subtitle = nowByTvg[channel.tvgID]?.takeIf { it.isNotBlank() }
-            ?: channel.groupTitle.takeIf { it.isNotBlank() }
+    private fun channelItem(channel: M3UChannel, nowByTvg: Map<String, EPGProgramme>): MediaItem {
+        val subtitle = programDetail(channel, nowByTvg[channel.tvgID])
         val meta = MediaMetadata.Builder()
             .setTitle(channel.name)
             .setSubtitle(subtitle)
@@ -197,11 +242,10 @@ class AutoBrowseTree @Inject constructor(
         channel: M3UChannel,
         playlist: PlaylistEntity,
         effectiveBase: String,
-        nowByTvg: Map<String, String>,
+        nowByTvg: Map<String, EPGProgramme>,
     ): MediaItem {
         val url = streamUrlFor(channel, playlist, effectiveBase)
-        val subtitle = nowByTvg[channel.tvgID]?.takeIf { it.isNotBlank() }
-            ?: channel.groupTitle.takeIf { it.isNotBlank() }
+        val subtitle = programDetail(channel, nowByTvg[channel.tvgID])
         val meta = MediaMetadata.Builder()
             .setTitle(channel.name)
             .setDisplayTitle(channel.name)
