@@ -3,6 +3,7 @@ package com.aeriotv.android.feature.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -374,11 +375,17 @@ private fun PlaylistRow(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // Guard the long-press menu against the Android TV D-pad bug where the OK
+    // RELEASE auto-selects the menu's first item (Edit) the instant the user
+    // lifts off -- so a long-press to Delete always landed on Edit. arm() when
+    // the menu opens, wrap() each item: the spurious release-click within the
+    // grace window is swallowed, leaving Delete reachable. No-op on touch.
+    val tvGuard = rememberTvMenuGuard()
     Box {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .combinedClickable(onClick = onTap, onLongClick = { menuOpen = true })
+                .combinedClickable(onClick = onTap, onLongClick = { menuOpen = true; tvGuard.arm() })
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -430,14 +437,14 @@ private fun PlaylistRow(
                 leadingIcon = {
                     Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 },
-                onClick = { menuOpen = false; onEdit() },
+                onClick = tvGuard.wrap { menuOpen = false; onEdit() },
             )
             DropdownMenuItem(
                 text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                 leadingIcon = {
                     Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                 },
-                onClick = { menuOpen = false; onDelete() },
+                onClick = tvGuard.wrap { menuOpen = false; onDelete() },
             )
         }
     }
