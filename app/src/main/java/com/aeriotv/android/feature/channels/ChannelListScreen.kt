@@ -75,6 +75,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import com.aeriotv.android.core.category.CategoryPaletteState
+import com.aeriotv.android.ui.LocalCanRecordToServer
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
@@ -722,7 +723,7 @@ internal fun ChannelRow(
                 // iOS canon: the channel long-press menu hides irrelevant
                 // actions instead of greying them out for context-free
                 // sources.
-                if (channel.url.isNotBlank() && channel.dispatcharrChannelId != null) {
+                if (channel.url.isNotBlank() && channel.dispatcharrChannelId != null && LocalCanRecordToServer.current) {
                     val recordLabel = if (nowProgramme != null) "Record from Now" else "Record"
                     DropdownMenuItem(
                         leadingIcon = {

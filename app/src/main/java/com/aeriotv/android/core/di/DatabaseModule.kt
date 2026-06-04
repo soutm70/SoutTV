@@ -120,6 +120,22 @@ object DatabaseModule {
         }
     }
 
+    /**
+     * v15: capture the Dispatcharr account level on each playlist so the Record
+     * affordances can be hidden for Standard / Streamer (non-admin) accounts,
+     * which 403 on server-side DVR. Additive ALTER (not destructive) so
+     * playlists / favorites / caches survive. Default 10 = admin keeps every
+     * existing row recording-capable until its next connect re-captures the
+     * real level.
+     */
+    private val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `playlists` ADD COLUMN `dispatcharrUserLevel` INTEGER NOT NULL DEFAULT 10",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AerioDatabase =
@@ -127,7 +143,7 @@ object DatabaseModule {
             // Preserve user data across known schema bumps where a clean ALTER
             // exists; fall back to a destructive rebuild only for un-mapped
             // version jumps (older dev builds).
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 

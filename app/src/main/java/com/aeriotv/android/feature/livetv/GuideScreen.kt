@@ -46,6 +46,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester
+import com.aeriotv.android.ui.LocalCanRecordToServer
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MAX
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MIN
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -1167,7 +1168,7 @@ private fun ProgrammeCell(
                     },
                 )
             }
-            if (programme.endMillis > System.currentTimeMillis()) {
+            if (programme.endMillis > System.currentTimeMillis() && LocalCanRecordToServer.current) {
                 val recordLabel = if (isLive) "Record from Now" else "Record"
                 DropdownMenuItem(
                     text = { Text(recordLabel) },

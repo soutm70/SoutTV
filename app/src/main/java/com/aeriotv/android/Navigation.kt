@@ -11,6 +11,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.db.entity.canRecordToServer
+import com.aeriotv.android.ui.LocalCanRecordToServer
 import com.aeriotv.android.core.pip.findActivity
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.main.MainScaffold
@@ -387,6 +390,9 @@ fun AerioTVNavHost(
                     }
                 }
 
+                CompositionLocalProvider(
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
+                ) {
                 MainScaffold(
                     onChannelClick = { channel ->
                         navController.navigate(Routes.player(channel.id))
@@ -423,6 +429,7 @@ fun AerioTVNavHost(
                         }
                     },
                 )
+                }
             }
 
             composable(
@@ -448,6 +455,9 @@ fun AerioTVNavHost(
                     } else emptyMap()
                 }
                 val playableChannels = state.channels.filter { it.url.isNotBlank() }
+                CompositionLocalProvider(
+                    LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
+                ) {
                 PlayerScreen(
                     channels = playableChannels,
                     initialChannelId = channelId,
@@ -459,6 +469,7 @@ fun AerioTVNavHost(
                         navController.navigate(Routes.MULTIVIEW)
                     },
                 )
+                }
             }
 
             composable(

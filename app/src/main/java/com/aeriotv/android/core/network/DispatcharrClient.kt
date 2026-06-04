@@ -243,6 +243,22 @@ class DispatcharrClient @Inject constructor() {
     }
 
     /**
+     * Best-effort fetch of the connected user's Dispatcharr account level via
+     * GET /api/accounts/users/me/ with the X-API-Key (10 = admin, 1 = standard,
+     * 0 = streamer). Only admins (>= 10) can create server-side recordings, so
+     * this gates the Record affordances. Returns null on any failure (transport,
+     * non-2xx, missing field) so the caller can fall back to the
+     * recording-capable default. Mirrors iOS d8aa76b user_level capture.
+     */
+    suspend fun fetchUserLevel(baseUrl: String, apiKey: String): Int? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/accounts/users/me/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val me: MeResponse = response.body()
+        me.userLevel
+    }.getOrNull()
+
+    /**
      * Default User-Agent for every Dispatcharr API call. Mirrors iOS
      * DeviceInfo.defaultUserAgent format so the Dispatcharr admin Stats
      * panel can attribute traffic to AerioTV alongside the iOS app:
@@ -830,6 +846,11 @@ data class MeResponse(
     val username: String,
     @SerialName("api_key")
     val apiKey: String,
+    /** Dispatcharr account level: 10 = admin, 1 = standard, 0 = streamer. Only
+     *  admins (>= 10) can POST server recordings. Nullable + defaulted so older
+     *  servers without the field still parse. */
+    @SerialName("user_level")
+    val userLevel: Int? = null,
 )
 
 @Serializable

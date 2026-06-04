@@ -169,6 +169,21 @@ class PlaylistRepository @Inject constructor(
             password = request.password,
         )
 
+        // Capture the connected user's Dispatcharr account level (10 = admin,
+        // 1 = standard, 0 = streamer). Only admins can POST server recordings,
+        // so this gates the Record affordances; best-effort, a failed read
+        // keeps the recording-capable default (10). Mirrors iOS d8aa76b.
+        val dispatcharrUserLevel: Int =
+            if (sourceType == SourceType.DispatcharrApiKey ||
+                sourceType == SourceType.DispatcharrUserPass
+            ) {
+                resolvedApiKey?.takeIf { it.isNotBlank() }
+                    ?.let { dispatcharrClient.fetchUserLevel(normalisedBase, it) }
+                    ?: 10
+            } else {
+                10
+            }
+
         val entity = PlaylistEntity(
             id = playlistId,
             name = request.name?.takeIf { it.isNotBlank() } ?: deriveName(normalisedBase),
@@ -183,6 +198,7 @@ class PlaylistRepository @Inject constructor(
             lastRefreshedAt = System.currentTimeMillis(),
             isActive = true,
             dispatcharrProfileId = request.dispatcharrProfileId,
+            dispatcharrUserLevel = dispatcharrUserLevel,
         )
         // New / re-loaded playlist becomes the active one. Mirrors iOS commit
         // f72b942 — wrap "deactivate others + upsert" in a transactional DAO

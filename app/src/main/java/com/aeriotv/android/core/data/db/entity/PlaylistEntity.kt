@@ -1,7 +1,9 @@
 package com.aeriotv.android.core.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.aeriotv.android.core.data.SourceType
 import java.util.UUID
 
 /**
@@ -62,8 +64,36 @@ data class PlaylistEntity(
      * Channel Profile. Added in DB v11 (preserving migration, not destructive).
      */
     val dispatcharrProfileId: Int? = null,
+    /**
+     * Dispatcharr account level captured at connect from
+     * /api/accounts/users/me/ `user_level`: 10 = admin, 1 = standard,
+     * 0 = streamer. Only admins (>= 10) can POST server-side recordings, so the
+     * Record affordances are gated on this. Defaults to 10 (admin): existing
+     * rows, non-Dispatcharr sources, and a failed capture stay
+     * recording-capable. Added in DB v15 (preserving migration). Mirrors iOS
+     * ServerConnection.dispatcharrUserLevel.
+     *
+     * `@ColumnInfo(defaultValue)` MUST match the v15 migration's
+     * `DEFAULT 10`: a NOT NULL column added via ALTER needs a SQL default, and
+     * Room rejects the schema on open if the entity doesn't declare the same
+     * one. Without this annotation the app crashes on the first post-upgrade
+     * launch (schema-validation IllegalStateException).
+     */
+    @ColumnInfo(defaultValue = "10")
+    val dispatcharrUserLevel: Int = 10,
 )
 // TODO Phase 9 (Block Store): move apiKey + password out of Room into Google Play
 // Block Store / EncryptedSharedPreferences. Room cleartext storage is acceptable for
 // pre-1.0 dev iteration but ships of any real build need encrypted credential storage.
+
+/**
+ * True when this playlist is a Dispatcharr admin account (user_level >= 10),
+ * the only level Dispatcharr permits to POST server-side recordings. Drives
+ * whether the Record affordances surface (channel long-press, guide cell,
+ * player More menu). Mirrors iOS ServerConnection.dispatcharrCanRecordToServer.
+ */
+fun PlaylistEntity.canRecordToServer(): Boolean =
+    (sourceType == SourceType.DispatcharrApiKey.name ||
+        sourceType == SourceType.DispatcharrUserPass.name) &&
+        dispatcharrUserLevel >= 10
 

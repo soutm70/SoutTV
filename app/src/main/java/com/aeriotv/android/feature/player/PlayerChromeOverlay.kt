@@ -70,6 +70,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.size.Size
 import com.aeriotv.android.core.data.EPGProgramme
+import com.aeriotv.android.ui.LocalCanRecordToServer
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.toInfoTarget
@@ -212,7 +213,7 @@ fun PlayerChromeOverlay(
                         // a now-playing program AND a Dispatcharr-managed
                         // channel (server-side scheduling is Dispatcharr-only).
                         // Matches the channel long-press menu's gating.
-                        canRecord = nowProgramme != null && channel?.dispatcharrChannelId != null,
+                        canRecord = nowProgramme != null && channel?.dispatcharrChannelId != null && LocalCanRecordToServer.current,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
                         aspectLabel = aspectModeLabel,
