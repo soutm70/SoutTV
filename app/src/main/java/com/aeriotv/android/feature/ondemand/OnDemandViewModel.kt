@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -527,10 +528,21 @@ class OnDemandViewModel @Inject constructor(
             }
             return
         }
-        val movieFast = runCatching { xtreamApi.getVodStreams(base, user, pass) }
-            .onFailure { Log.w(TAG, "XC getVodStreams failed", it) }.getOrDefault(emptyList())
-        val seriesFast = runCatching { xtreamApi.getSeries(base, user, pass) }
-            .onFailure { Log.w(TAG, "XC getSeries failed", it) }.getOrDefault(emptyList())
+        // The unfiltered full-library query is the standard-panel fast path, but
+        // Dispatcharr's XC bridge answers it with a 200 then a body it never
+        // finishes (it streams tens of MB and truncates), which the decoder grinds
+        // through for the full 60s request timeout before failing -- the "On Demand
+        // is slow to load" symptom. Cap the optimistic attempt: if it has not
+        // completed in UNFILTERED_PROBE_TIMEOUT_MS it is almost certainly the
+        // bridge, so abandon it and let the per-category walk fill the grids
+        // instead of stalling on a doomed request. A standard panel returns the
+        // whole library well under this cap, so its fast path is unaffected.
+        val movieFast = runCatching {
+            withTimeoutOrNull(UNFILTERED_PROBE_TIMEOUT_MS) { xtreamApi.getVodStreams(base, user, pass) } ?: emptyList()
+        }.onFailure { Log.w(TAG, "XC getVodStreams failed", it) }.getOrDefault(emptyList())
+        val seriesFast = runCatching {
+            withTimeoutOrNull(UNFILTERED_PROBE_TIMEOUT_MS) { xtreamApi.getSeries(base, user, pass) } ?: emptyList()
+        }.onFailure { Log.w(TAG, "XC getSeries failed", it) }.getOrDefault(emptyList())
         if (movieFast.isNotEmpty()) {
             val movies = movieFast.map { it.toMovie() }
             _state.update { it.copy(movies = movies, totalCount = movies.size) }
@@ -689,5 +701,9 @@ class OnDemandViewModel @Inject constructor(
         const val XC_EP_PREFIX = "xc-ep-"
         // Batch size for XC enumeration state flushes (see loadXtreamItemsIfNeeded).
         const val STATE_FLUSH_EVERY = 16
+        // Cap on the optimistic unfiltered full-library probe (see probeXtream).
+        // A standard panel answers well under this; a Dispatcharr XC bridge never
+        // finishes it, so we abandon it here and fall back to the category walk.
+        const val UNFILTERED_PROBE_TIMEOUT_MS = 20_000L
     }
 }
