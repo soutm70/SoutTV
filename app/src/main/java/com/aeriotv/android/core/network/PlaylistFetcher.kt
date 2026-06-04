@@ -27,9 +27,14 @@ class PlaylistFetcher @Inject constructor() {
             // OkHttp engine config can be expanded later for proxies, interceptors.
         }
         install(HttpTimeout) {
-            requestTimeoutMillis = 60_000
+            // Mirror the iOS URLSession model (StreamingAPIs.swift): a generous
+            // TOTAL budget for a large XMLTV EPG / M3U payload (10K+ channel
+            // servers run to tens of MB) with a short INACTIVITY timeout so a
+            // dead host still fails fast. A 60s TOTAL cap truncated big EPG / M3U
+            // downloads mid-stream the same way it did the VOD library.
+            requestTimeoutMillis = 300_000  // iOS timeoutIntervalForResource = 300
             connectTimeoutMillis = 15_000
-            socketTimeoutMillis = 30_000
+            socketTimeoutMillis = 30_000    // idle between packets
         }
     }
 

@@ -58,11 +58,17 @@ class XtreamCodesApi @Inject constructor() {
 
     private val client = HttpClient(OkHttp) {
         install(HttpTimeout) {
-            // VOD / series libraries can be large; give the resource fetch
-            // generous headroom while keeping connect snappy.
-            requestTimeoutMillis = 60_000
+            // Mirror the iOS largeLibrarySession (StreamingAPIs.swift): a generous
+            // TOTAL budget for a genuinely large VOD / series payload, but a short
+            // INACTIVITY (socket) timeout so a dead host still fails fast. The old
+            // 60s TOTAL cap truncated a big library mid-download -- the streaming
+            // decoder then hit "Unexpected EOF" and On Demand fell back to a slow
+            // per-category walk that iOS never does. With an idle-based timeout a
+            // slow-but-steady stream completes in one fetch (the iOS behaviour),
+            // and a stalled connection still dies within socketTimeout.
+            requestTimeoutMillis = 180_000  // iOS timeoutIntervalForResource = 180
             connectTimeoutMillis = 15_000
-            socketTimeoutMillis = 60_000
+            socketTimeoutMillis = 30_000    // iOS timeoutIntervalForRequest = 30 (idle)
         }
         engine {
             config {
