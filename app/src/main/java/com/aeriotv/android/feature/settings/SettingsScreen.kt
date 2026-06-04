@@ -385,7 +385,12 @@ private fun PlaylistRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .combinedClickable(onClick = onTap, onLongClick = { menuOpen = true; tvGuard.arm() })
+                // Wrap onTap too: on some focus configurations the OK-release
+                // KEY_UP after a long-press is delivered back to the originating
+                // row (firing onTap = "open Edit") rather than to the menu item.
+                // Guarding both paths means the spurious release-click is caught
+                // wherever it lands; the AerioLongPress log shows which fired.
+                .combinedClickable(onClick = tvGuard.wrap(onTap), onLongClick = { menuOpen = true; tvGuard.arm() })
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

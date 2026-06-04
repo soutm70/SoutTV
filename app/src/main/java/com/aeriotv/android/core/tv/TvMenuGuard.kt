@@ -43,15 +43,27 @@ class TvMenuGuard(private val graceMs: Long, private val isTv: Boolean) {
 
     /** Call when the menu opens from a long-press. No-op off TV. */
     fun arm() {
-        if (isTv) armedAt = SystemClock.uptimeMillis()
+        if (isTv) {
+            armedAt = SystemClock.uptimeMillis()
+            android.util.Log.d(TAG, "arm tv=true at=$armedAt grace=${graceMs}ms")
+        }
     }
 
-    /** Wrap a DropdownMenuItem onClick. Swallows the click if it arrives
-     *  within graceMs of [arm] (the spurious long-press-release). Off TV,
-     *  armedAt is never set so every click passes immediately. */
+    /** Wrap a click callback. Swallows the click if it arrives within
+     *  graceMs of [arm] (the spurious long-press-release that fires on the
+     *  newly-focused menu item OR, on some screens, back on the row itself).
+     *  Off TV, armedAt is never set so every click passes immediately. */
     fun wrap(action: () -> Unit): () -> Unit = {
-        if (SystemClock.uptimeMillis() - armedAt >= graceMs) action()
+        val elapsed = SystemClock.uptimeMillis() - armedAt
+        if (elapsed >= graceMs) {
+            android.util.Log.d(TAG, "wrap PASS elapsed=${elapsed}ms (>= $graceMs)")
+            action()
+        } else {
+            android.util.Log.d(TAG, "wrap SWALLOW elapsed=${elapsed}ms (< $graceMs) -- spurious long-press release")
+        }
     }
+
+    private companion object { const val TAG = "AerioLongPress" }
 }
 
 /**
