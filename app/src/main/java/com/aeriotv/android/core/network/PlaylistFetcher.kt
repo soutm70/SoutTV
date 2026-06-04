@@ -22,6 +22,7 @@ import javax.inject.Singleton
 class PlaylistFetcher @Inject constructor() {
 
     private val client = HttpClient(OkHttp) {
+        installSanitizedLogging()
         engine {
             // OkHttp engine config can be expanded later for proxies, interceptors.
         }

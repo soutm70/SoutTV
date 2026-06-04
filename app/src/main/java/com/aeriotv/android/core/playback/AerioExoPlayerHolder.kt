@@ -21,6 +21,11 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.TsExtractor
+import androidx.media3.common.Format
+import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import com.aeriotv.android.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -145,6 +150,11 @@ class AerioExoPlayerHolder @Inject constructor() {
             .build()
             .apply {
                 addListener(LoggingPlayerListener)
+                // Debug-only rich diagnostics firehose (codec / hwdec path,
+                // input format changes, dropped frames, audio underruns) -- the
+                // Android analog of iOS's libmpv log bridge. Read with
+                // `adb logcat -s AerioPlayerDiag`.
+                if (BuildConfig.DEBUG) addAnalyticsListener(DiagnosticAnalyticsListener)
                 // Repeat off for live; setRepeatMode(REPEAT_MODE_ONE) is
                 // a VOD concern.
                 repeatMode = Player.REPEAT_MODE_OFF
@@ -353,7 +363,86 @@ class AerioExoPlayerHolder @Inject constructor() {
         }
     }
 
+    /**
+     * Debug-only player diagnostics, the Android analog of iOS's libmpv log
+     * bridge ([MPV-DIAG]): the chosen decoder (hwdec path, e.g.
+     * c2.qti.avc.decoder), input format changes, dropped frames, audio
+     * underruns, and video size. Registered only under BuildConfig.DEBUG
+     * (mirrors iOS's `#if DEBUG` gate); tagged for `adb logcat -s AerioPlayerDiag`.
+     */
+    private object DiagnosticAnalyticsListener : AnalyticsListener {
+        override fun onVideoDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            Log.i(TAG_DIAG, "video decoder -> $decoderName (init ${initializationDurationMs}ms)")
+        }
+
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            Log.i(TAG_DIAG, "audio decoder -> $decoderName")
+        }
+
+        override fun onVideoInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            Log.i(
+                TAG_DIAG,
+                "video format -> ${format.sampleMimeType} ${format.width}x${format.height} " +
+                    "@${format.frameRate}fps ${format.bitrate}bps codecs=${format.codecs}",
+            )
+        }
+
+        override fun onAudioInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            Log.i(
+                TAG_DIAG,
+                "audio format -> ${format.sampleMimeType} ${format.sampleRate}Hz " +
+                    "${format.channelCount}ch ${format.bitrate}bps",
+            )
+        }
+
+        override fun onDroppedVideoFrames(
+            eventTime: AnalyticsListener.EventTime,
+            droppedFrames: Int,
+            elapsedMs: Long,
+        ) {
+            Log.w(TAG_DIAG, "dropped $droppedFrames frames over ${elapsedMs}ms")
+        }
+
+        override fun onAudioUnderrun(
+            eventTime: AnalyticsListener.EventTime,
+            bufferSize: Int,
+            bufferSizeMs: Long,
+            elapsedSinceLastFeedMs: Long,
+        ) {
+            Log.w(
+                TAG_DIAG,
+                "audio underrun: bufferMs=$bufferSizeMs elapsedSinceFeed=${elapsedSinceLastFeedMs}ms",
+            )
+        }
+
+        override fun onVideoSizeChanged(
+            eventTime: AnalyticsListener.EventTime,
+            videoSize: VideoSize,
+        ) {
+            Log.i(TAG_DIAG, "video size -> ${videoSize.width}x${videoSize.height}")
+        }
+    }
+
     companion object {
         private const val TAG = "AerioExoPlayer"
+        private const val TAG_DIAG = "AerioPlayerDiag"
     }
 }

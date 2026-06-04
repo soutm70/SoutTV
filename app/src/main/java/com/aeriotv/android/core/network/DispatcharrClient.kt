@@ -68,6 +68,7 @@ class DispatcharrClient @Inject constructor() {
     }
 
     private val client = HttpClient(OkHttp) {
+        installSanitizedLogging()
         install(HttpTimeout) {
             requestTimeoutMillis = 60_000
             connectTimeoutMillis = 15_000

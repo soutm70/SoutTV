@@ -8,7 +8,7 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
-    <!-- ACCESS_FINE_LOCATION (home-WiFi SSID detection) and ACCESS_WIFI_STATE
+    <!-- ACCESS_FINE_LOCATION (home-Wi-Fi SSID detection) and ACCESS_WIFI_STATE
          implicitly mark location + wifi HARDWARE as required. Android TV devices
          often lack GPS/location hardware, so Google Play then filters the app
          out of the Android TV catalog (the "not available on TV" / missing from
@@ -29,13 +29,17 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Home WiFi detection for LAN URL switching. Reading the CONNECTED
+    <!-- Home Wi-Fi detection for LAN URL switching. Reading the CONNECTED
          network's SSID (WifiInfo.getSSID) requires ACCESS_FINE_LOCATION at
          runtime on API 29+ (and location services on), or it is redacted to
          unknown-ssid. NEARBY_WIFI_DEVICES does NOT unlock the connected SSID
          (it gates Wi-Fi scanning / peer APIs), so fine location is the only
-         path on every API level at or above 29. -->
+         path on every API level at or above 29. Coarse is declared alongside
+         fine because the platform expects both to be requested together
+         (lint CoarseFineLocation); we still only read the SSID, which needs
+         fine. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Phase 9b Local DVR. Foreground service handles in-flight downloads
          so Android doesn't kill the recording when the user backgrounds the
@@ -97,8 +101,9 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="aeriotv" android:host="channel" />
-                <data android:scheme="aeriotv" android:host="vod" />
+                <data android:scheme="aeriotv" />
+                <data android:host="channel" />
+                <data android:host="vod" />
             </intent-filter>
         </activity>
 
@@ -117,7 +122,8 @@
         <service
             android:name=".core.playback.AerioMediaPlaybackService"
             android:exported="true"
-            android:foregroundServiceType="mediaPlayback">
+            android:foregroundServiceType="mediaPlayback"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
                 <action android:name="android.media.browse.MediaBrowserService" />
@@ -143,7 +149,8 @@
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
-            android:grantUriPermissions="true">
+            android:grantUriPermissions="true"
+            tools:ignore="Typos">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/log_file_paths" />

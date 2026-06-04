@@ -51,6 +51,7 @@ class XtreamCodesApi @Inject constructor() {
     }
 
     private val client = HttpClient(OkHttp) {
+        installSanitizedLogging()
         install(HttpTimeout) {
             // VOD / series libraries can be large; give the resource fetch
             // generous headroom while keeping connect snappy.
