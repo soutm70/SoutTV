@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import com.aeriotv.android.core.pip.findActivity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -539,6 +540,54 @@ fun GuideScreen(
             if (idx >= 0) {
                 listState.animateScrollToItem(idx)
             }
+        }
+
+        // Two-step Back behaviour on the Live TV guide:
+        //  1) Anywhere below the top row -> scroll the guide back to channel 0
+        //     and keep the user in the app. Mirrors how the iOS / tvOS Guide
+        //     scrolls Home-to-top on Menu / Back rather than dismissing.
+        //  2) Already at the top -> surface a confirmation dialog before we
+        //     actually exit AerioTV, so an accidental Back doesn't drop the
+        //     user out of the app mid-watch.
+        //
+        // BackHandler is wired LAST in this composable so it takes priority
+        // over any outer handlers (sheets, dialogs) -- Compose dispatches
+        // back events in LIFO order, so the innermost active enabled handler
+        // claims the event.
+        val backScope = androidx.compose.runtime.rememberCoroutineScope()
+        var showExitDialog by remember { mutableStateOf(false) }
+        val activity = LocalContext.current.findActivity()
+        androidx.activity.compose.BackHandler(enabled = !showExitDialog) {
+            val atTop = listState.firstVisibleItemIndex == 0 &&
+                listState.firstVisibleItemScrollOffset == 0
+            if (!atTop) {
+                backScope.launch { listState.animateScrollToItem(0) }
+            } else {
+                showExitDialog = true
+            }
+        }
+        if (showExitDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showExitDialog = false },
+                title = { androidx.compose.material3.Text("Exit AerioTV?") },
+                text = { androidx.compose.material3.Text("Are you sure you want to leave the app?") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        showExitDialog = false
+                        activity?.finish()
+                    }) {
+                        androidx.compose.material3.Text(
+                            "Exit",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { showExitDialog = false }) {
+                        androidx.compose.material3.Text("Cancel")
+                    }
+                },
+            )
         }
 
         // Audit task #57: when the guide is showing on TV, route D-pad UP off

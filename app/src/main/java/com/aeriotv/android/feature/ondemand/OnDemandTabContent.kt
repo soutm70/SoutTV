@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -138,19 +139,37 @@ private fun SegmentPills(
     current: OnDemandSection,
     onSelect: (OnDemandSection) -> Unit,
 ) {
+    // tvOS parity: the Movies / TV Shows segmented control sits in the
+    // CENTER of the header, not stretched edge-to-edge. Each pill claims
+    // only as much width as its content needs (with a sensible minimum so
+    // the focus highlight isn't a tight box around the text). On phone we
+    // keep the existing full-width split because the segmented control IS
+    // the dominant nav affordance on a 6"/7" portrait screen -- tucking it
+    // into a small centered island would waste vertical layout. iOS
+    // MoviesView / TVShowsView shows the same instinct: tvOS uses a
+    // compact, centered Segmented Picker; iOS uses a full-width one.
+    val isTv = rememberLiveTvFormFactor().isTv
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = if (isTv) Arrangement.Center else Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        OnDemandSection.entries.forEach { entry ->
+        OnDemandSection.entries.forEachIndexed { index, entry ->
+            if (isTv && index > 0) Spacer(Modifier.width(12.dp))
             SegmentPill(
                 label = entry.label,
                 icon = entry.icon,
                 selected = entry == current,
                 onClick = { onSelect(entry) },
-                modifier = Modifier.weight(1f),
+                modifier = if (isTv) {
+                    // Just enough room for the longest label + icon + a bit
+                    // of breathing room for the focus border.
+                    Modifier.widthIn(min = 160.dp)
+                } else {
+                    Modifier.weight(1f)
+                },
             )
         }
     }
