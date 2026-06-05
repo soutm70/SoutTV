@@ -105,25 +105,33 @@ class PlaylistRefreshWorker @AssistedInject constructor(
     companion object {
         const val TAG = "PlaylistRefreshWorker"
         const val UNIQUE_NAME = "aeriotv-playlist-refresh"
-        private const val PERIOD_HOURS = 6L
 
         /**
-         * Idempotent registration. Call from app startup; `KEEP` policy
-         * preserves any previously-scheduled run so we don't reset the
-         * next-run timer on every app launch.
+         * Idempotent registration. Call from app startup with the user's
+         * configured interval (default 360 minutes = 6 hours, matching the
+         * prior hardcoded `PERIOD_HOURS`). Uses `UPDATE` policy so a changed
+         * interval re-registers immediately instead of waiting for the
+         * existing schedule to expire -- the iOS `bgRefreshIntervalMins`
+         * setting takes effect within seconds of toggling.
          */
-        fun enqueuePeriodic(context: Context) {
+        fun enqueuePeriodic(context: Context, intervalMins: Int = 360) {
+            val safeMins = intervalMins.coerceAtLeast(15)
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.UNMETERED)
                 .setRequiresBatteryNotLow(true)
                 .build()
-            val request = PeriodicWorkRequestBuilder<PlaylistRefreshWorker>(PERIOD_HOURS, TimeUnit.HOURS)
+            val request = PeriodicWorkRequestBuilder<PlaylistRefreshWorker>(
+                safeMins.toLong(), TimeUnit.MINUTES,
+            )
                 .setConstraints(constraints)
                 .addTag(TAG)
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 UNIQUE_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                // UPDATE so changing the interval in Settings re-anchors the
+                // schedule immediately. The OLD KEEP policy left a 6h job
+                // running until its next firing, ignoring the user's pick.
+                ExistingPeriodicWorkPolicy.UPDATE,
                 request,
             )
         }

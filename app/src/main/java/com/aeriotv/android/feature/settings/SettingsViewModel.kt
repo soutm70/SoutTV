@@ -170,6 +170,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setBackgroundRefreshEnabled(value) }
     }
 
+    // GuideStore audit P1 #7: how often the periodic refresh fires.
+    // Default 360 minutes (6h) matches the prior hardcoded interval.
+    val backgroundRefreshIntervalMins: Flow<Int> = prefs.backgroundRefreshIntervalMins
+    fun setBackgroundRefreshIntervalMins(value: Int) {
+        viewModelScope.launch { prefs.setBackgroundRefreshIntervalMins(value) }
+    }
+
     // Multiview (Phase 11c)
     val multiviewAudioFocusStyle: Flow<String> = prefs.multiviewAudioFocusStyle
     fun setMultiviewAudioFocusStyle(value: String) {

@@ -489,6 +489,27 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_BG_REFRESH_ENABLED] = value }
     }
 
+    /**
+     * iOS `bgRefreshIntervalMins` parity (Aerio Settings:3299). How often the
+     * PlaylistRefreshWorker re-fetches channels + EPG when
+     * [backgroundRefreshEnabled] is on. Default 360 minutes (6 hours) matches
+     * the prior hardcoded `PlaylistRefreshWorker.PERIOD_HOURS = 6L` so
+     * upgrading users see no behaviour change unless they pick a different
+     * interval. Range: 60 minutes (Android WorkManager minimum is 15min but
+     * we cap at 60 so users can't accidentally drain a battery) up to 2880
+     * minutes (48h). Stored as minutes for iOS parity even though
+     * WorkManager accepts hours.
+     */
+    val backgroundRefreshIntervalMins: Flow<Int> =
+        store.data.map { it[KEY_BG_REFRESH_INTERVAL_MINS] ?: 360 }
+    suspend fun setBackgroundRefreshIntervalMins(value: Int) {
+        // Clamp to the valid range so the UI selector can't ship a value
+        // that WorkManager will reject (Periodic Work requires >= 15min;
+        // we conservatively floor at 60 to keep battery use reasonable).
+        val clamped = value.coerceIn(60, 2880)
+        store.edit { it[KEY_BG_REFRESH_INTERVAL_MINS] = clamped }
+    }
+
     fun syncCategoryEnabled(category: SyncCategory): Flow<Boolean> = store.data.map { prefs ->
         prefs[booleanPreferencesKey(category.enabledStorageKey())] ?: true
     }
@@ -703,5 +724,6 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_ACCESS_TOKEN = stringPreferencesKey("sync_access_token")
         val KEY_SYNC_TOKEN_EXPIRY = longPreferencesKey("sync_token_expiry")
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
+        val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
     }
 }

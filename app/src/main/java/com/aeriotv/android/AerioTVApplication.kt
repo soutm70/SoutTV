@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -143,13 +144,26 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         // user-overridable in Network Settings). collectLatest re-evaluates
         // whenever the user flips it.
         appScope.launch {
-            appPreferences.backgroundRefreshEnabled.collectLatest { enabled ->
-                if (enabled) {
-                    PlaylistRefreshWorker.enqueuePeriodic(this@AerioTVApplication)
-                } else {
-                    PlaylistRefreshWorker.cancel(this@AerioTVApplication)
+            // P1 #7: react to BOTH the on/off toggle AND the user's chosen
+            // interval. `combine` re-fires whenever either flow emits, so a
+            // user changing the interval from 6h to 24h immediately
+            // re-anchors the WorkManager schedule (UPDATE policy on the
+            // worker side). The pair is observed once at startup; a fresh
+            // install collects the default (true, 360min).
+            combine(
+                appPreferences.backgroundRefreshEnabled,
+                appPreferences.backgroundRefreshIntervalMins,
+            ) { enabled, mins -> enabled to mins }
+                .collectLatest { (enabled, mins) ->
+                    if (enabled) {
+                        PlaylistRefreshWorker.enqueuePeriodic(
+                            this@AerioTVApplication,
+                            intervalMins = mins,
+                        )
+                    } else {
+                        PlaylistRefreshWorker.cancel(this@AerioTVApplication)
+                    }
                 }
-            }
         }
         // Audit task #54: prime the credential cache from disk on cold
         // launch so Coil's first batch of Dispatcharr logo requests (the

@@ -63,6 +63,8 @@ fun NetworkSettingsScreen(
     val epgWindowHours by viewModel.epgWindowHours.collectAsStateWithLifecycle(initialValue = 24)
     val backgroundRefreshEnabled by viewModel.backgroundRefreshEnabled
         .collectAsStateWithLifecycle(initialValue = true)
+    val backgroundRefreshIntervalMins by viewModel.backgroundRefreshIntervalMins
+        .collectAsStateWithLifecycle(initialValue = 360)
     val homeSsids by viewModel.homeSsids.collectAsStateWithLifecycle(initialValue = emptySet<String>())
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -120,7 +122,9 @@ fun NetworkSettingsScreen(
             )
             BackgroundRefreshSection(
                 enabled = backgroundRefreshEnabled,
+                intervalMins = backgroundRefreshIntervalMins,
                 onToggle = viewModel::setBackgroundRefreshEnabled,
+                onSelectInterval = viewModel::setBackgroundRefreshIntervalMins,
             )
             HomeWifiSection(
                 homeSsids = homeSsids,
@@ -351,11 +355,13 @@ private fun EpgWindowSection(
 @Composable
 private fun BackgroundRefreshSection(
     enabled: Boolean,
+    intervalMins: Int,
     onToggle: (Boolean) -> Unit,
+    onSelectInterval: (Int) -> Unit,
 ) {
     SettingsCard(
         header = "Background Refresh",
-        footer = "Refresh channels + the EPG every 6 hours in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. Off here means data refreshes only when you launch AerioTV or pull to refresh.",
+        footer = "Refresh channels + the EPG in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. Off here means data refreshes only when you launch AerioTV or pull to refresh.",
     ) {
         Row(
             modifier = Modifier
@@ -380,8 +386,52 @@ private fun BackgroundRefreshSection(
                 ),
             )
         }
+        if (enabled) {
+            // iOS bgRefreshIntervalMins (audit P1 #7) parity: how often the
+            // periodic refresh fires. Hidden when the master toggle is off
+            // so the UI doesn't suggest setting frequency on a disabled
+            // worker. WorkManager UPDATE policy on the worker re-anchors the
+            // schedule the moment the user picks a new value.
+            BG_REFRESH_INTERVAL_OPTIONS.forEach { opt ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelectInterval(opt.mins) }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = opt.label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (opt.mins == intervalMins) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Selected",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
+
+private data class BgRefreshIntervalOption(val mins: Int, val label: String)
+
+/** iOS bgRefreshIntervalMins picker options. 360 (6h) is the default;
+ *  match the iOS picker so synced preferences round-trip cleanly. */
+private val BG_REFRESH_INTERVAL_OPTIONS: List<BgRefreshIntervalOption> = listOf(
+    BgRefreshIntervalOption(60, "Every hour"),
+    BgRefreshIntervalOption(180, "Every 3 hours"),
+    BgRefreshIntervalOption(360, "Every 6 hours"),
+    BgRefreshIntervalOption(720, "Every 12 hours"),
+    BgRefreshIntervalOption(1440, "Every 24 hours"),
+    BgRefreshIntervalOption(2880, "Every 48 hours"),
+)
 
 private data class EpgWindowOption(val hours: Int, val label: String)
 
