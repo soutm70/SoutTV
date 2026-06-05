@@ -106,6 +106,29 @@ class PlaylistViewModel @Inject constructor(
          * shouldn't be an issue unless we're 24 hours removed from the cache.
          */
         private const val CHANNEL_CACHE_TTL_MS = 24L * 60L * 60L * 1000L
+
+        /**
+         * iOS GuideStore audit P3 #12: trigger a Rolling Prefetch when the
+         * user has scrolled within 4 hours of the latest cached programme's
+         * end time. 4h means a guide-scale=0.5 user (12h viewport) trips
+         * the prefetch when they've consumed 8 of the 12 visible hours --
+         * enough lead time for the fetch to land before they hit the empty
+         * tail. Bigger gap = more wasted fetches; smaller gap = visible
+         * empty cells before the refresh arrives. 4h is the iOS default
+         * (`prefetchTriggerHours = 4`).
+         */
+        private const val PREFETCH_TRIGGER_DISTANCE_MS = 4L * 60L * 60L * 1000L
+
+        /**
+         * Don't re-fire a Rolling Prefetch within this many millis of the
+         * previous one. The same coalescing layer (P1 #6) already dedups
+         * concurrent fetches that overlap; the cooldown here is for the
+         * case where a fetch succeeded but the user keeps scrolling --
+         * without it, the cell-onAppear stream of trigger events would
+         * keep firing every frame. 60s lines up with the iOS Rolling
+         * Prefetch's `prefetchBreakerCooldown` floor.
+         */
+        private const val PREFETCH_COOLDOWN_MS = 60L * 1000L
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -642,6 +665,54 @@ class PlaylistViewModel @Inject constructor(
             )
         }
     }
+
+    /**
+     * iOS GuideStore audit P3 #12 minimum-viable port: when the user scrolls
+     * the Guide horizontally to within [PREFETCH_TRIGGER_DISTANCE_MS] of the
+     * latest cached programme's end time, fire a single forced EPG refresh
+     * on the active playlist so the grid stays populated as the user moves
+     * forward in time.
+     *
+     * Why the iOS state machine isn't ported verbatim: iOS prefetches
+     * per-channel via a windowed `getUpcomingFor(channelUUID, after, before)`
+     * call -- the bulk grid endpoint returns -1h..+24h on every request,
+     * regardless of when. Android's `loadEpg` already fetches the entire
+     * source-side window in one shot (Dispatcharr grid OR full XMLTV) and
+     * the post-P1 #5 windowed cache load is what controls memory pressure.
+     * The iOS Rolling Prefetch's circuit-breaker / per-channel serial chain
+     * therefore has no direct analog: the unit of fetch is the WHOLE
+     * playlist, not the per-channel cell. What remains is the trigger -- the
+     * scroll edge that says "user is about to run out of guide" -- which we
+     * port here.
+     *
+     * Single-flight is delegated to the existing inFlightLoads coalescing
+     * layer (P1 #6) inside PlaylistRepository.loadEpg: two scroll events
+     * within the same fetch window share one round-trip. Debounce is local:
+     * we ignore calls within [PREFETCH_COOLDOWN_MS] of the previous trigger
+     * so a slow horizontal scroll doesn't fire the worker N times.
+     */
+    fun maybePrefetchUpcoming(visibleWindowEndMs: Long) {
+        val state = _state.value
+        val cachedEdge = state.epgByChannel.values
+            .asSequence()
+            .flatten()
+            .maxOfOrNull { it.endMillis }
+            ?: return
+        if (visibleWindowEndMs < cachedEdge - PREFETCH_TRIGGER_DISTANCE_MS) return
+        val now = System.currentTimeMillis()
+        if (now - lastPrefetchAt < PREFETCH_COOLDOWN_MS) return
+        lastPrefetchAt = now
+        viewModelScope.launch {
+            val active = repository.activePlaylist() ?: return@launch
+            Log.i(
+                TAG,
+                "maybePrefetchUpcoming: scroll reached cached edge, forcing EPG refresh",
+            )
+            loadEpgIfConfigured(active, forceRefresh = true)
+        }
+    }
+
+    private var lastPrefetchAt: Long = 0L
 
     /**
      * Re-fetch the EPG without re-fetching the channel list. iOS GuideStore

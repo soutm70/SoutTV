@@ -90,6 +90,8 @@ import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
 import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.aeriotv.android.feature.reminders.RemindersViewModel
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import java.text.SimpleDateFormat
@@ -320,6 +322,16 @@ fun GuideScreen(
             val spanMs = (stripViewportPx / hourWidthPx * 3_600_000f).toLong()
             (snappedStart - padMs) to (snappedStart + spanMs + padMs)
         }
+    }
+
+    // iOS GuideStore audit P3 #12: Rolling Prefetch trigger. Every time the
+    // visible window shifts past 4h of cached-edge proximity, ask the VM to
+    // fire a force-refresh. The VM itself handles single-flight + a 60s
+    // cooldown so a slow horizontal scroll won't spam the worker.
+    LaunchedEffect(Unit) {
+        snapshotFlow { visibleWindow.second }
+            .distinctUntilChanged()
+            .collect { viewportEndMs -> viewModel.maybePrefetchUpcoming(viewportEndMs) }
     }
 
     // The host Scaffold sets contentWindowInsets = WindowInsets(0,0,0,0), so each
