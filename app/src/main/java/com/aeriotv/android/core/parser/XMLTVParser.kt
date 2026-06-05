@@ -33,12 +33,15 @@ object XMLTVParser {
         SimpleDateFormat("yyyyMMddHHmmss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
     }
 
-    fun parseBytes(bytes: ByteArray): List<EPGProgramme> {
+    fun parseBytes(
+        bytes: ByteArray,
+        knownChannelKeys: Set<String>? = null,
+    ): List<EPGProgramme> {
         val isGzip = bytes.size >= 2 && bytes[0] == 0x1F.toByte() && bytes[1] == 0x8B.toByte()
         return if (isGzip) {
-            GZIPInputStream(ByteArrayInputStream(bytes)).use { parse(it) }
+            GZIPInputStream(ByteArrayInputStream(bytes)).use { parse(it, knownChannelKeys) }
         } else {
-            ByteArrayInputStream(bytes).use { parse(it) }
+            ByteArrayInputStream(bytes).use { parse(it, knownChannelKeys) }
         }
     }
 
@@ -68,7 +71,26 @@ object XMLTVParser {
         "deg" to "°",
     )
 
-    fun parse(input: InputStream): List<EPGProgramme> {
+    /**
+     * Streaming XMLTV parse. Optional [knownChannelKeys] is a lowercased set
+     * of every candidate channel key the caller's M3UChannel list would
+     * accept (tvg-ids, channel numbers, dispatcharr channel ids, and any
+     * uuid-shaped rawAttribute) -- see [com.aeriotv.android.core.data
+     * .buildChannelEpgKeyBridge]. When non-null, programmes whose
+     * `channel="..."` attribute isn't in the set are skipped before the
+     * EPGProgramme allocation. iOS GuideStore audit P3 #13.
+     *
+     * For a 7000-channel guide that the user only has 700 active channels
+     * for, this trims ~90% of programme allocations during parse -- the
+     * downstream bridge / dedup / group pipeline never sees the dead rows.
+     * Pass null (the default) to keep every programme; existing callers
+     * that don't have a channel list at parse time (e.g. parser unit tests)
+     * keep working unchanged.
+     */
+    fun parse(
+        input: InputStream,
+        knownChannelKeys: Set<String>? = null,
+    ): List<EPGProgramme> {
         val parser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         parser.setInput(input, null)
@@ -128,19 +150,28 @@ object XMLTVParser {
                     }
                     if (parser.name == "programme") {
                         insideProgramme = false
-                        val startMs = parseXMLTVDate(startStr)
-                        val stopMs = parseXMLTVDate(stopStr)
-                        if (startMs != null && stopMs != null && title.isNotEmpty()) {
-                            out.add(
-                                EPGProgramme(
-                                    channelId = channelId,
-                                    title = title,
-                                    description = desc,
-                                    startMillis = startMs,
-                                    endMillis = stopMs,
-                                    category = categories.joinToString(","),
+                        // Filter-during-parse (P3 #13): drop the programme
+                        // before any further work when its channel key isn't
+                        // one we'd ever match against. The bridge step
+                        // downstream uses the SAME candidate-key shape, so a
+                        // miss here is a guaranteed miss there.
+                        val skipUnknown = knownChannelKeys != null &&
+                            channelId.trim().lowercase().let { it.isEmpty() || it !in knownChannelKeys }
+                        if (!skipUnknown) {
+                            val startMs = parseXMLTVDate(startStr)
+                            val stopMs = parseXMLTVDate(stopStr)
+                            if (startMs != null && stopMs != null && title.isNotEmpty()) {
+                                out.add(
+                                    EPGProgramme(
+                                        channelId = channelId,
+                                        title = title,
+                                        description = desc,
+                                        startMillis = startMs,
+                                        endMillis = stopMs,
+                                        category = categories.joinToString(","),
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                     text.setLength(0)

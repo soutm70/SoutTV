@@ -7,6 +7,7 @@ import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.bridgeChannelIds
+import com.aeriotv.android.core.data.buildChannelEpgKeyBridge
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.ChannelProfileOption
 import com.aeriotv.android.core.data.repository.PlaylistRepository
@@ -460,7 +461,15 @@ class PlaylistViewModel @Inject constructor(
             // spinner when there is nothing cached to display yet.
             Log.i(TAG, "loadEpgIfConfigured: fetching EPG for ${playlist.sourceType} (force=$forceRefresh, hadCache=$hasCache)")
             if (!hasCache) _state.update { it.copy(isEpgLoading = true) }
-            repository.loadEpg(playlist).fold(
+            // iOS GuideStore audit P3 #13: pass the candidate-key set so the
+            // XMLTV parser can drop any programme whose `channel="..."`
+            // attribute will never match a M3UChannel before allocating an
+            // EPGProgramme. For a 7000-channel guide that the user only has
+            // 700 active channels for, this trims ~90% of in-parse allocations
+            // -- the same speedup the windowed cache load (P1 #5) gives the
+            // downstream pipeline, but applied to fresh network fetches too.
+            val knownKeys = buildChannelEpgKeyBridge(_state.value.channels).keys
+            repository.loadEpg(playlist, knownKeys).fold(
                 onSuccess = { rawProgrammes ->
                     // Channels may have arrived between the cache-paint above
                     // and the network fetch; re-read so we bridge against the

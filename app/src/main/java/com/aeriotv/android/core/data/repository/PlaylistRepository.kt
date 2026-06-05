@@ -368,7 +368,10 @@ class PlaylistRepository @Inject constructor(
      */
     private val inFlightLoads = ConcurrentHashMap<String, CompletableDeferred<Result<List<EPGProgramme>>>>()
 
-    suspend fun loadEpg(playlist: PlaylistEntity): Result<List<EPGProgramme>> {
+    suspend fun loadEpg(
+        playlist: PlaylistEntity,
+        knownChannelKeys: Set<String>? = null,
+    ): Result<List<EPGProgramme>> {
         val key = playlist.id
         val mine = CompletableDeferred<Result<List<EPGProgramme>>>()
         val winner = inFlightLoads.putIfAbsent(key, mine)
@@ -377,7 +380,7 @@ class PlaylistRepository @Inject constructor(
             return winner.await()
         }
         return try {
-            val result = loadEpgInternal(playlist)
+            val result = loadEpgInternal(playlist, knownChannelKeys)
             mine.complete(result)
             result
         } catch (t: Throwable) {
@@ -391,7 +394,10 @@ class PlaylistRepository @Inject constructor(
         }
     }
 
-    private suspend fun loadEpgInternal(playlist: PlaylistEntity): Result<List<EPGProgramme>> =
+    private suspend fun loadEpgInternal(
+        playlist: PlaylistEntity,
+        knownChannelKeys: Set<String>? = null,
+    ): Result<List<EPGProgramme>> =
         // Parse + grid-mapping run on Default, NOT the caller's (Main) dispatcher.
         // A large provider EPG is hundreds of thousands of programmes; parsing
         // that XMLTV / mapping the Dispatcharr grid on Main froze the UI for
@@ -403,7 +409,7 @@ class PlaylistRepository @Inject constructor(
             SourceType.M3uUrl -> {
                 val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
                 val bytes = fetcher.fetchBytes(epgUrl)
-                XMLTVParser.parseBytes(bytes)
+                XMLTVParser.parseBytes(bytes, knownChannelKeys)
             }
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
                 if (playlist.apiKey.isNullOrBlank()) return@runCatching emptyList()
@@ -454,7 +460,7 @@ class PlaylistRepository @Inject constructor(
                 val customXmltv = playlist.epgUrl?.takeIf { it.isNotBlank() }
                 if (customXmltv != null) {
                     val xmltv = runCatching {
-                        XMLTVParser.parseBytes(fetcher.fetchBytes(customXmltv))
+                        XMLTVParser.parseBytes(fetcher.fetchBytes(customXmltv), knownChannelKeys)
                     }.getOrElse {
                         // Don't fail the whole EPG load just because the user's
                         // custom XMLTV URL is unreachable; surface a warning
@@ -486,7 +492,7 @@ class PlaylistRepository @Inject constructor(
                     "$b/xmltv.php?username=${xtreamEncode(user)}" +
                         "&password=${xtreamEncode(playlist.password.orEmpty())}"
                 }
-                XMLTVParser.parseBytes(fetcher.fetchBytes(xmltvUrl))
+                XMLTVParser.parseBytes(fetcher.fetchBytes(xmltvUrl), knownChannelKeys)
             }
         }
         dao.update(playlist.copy(lastEpgRefreshedAt = System.currentTimeMillis()))
