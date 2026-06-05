@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.bridgeChannelIds
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.ChannelProfileOption
 import com.aeriotv.android.core.data.repository.PlaylistRepository
@@ -406,8 +407,15 @@ class PlaylistViewModel @Inject constructor(
             // 1. Paint the disk cache immediately (iOS GuideStore parity) so the
             // guide + now-playing are never blank on relaunch while the network
             // fetch runs. Cache is keyed per source (playlist id).
-            val cached = runCatching { repository.loadCachedEpg(playlist.id) }
+            // iOS parity (EPGGuideView.swift lines 1395-1414): rewrite each
+            // programme's raw `channel="..."` attribute to the canonical key
+            // its M3UChannel will look up under, so Dispatcharr `/output/epg`
+            // (channel-number keyed) and Dummy EPG feeds (UUID keyed) populate
+            // the rail even when `tvgID` is blank. See ChannelEpgKey.kt.
+            val channelsForBridge = _state.value.channels
+            val cachedRaw = runCatching { repository.loadCachedEpg(playlist.id) }
                 .getOrDefault(emptyList())
+            val cached = bridgeChannelIds(cachedRaw, channelsForBridge)
             val hasCache = cached.isNotEmpty()
             if (hasCache) {
                 Log.i(TAG, "loadEpgIfConfigured: painted ${cached.size} cached programmes")
@@ -431,7 +439,11 @@ class PlaylistViewModel @Inject constructor(
             Log.i(TAG, "loadEpgIfConfigured: fetching EPG for ${playlist.sourceType} (force=$forceRefresh, hadCache=$hasCache)")
             if (!hasCache) _state.update { it.copy(isEpgLoading = true) }
             repository.loadEpg(playlist).fold(
-                onSuccess = { programmes ->
+                onSuccess = { rawProgrammes ->
+                    // Channels may have arrived between the cache-paint above
+                    // and the network fetch; re-read so we bridge against the
+                    // freshest channel set.
+                    val programmes = bridgeChannelIds(rawProgrammes, _state.value.channels)
                     val grouped = groupByChannel(programmes)
                     // Cheap channel count off the already-bucketed map instead of
                     // `programmes.map { it.channelId }.toSet().size` which used to

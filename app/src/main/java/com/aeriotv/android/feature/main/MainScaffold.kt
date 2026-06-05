@@ -45,6 +45,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.playback.AerioExoPlayerHolder
 import com.aeriotv.android.feature.dvr.DvrTabContent
 import com.aeriotv.android.feature.dvr.DvrViewModel
@@ -342,7 +343,7 @@ fun MainScaffold(
                 // don't double-render the same session.
                 if (miniState is MiniPlayerSession.State.Active && !isTv) {
                     val channel = miniState.channel
-                    val nowProgramme = state.epgByChannel[channel.tvgID]?.nowPlaying()
+                    val nowProgramme = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
                     MiniPlayerRow(
                         channel = channel,
                         nowProgramme = nowProgramme,

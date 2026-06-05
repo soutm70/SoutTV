@@ -31,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.pip.PipState
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
 import com.aeriotv.android.feature.miniplayer.MiniPlayerViewModel
@@ -97,7 +98,7 @@ fun PlayerScreen(
     var currentIndex by remember(channels) { mutableIntStateOf(initialIndex) }
     val currentChannel = channels.getOrNull(currentIndex)
     val nowProgramme by remember(epgByChannel, currentChannel) {
-        derivedStateOf { currentChannel?.let { epgByChannel[it.tvgID]?.nowPlaying() } }
+        derivedStateOf { currentChannel?.let { epgByChannel[it.guideMatchKey]?.nowPlaying() } }
     }
 
     // Persist last-watched channel for the App Behaviors > Resume Last Channel

@@ -84,6 +84,7 @@ import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.db.entity.reminderKey
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
@@ -633,7 +634,7 @@ fun GuideScreen(
                 },
         ) {
             items(items = filteredChannels, key = { it.id }) { channel ->
-                val programmes = state.epgByChannel[channel.tvgID].orEmpty()
+                val programmes = state.epgByChannel[channel.guideMatchKey].orEmpty()
                 ChannelGuideRow(
                     channel = channel,
                     programmes = programmes,

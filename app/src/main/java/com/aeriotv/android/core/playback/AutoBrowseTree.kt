@@ -6,6 +6,8 @@ import androidx.media3.common.MediaMetadata
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.bridgeChannelIds
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.db.dao.FavoriteChannelDao
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.PlaylistRepository
@@ -153,11 +155,21 @@ class AutoBrowseTree @Inject constructor(
         return repository.refresh(playlist).getOrDefault(emptyList())
     }
 
-    /** Map of channel EPG key (tvg-id) -> the now-playing programme. */
+    /**
+     * Map of channel EPG key (canonical [guideMatchKey]) -> the now-playing
+     * programme. Cached programmes get bridged onto each channel's canonical
+     * key first so Dispatcharr `/output/epg` (channel-number keyed) and Dummy
+     * EPG (UUID keyed) feeds still match a channel whose `tvgID` is blank --
+     * Android Auto otherwise shows the channel name with no subtitle for
+     * those sources. iOS parity: EPGGuideView.swift lines 1395-1414.
+     */
     private suspend fun nowPlayingByChannelKey(playlist: PlaylistEntity): Map<String, EPGProgramme> {
-        val epg: List<EPGProgramme> = runCatching { repository.loadCachedEpg(playlist.id) }
+        val epgRaw: List<EPGProgramme> = runCatching { repository.loadCachedEpg(playlist.id) }
             .getOrDefault(emptyList())
-        if (epg.isEmpty()) return emptyMap()
+        if (epgRaw.isEmpty()) return emptyMap()
+        val channels = runCatching { repository.loadCachedChannels(playlist.id) }
+            .getOrDefault(emptyList())
+        val epg = bridgeChannelIds(epgRaw, channels)
         return epg.groupBy { it.channelId }
             .mapNotNull { (key, list) -> list.nowPlaying()?.let { key to it } }
             .toMap()
@@ -224,7 +236,7 @@ class AutoBrowseTree @Inject constructor(
 
     /** Browse-display channel item (no URI; resolved at play time). */
     private fun channelItem(channel: M3UChannel, nowByTvg: Map<String, EPGProgramme>): MediaItem {
-        val subtitle = programDetail(channel, nowByTvg[channel.tvgID])
+        val subtitle = programDetail(channel, nowByTvg[channel.guideMatchKey])
         val meta = MediaMetadata.Builder()
             .setTitle(channel.name)
             .setSubtitle(subtitle)
@@ -245,7 +257,7 @@ class AutoBrowseTree @Inject constructor(
         nowByTvg: Map<String, EPGProgramme>,
     ): MediaItem {
         val url = streamUrlFor(channel, playlist, effectiveBase)
-        val subtitle = programDetail(channel, nowByTvg[channel.tvgID])
+        val subtitle = programDetail(channel, nowByTvg[channel.guideMatchKey])
         val meta = MediaMetadata.Builder()
             .setTitle(channel.name)
             .setDisplayTitle(channel.name)

@@ -49,6 +49,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.SettingsViewModel
@@ -195,7 +196,7 @@ fun AddToMultiviewSheet(
                     item(key = "hdr_recent") { SectionHeader("Recent") }
                     items(items = recentChannels, key = { "recent_${it.id}" }) { channel ->
                         val isSel = channel.id in selectedIds
-                        val now = state.epgByChannel[channel.tvgID]?.nowPlaying()
+                        val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
                         ChannelPickerRow(
                             channel = channel,
                             nowTitle = now?.title.orEmpty(),
@@ -209,7 +210,7 @@ fun AddToMultiviewSheet(
 
                 items(items = filtered, key = { "all_${it.id}" }) { channel ->
                     val isSel = channel.id in selectedIds
-                    val now = state.epgByChannel[channel.tvgID]?.nowPlaying()
+                    val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
                     ChannelPickerRow(
                         channel = channel,
                         nowTitle = now?.title.orEmpty(),

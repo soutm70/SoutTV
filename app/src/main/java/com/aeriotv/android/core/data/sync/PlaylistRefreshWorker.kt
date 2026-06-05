@@ -79,7 +79,17 @@ class PlaylistRefreshWorker @AssistedInject constructor(
             // EPG miss is recoverable: channels are still fresh.
             return@runCatching Result.retry()
         }
-        runCatching { repository.saveEpgToCache(playlist.id, epg.getOrThrow()) }
+        // iOS parity (EPGGuideView.swift lines 1395-1414): bridge programme
+        // channelIds onto the canonical key the M3UChannel will look up under,
+        // so Dispatcharr `/output/epg` (channel-number keyed) and Dummy EPG
+        // (UUID keyed) feeds populate the rail even when tvgID is blank.
+        // Saved-as-bridged means a relaunch can paint cached programmes onto
+        // the rail without the in-memory bridge step at all.
+        val bridged = com.aeriotv.android.core.data.bridgeChannelIds(
+            epg.getOrThrow(),
+            channels.getOrThrow(),
+        )
+        runCatching { repository.saveEpgToCache(playlist.id, bridged) }
             .onFailure { Log.w(TAG, "saveEpgToCache failed", it) }
         Log.i(
             TAG,
