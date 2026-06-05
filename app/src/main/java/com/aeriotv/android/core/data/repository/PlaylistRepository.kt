@@ -529,6 +529,17 @@ class PlaylistRepository @Inject constructor(
     suspend fun newestEpgFetch(playlistId: String): Long? =
         epgProgrammeDao.newestFetchedAt(playlistId)
 
+    /**
+     * Per-playlist EPG cache purge (iOS GuideStore audit P2 #11). Called by
+     * the user-initiated "Refresh EPG Data" action on the playlist detail
+     * so the next fetch starts from a clean slate instead of reusing
+     * possibly-corrupt cached rows. Idempotent; safe to call when no rows
+     * exist.
+     */
+    suspend fun purgeEpgCache(playlistId: String) {
+        epgProgrammeDao.deleteForPlaylist(playlistId)
+    }
+
     suspend fun saveEpgToCache(playlistId: String, programmes: List<EPGProgramme>) {
         val now = System.currentTimeMillis()
         val entities = withContext(Dispatchers.Default) {

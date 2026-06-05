@@ -634,10 +634,22 @@ class PlaylistViewModel @Inject constructor(
         }
     }
 
-    /** Re-fetch the EPG without re-fetching the channel list. */
+    /**
+     * Re-fetch the EPG without re-fetching the channel list. iOS GuideStore
+     * audit P2 #11: hard reset semantics. Purges the per-playlist EPG
+     * cache row set BEFORE forcing a fresh network fetch, so a corrupt /
+     * partial cached batch can't bleed back onto the rail if the user is
+     * pressing this button precisely because the cache is misbehaving.
+     * Cleared in-memory state stays empty until the fresh fetch lands; on
+     * fetch failure the user sees a blank guide briefly (acceptable cost
+     * for the hard-reset guarantee) until the next bootstrap repaints.
+     */
     fun refreshEpg() {
         viewModelScope.launch {
             val active = repository.activePlaylist() ?: return@launch
+            runCatching { repository.purgeEpgCache(active.id) }
+                .onFailure { Log.w(TAG, "purgeEpgCache failed", it) }
+            _state.update { it.copy(epgByChannel = emptyMap()) }
             loadEpgIfConfigured(active, forceRefresh = true)
         }
     }
