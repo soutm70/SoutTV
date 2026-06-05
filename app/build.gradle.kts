@@ -160,5 +160,15 @@ dependencies {
     implementation(libs.sh.calvin.reorderable)
     implementation(libs.androidx.media)
 
+    // ProfileInstaller: hooks into androidx.startup to AOT-compile the methods
+    // listed in src/main/baseline-prof.txt at install time. Without this the
+    // first paint of every Compose screen (GuideScreen, OnDemandTabContent,
+    // MoviesSubScreen ...) is interpreted -> JIT-warmup -> AOT, which on a
+    // slow TV device costs hundreds of ms per screen on cold launch and shows
+    // up in logcat as `Compiler allocated 8141KB to compile GuideScreen`. With
+    // a baseline profile those methods are AOT'd at install and run native
+    // from the first frame.
+    implementation(libs.androidx.profileinstaller)
+
     debugImplementation(libs.androidx.ui.tooling)
 }

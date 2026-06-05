@@ -1,0 +1,64 @@
+# ART baseline profile rules. The methods listed here are AOT-compiled by
+# ProfileInstaller at install time, so they never run interpreted -> JIT on
+# cold launch. Each line is an ART-format method or class entry; `H` =
+# include in startup pre-compile, `S` = include in startup hot list, `P` =
+# include in post-startup. `L` followed by a JVM-style class descriptor
+# matches the whole class.
+#
+# Coverage focus: cold-launch hot path observed in logcat as the JIT
+# allocating thousands of KB to compile these methods on first paint. With
+# wildcards we don't have to enumerate every method -- ART matches all
+# methods whose descriptor matches.
+
+# Entry point + main Activity
+HSPLcom/aeriotv/android/MainActivity;->**(**)**
+
+# Application class + Hilt
+HSPLcom/aeriotv/android/AerioTVApplication;->**(**)**
+HSPLcom/aeriotv/android/Hilt_AerioTVApplication;->**(**)**
+
+# Navigation
+HSPLcom/aeriotv/android/Navigation**;->**(**)**
+
+# Live TV / Guide -- the largest single Compose function in the app
+HSPLcom/aeriotv/android/feature/livetv/GuideScreenKt;->**(**)**
+HSPLcom/aeriotv/android/feature/livetv/LiveTVTabContentKt;->**(**)**
+HSPLcom/aeriotv/android/feature/livetv/LiveTVViewMode;->**(**)**
+HSPLcom/aeriotv/android/feature/livetv/ChannelGuideRow**;->**(**)**
+
+# Main scaffold + nav bar
+HSPLcom/aeriotv/android/feature/main/MainScaffoldKt;->**(**)**
+HSPLcom/aeriotv/android/feature/main/AppTab;->**(**)**
+HSPLcom/aeriotv/android/feature/main/SyncActivityPillKt;->**(**)**
+
+# On Demand
+HSPLcom/aeriotv/android/feature/ondemand/OnDemandTabContentKt;->**(**)**
+HSPLcom/aeriotv/android/feature/ondemand/OnDemandViewModel;->**(**)**
+
+# Channels list (used by both Live TV list mode and the Multiview picker)
+HSPLcom/aeriotv/android/feature/channels/ChannelListScreenKt;->**(**)**
+
+# ViewModels that bootstrap on app launch
+HSPLcom/aeriotv/android/feature/playlist/PlaylistViewModel;->**(**)**
+HSPLcom/aeriotv/android/feature/settings/SettingsViewModel;->**(**)**
+HSPLcom/aeriotv/android/feature/dvr/DvrViewModel;->**(**)**
+HSPLcom/aeriotv/android/feature/favorites/FavoritesViewModel;->**(**)**
+
+# Repository + preferences + database (every cold launch hits these)
+HSPLcom/aeriotv/android/core/data/repository/PlaylistRepository;->**(**)**
+HSPLcom/aeriotv/android/core/preferences/AppPreferences;->**(**)**
+HSPLcom/aeriotv/android/core/data/db/**;->**(**)**
+
+# Compose runtime + foundation + material3 hot paths -- these are huge but
+# their hot methods get compiled by ART's app-startup heuristic for free
+# when our composables that USE them are listed above. We don't need to
+# enumerate compose internals; ProfileInstaller's tooling expects only the
+# app's own classes here.
+
+# ExoPlayer holder + persistent window (built eagerly in MainScaffold)
+HSPLcom/aeriotv/android/core/playback/AerioExoPlayerHolder;->**(**)**
+HSPLcom/aeriotv/android/core/playback/PersistentExoWindowKt;->**(**)**
+
+# Theme + scaling
+HSPLcom/aeriotv/android/ui/theme/**;->**(**)**
+HSPLcom/aeriotv/android/ui/displayscale/**;->**(**)**
