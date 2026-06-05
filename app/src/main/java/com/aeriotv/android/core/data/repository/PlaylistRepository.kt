@@ -434,6 +434,27 @@ class PlaylistRepository @Inject constructor(
             epgProgrammeDao.forPlaylist(playlistId).map { it.toProgramme() }
         }
 
+    /**
+     * Time-windowed cached-EPG read (iOS GuideStore parity --
+     * EPGGuideView.swift `loadFromCache` predicate). Returns only programmes
+     * whose airing overlaps [[fromMillis]..[toMillis]], so cold-launch paint
+     * loads ~5-15% of the cache (a 24h window over a 7-day grid) instead of
+     * every row. The user's epgWindowHours preference dictates [toMillis] in
+     * the calling ViewModel; [fromMillis] is typically now-1h so the
+     * "currently airing" programme is always inside the result regardless of
+     * how long it's been running.
+     */
+    suspend fun loadCachedEpg(
+        playlistId: String,
+        fromMillis: Long,
+        toMillis: Long,
+    ): List<EPGProgramme> =
+        withContext(Dispatchers.Default) {
+            epgProgrammeDao
+                .forPlaylistInWindow(playlistId, fromMillis, toMillis)
+                .map { it.toProgramme() }
+        }
+
     suspend fun newestEpgFetch(playlistId: String): Long? =
         epgProgrammeDao.newestFetchedAt(playlistId)
 

@@ -11,6 +11,7 @@ import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.ChannelProfileOption
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.debug.MemoryPressureBus
+import com.aeriotv.android.core.preferences.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -34,6 +36,7 @@ import javax.inject.Inject
 class PlaylistViewModel @Inject constructor(
     private val repository: PlaylistRepository,
     private val memoryPressureBus: MemoryPressureBus,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
 
     enum class Phase { Bootstrapping, NeedsUrl, ChannelsReady }
@@ -413,8 +416,27 @@ class PlaylistViewModel @Inject constructor(
             // (channel-number keyed) and Dummy EPG feeds (UUID keyed) populate
             // the rail even when `tvgID` is blank. See ChannelEpgKey.kt.
             val channelsForBridge = _state.value.channels
-            val cachedRaw = runCatching { repository.loadCachedEpg(playlist.id) }
-                .getOrDefault(emptyList())
+            // iOS GuideStore.loadFromCache predicate (P1 #5): only load
+            // programmes whose airing overlaps the user's selected guide
+            // window (now-1h .. now+epgWindowHours). On a 7-day, 58K-row
+            // cache that drops ~85% of rows before they hit the bridge /
+            // dedup / group pipeline, cutting cold-launch CPU + GC by a
+            // similar fraction. epgWindowHours = 0 means "All available";
+            // fall back to the unwindowed read so the guide still renders
+            // the full 7 days for users who picked that option.
+            val windowHours = runCatching { appPreferences.epgWindowHours.first() }
+                .getOrDefault(24)
+            val now = System.currentTimeMillis()
+            val cachedRaw = if (windowHours <= 0) {
+                runCatching { repository.loadCachedEpg(playlist.id) }
+                    .getOrDefault(emptyList())
+            } else {
+                val fromMillis = now - 60L * 60L * 1000L
+                val toMillis = now + windowHours.toLong() * 60L * 60L * 1000L
+                runCatching {
+                    repository.loadCachedEpg(playlist.id, fromMillis, toMillis)
+                }.getOrDefault(emptyList())
+            }
             val cached = bridgeChannelIds(cachedRaw, channelsForBridge)
             val hasCache = cached.isNotEmpty()
             if (hasCache) {
