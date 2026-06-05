@@ -93,6 +93,8 @@ import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import com.aeriotv.android.feature.reminders.RemindersViewModel
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import java.text.SimpleDateFormat
@@ -349,6 +351,38 @@ fun GuideScreen(
         snapshotFlow { visibleWindow.second }
             .distinctUntilChanged()
             .collect { viewportEndMs -> viewModel.maybePrefetchUpcoming(viewportEndMs) }
+    }
+
+    // tvOS positions the now-line ~1/5 of the way across the grid so the
+    // currently-airing programmes sit at the LEFT edge instead of the centre
+    // (EPGGuideView "scroll back to now" default). Two payoffs that match the
+    // tvOS guide the user referenced:
+    //   1. Now-airing cells start at the left, not floating mid-grid.
+    //   2. D-pad DOWN stays stable: every row's now-airing cell shares the
+    //      same left edge, so focus no longer jumps between a wide 3h cell in
+    //      one row and a narrow 30m cell in the next.
+    // The shared horizontalScrollState pans all rows together, so one scroll
+    // does it for the whole grid. Keyed only on the channels-loaded
+    // transition so it positions the grid each time the guide opens but never
+    // yanks the user back to "now" mid-browse (e.g. when the hour ticks over
+    // and windowStart shifts).
+    LaunchedEffect(filteredChannels.isNotEmpty()) {
+        if (filteredChannels.isEmpty()) return@LaunchedEffect
+        // Wait for the row content to establish a scroll range (it's 24h wide
+        // by default, far wider than the viewport, so maxValue settles > 0
+        // within a frame or two). Bail if the content somehow fits (no scroll
+        // needed) so we never suspend forever.
+        val maxScroll = withTimeoutOrNull(1500L) {
+            snapshotFlow { horizontalScrollState.maxValue }.first { it > 0 }
+        } ?: return@LaunchedEffect
+        val nowOffsetPx =
+            ((System.currentTimeMillis() - windowStart).toFloat() / 3_600_000f) * hourWidthPx
+        // Place "now" at ~20% from the left (matches the tvOS screenshots:
+        // ~30 min of past visible to the left of the now-line).
+        val target = (nowOffsetPx - stripViewportPx * 0.20f)
+            .toInt()
+            .coerceIn(0, maxScroll)
+        horizontalScrollState.scrollTo(target)
     }
 
     // The host Scaffold sets contentWindowInsets = WindowInsets(0,0,0,0), so each
