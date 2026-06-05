@@ -366,8 +366,34 @@ class PlaylistRepository @Inject constructor(
             }
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
                 if (playlist.apiKey.isNullOrBlank()) return@runCatching emptyList()
-                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                val grid = dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                     dispatcharrClient.getEpgGrid(base, key).toProgrammes()
+                }
+                // iOS parity (EPGGuideView.swift Dispatcharr branch + the user-
+                // configurable custom-XMLTV URL on the source): when the user
+                // sets a separate XMLTV URL on a Dispatcharr playlist (Edit
+                // Playlist > EPG URL), fetch that XMLTV too and layer it on
+                // top of the grid. The Dispatcharr grid usually keys by
+                // channel number and is sparse on category tags; a richer
+                // provider's XMLTV fills in categories, descriptions, and
+                // covers channels the grid misses. Same-airing dedup at
+                // groupByChannel time (PlaylistViewModel.dedupSameAiring)
+                // collapses any pair that overlaps > 80% or shares a title
+                // within 60s, so the same programme never appears twice.
+                val customXmltv = playlist.epgUrl?.takeIf { it.isNotBlank() }
+                if (customXmltv != null) {
+                    val xmltv = runCatching {
+                        XMLTVParser.parseBytes(fetcher.fetchBytes(customXmltv))
+                    }.getOrElse {
+                        // Don't fail the whole EPG load just because the user's
+                        // custom XMLTV URL is unreachable; surface a warning
+                        // and keep the grid the user already paid the auth-
+                        // retry roundtrip for.
+                        emptyList()
+                    }
+                    if (xmltv.isNotEmpty()) grid + xmltv else grid
+                } else {
+                    grid
                 }
             }
             SourceType.XtreamCodes -> {
