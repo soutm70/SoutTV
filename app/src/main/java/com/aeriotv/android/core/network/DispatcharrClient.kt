@@ -37,6 +37,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -356,6 +357,112 @@ class DispatcharrClient @Inject constructor() {
         }
         val wrapper: EpgGridResponse = response.body()
         return wrapper.data
+    }
+
+    /**
+     * iOS parity (StreamingAPIs.swift:1358 `getCurrentPrograms`). Fallback
+     * for older Dispatcharr deployments that don't have `/api/epg/grid/`
+     * (the grid endpoint shipped in v0.7.x): POSTs an empty body to
+     * `/api/epg/current-programs/` to get every channel's currently-airing
+     * programme in one shot. Used by [PlaylistRepository.loadEpg]'s
+     * Dispatcharr branch when the bulk grid request throws.
+     *
+     * The endpoint accepts ONLY POST -- a GET returns 405 -- and accepts
+     * either an empty body (= all channels) or `{"channel_uuids":[...]}`
+     * to filter by UUID. We always send empty since the caller wants every
+     * channel for the rail / guide paint.
+     */
+    suspend fun getCurrentPrograms(baseUrl: String, apiKey: String): List<DispatcharrEpgEntry> {
+        val url = "${baseUrl.trimEnd('/')}/api/epg/current-programs/"
+        val response: HttpResponse = client.post(url) {
+            applyAuth(apiKey)
+            contentType(ContentType.Application.Json)
+            setBody("{}")
+        }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            throw DispatcharrError.Transport(
+                "Current programs failed: HTTP ${response.status.value} ${response.status.description}",
+            )
+        }
+        // The endpoint emits either a flat JSON array or a DRF-wrapped
+        // `{count, next, previous, results}` envelope depending on
+        // Dispatcharr version. fetchListOrResults handles both shapes.
+        return fetchListOrResultsPost(url, apiKey, "{}")
+    }
+
+    /**
+     * iOS parity (StreamingAPIs.swift:1627 `getBulkUpcomingPrograms`).
+     * Paginated fetch over `/api/epg/programs/` for the full
+     * future-airings list -- one ~5 round-trip batch instead of the
+     * 40+ per-channel requests an upcoming-only walk would require.
+     *
+     * Pages are 1000 entries by default; bails out at [maxPages] so a
+     * misconfigured server with millions of EPG rows can't hang the cold
+     * launch. A non-DRF flat-array response short-circuits the pagination
+     * (older Dispatcharr) and returns the first batch as-is.
+     */
+    suspend fun getBulkUpcomingPrograms(
+        baseUrl: String,
+        apiKey: String,
+        maxPages: Int = 10,
+    ): List<DispatcharrEpgEntry> {
+        val all = mutableListOf<DispatcharrEpgEntry>()
+        var nextUrl: String? = "${baseUrl.trimEnd('/')}/api/epg/programs/?page_size=1000"
+        var pagesLeft = maxPages
+        while (nextUrl != null && pagesLeft > 0) {
+            pagesLeft -= 1
+            val response: HttpResponse = client.get(nextUrl) { applyAuth(apiKey) }
+            unauthorizedCheck(response, nextUrl)
+            if (!response.status.isSuccess()) break
+            val raw: JsonElement = response.body()
+            when {
+                raw is JsonArray -> {
+                    // Flat array = no pagination; absorb + done.
+                    raw.forEach { all.add(json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it)) }
+                    nextUrl = null
+                }
+                raw is JsonObject -> {
+                    val results = (raw["results"] as? JsonArray) ?: return all
+                    results.forEach { all.add(json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it)) }
+                    nextUrl = (raw["next"] as? JsonPrimitive)?.contentOrNull
+                }
+                else -> nextUrl = null
+            }
+        }
+        return all
+    }
+
+    /**
+     * Tiny variant of [fetchListOrResults] that POSTs the given JSON body
+     * (the current-programs endpoint is POST-only). Honours the same
+     * flat-array-or-DRF-wrapped acceptance pattern.
+     */
+    private suspend inline fun <reified T> fetchListOrResultsPost(
+        url: String,
+        apiKey: String,
+        body: String,
+    ): List<T> {
+        val response: HttpResponse = client.post(url) {
+            applyAuth(apiKey)
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            throw DispatcharrError.Transport(
+                "HTTP ${response.status.value} ${response.status.description} from $url",
+            )
+        }
+        val raw: JsonElement = response.body()
+        val array: JsonArray = when {
+            raw is JsonArray -> raw
+            raw is JsonObject && raw["results"] is JsonArray -> raw["results"]!!.jsonArray
+            else -> throw DispatcharrError.UnexpectedResponse(
+                "Unexpected response shape from $url: ${raw::class.simpleName}",
+            )
+        }
+        return array.map { json.decodeFromJsonElement(serializer<T>(), it) }
     }
 
     private suspend inline fun <reified T> fetchListOrResults(

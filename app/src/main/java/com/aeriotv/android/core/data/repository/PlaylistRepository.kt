@@ -10,6 +10,7 @@ import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import android.content.Context
+import android.util.Log
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrEpgEntry
@@ -406,8 +407,38 @@ class PlaylistRepository @Inject constructor(
             }
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
                 if (playlist.apiKey.isNullOrBlank()) return@runCatching emptyList()
+                // iOS GuideStore audit P2 #9 (EPGGuideView.swift:903-947):
+                // try the bulk grid first, fall back to current-programs +
+                // bulk-upcoming when the grid endpoint is unavailable (older
+                // Dispatcharr versions ship with only the legacy endpoints)
+                // or returns a 5xx / parse-fail. The fallback path produces
+                // a strict subset of the grid's information (no `is_new` /
+                // `is_live` / `is_premiere` flags, and no rich descriptions
+                // on legacy installs) but keeps the guide useful instead of
+                // blank.
                 val grid = dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                    dispatcharrClient.getEpgGrid(base, key).toProgrammes()
+                    runCatching { dispatcharrClient.getEpgGrid(base, key).toProgrammes() }
+                        .getOrElse { gridErr ->
+                            Log.w(
+                                "PlaylistRepo",
+                                "Dispatcharr grid failed; falling back to current + bulk-upcoming",
+                                gridErr,
+                            )
+                            val current = runCatching {
+                                dispatcharrClient.getCurrentPrograms(base, key)
+                            }.getOrDefault(emptyList())
+                            val upcoming = runCatching {
+                                dispatcharrClient.getBulkUpcomingPrograms(base, key)
+                            }.getOrDefault(emptyList())
+                            if (current.isEmpty() && upcoming.isEmpty()) {
+                                // Both fallbacks failed too -- re-throw the
+                                // grid error so the outer loadEpg returns a
+                                // proper failure Result, not a silently-
+                                // empty success.
+                                throw gridErr
+                            }
+                            (current + upcoming).toProgrammes()
+                        }
                 }
                 // iOS parity (EPGGuideView.swift Dispatcharr branch + the user-
                 // configurable custom-XMLTV URL on the source): when the user
