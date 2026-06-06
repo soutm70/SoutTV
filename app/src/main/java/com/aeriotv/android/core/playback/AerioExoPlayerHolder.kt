@@ -1,6 +1,7 @@
 package com.aeriotv.android.core.playback
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -28,6 +29,13 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import com.aeriotv.android.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Media3 ExoPlayer holder mirroring [MPVPlayerHolder]'s lifetime contract.
@@ -68,6 +76,51 @@ class AerioExoPlayerHolder @Inject constructor() {
      *  DataSource.Factory each time we build a MediaSource. Dispatcharr
      *  API-key auth lives here. */
     var httpHeaders: Map<String, String> = emptyMap()
+
+    // ---- live stall watchdog ----
+    // Port of the iOS MPVPlayerView reload-watchdog (commits 331f0bf / a6cf4b4
+    // / 0c83124 / 53752ad). A live stream can wedge mid-play (server/proxy
+    // hiccup, audio-device reconfig) with the network healthy but no frames
+    // advancing. We poll currentPosition; if it stops advancing for too long
+    // while we expect playback, re-prime the SAME url -- the Media3 analog of
+    // mpv `loadfile <url> replace`.
+    private val watchdogScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    private var watchdogJob: Job? = null
+    private var lastPositionAdvanceAtMs = 0L
+    private var lastKnownPositionMs = 0L
+    private var lastForcedReloadAtMs = 0L
+    // Armed only once the stream reaches steady playback (iOS
+    // hasReachedPlaybackRestartForStream) so a slow cold-start probe is never
+    // mistaken for a wedge.
+    private var hasReachedPlaybackRestart = false
+    private var consecutiveReloads = 0
+    // Last foreground play() args, replayed by the watchdog to reload the same url.
+    private var lastPlayUrl: String? = null
+    private var lastPlayTitle: String? = null
+    private var lastPlaySubtitle: String? = null
+    private var lastPlayArtworkUri: android.net.Uri? = null
+    // Thresholds carried over from the iOS watchdog (6s stale / 5s cooldown).
+    private val staleReloadThresholdMs = 6_000L
+    private val reloadCooldownMs = 5_000L
+    private val watchdogPollMs = 1_000L
+    private val maxConsecutiveReloads = 3
+
+    /** Arms the watchdog on first steady playback + recovers on a hard error. */
+    private val watchdogListener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY && player?.isPlaying == true) armWatchdog()
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && player?.playbackState == Player.STATE_READY) armWatchdog()
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            // Android companion to the frame-stall path: a terminal source/HTTP
+            // error. Re-prime under the same cooldown + reload cap.
+            if (lastPlayUrl != null) forceReload("error:${error.errorCodeName}")
+        }
+    }
 
     /**
      * Dynamic HTTP DataSource.Factory used ONLY by the player's MediaSource
@@ -150,6 +203,7 @@ class AerioExoPlayerHolder @Inject constructor() {
             .build()
             .apply {
                 addListener(LoggingPlayerListener)
+                addListener(watchdogListener)
                 // Debug-only rich diagnostics firehose (codec / hwdec path,
                 // input format changes, dropped frames, audio underruns) -- the
                 // Android analog of iOS's libmpv log bridge. Read with
@@ -162,6 +216,7 @@ class AerioExoPlayerHolder @Inject constructor() {
             }
 
         player = fresh
+        startWatchdog()
         return fresh
     }
 
@@ -251,6 +306,13 @@ class AerioExoPlayerHolder @Inject constructor() {
             Log.w(TAG, "playUrl called before acquireOrCreate")
             return
         }
+        // Remember the args so the stall watchdog can re-prime the same stream;
+        // reset its state for this fresh stream.
+        lastPlayUrl = url
+        lastPlayTitle = title
+        lastPlaySubtitle = subtitle
+        lastPlayArtworkUri = artworkUri
+        resetWatchdogStateForNewStream()
         // Foreground playback wants video; re-enable it in case an Android Auto
         // session previously dropped the video track on this shared player.
         setVideoTrackEnabled(true)
@@ -307,6 +369,9 @@ class AerioExoPlayerHolder @Inject constructor() {
     fun stop() {
         val p = player ?: return
         currentChannelId = null
+        // Disarm the stall watchdog so a deliberate stop isn't seen as a wedge.
+        hasReachedPlaybackRestart = false
+        lastPlayUrl = null
         p.stop()
         p.clearMediaItems()
     }
@@ -338,12 +403,84 @@ class AerioExoPlayerHolder @Inject constructor() {
         val p = player ?: return
         player = null
         currentChannelId = null
+        watchdogJob?.cancel()
+        watchdogJob = null
+        lastPlayUrl = null
         try {
             p.removeListener(LoggingPlayerListener)
+            p.removeListener(watchdogListener)
             p.release()
         } catch (t: Throwable) {
             Log.w(TAG, "ExoPlayer release failed", t)
         }
+    }
+
+    private fun armWatchdog() {
+        hasReachedPlaybackRestart = true
+        lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
+        lastKnownPositionMs = player?.currentPosition ?: 0L
+    }
+
+    private fun startWatchdog() {
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = watchdogScope.launch {
+            while (isActive) {
+                delay(watchdogPollMs)
+                val p = player ?: continue
+                // Only when we intend to play, have a url to reload, have reached
+                // steady playback at least once (skip cold-start probes + user
+                // pauses), and aren't at end-of-stream.
+                if (lastPlayUrl == null || !p.playWhenReady ||
+                    !hasReachedPlaybackRestart || p.playbackState == Player.STATE_ENDED
+                ) {
+                    continue
+                }
+                val now = SystemClock.elapsedRealtime()
+                val pos = p.currentPosition
+                if (pos > lastKnownPositionMs) {
+                    lastKnownPositionMs = pos
+                    lastPositionAdvanceAtMs = now
+                    consecutiveReloads = 0
+                    continue
+                }
+                val staleMs = now - lastPositionAdvanceAtMs
+                if (staleMs >= staleReloadThresholdMs) {
+                    forceReload("stale=${staleMs}ms")
+                }
+            }
+        }
+    }
+
+    /** Re-prime the demuxer + decoder against the SAME url (mpv loadfile replace). */
+    private fun forceReload(reason: String) {
+        val p = player ?: return
+        val url = lastPlayUrl ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastForcedReloadAtMs < reloadCooldownMs) return        // shared 5s cooldown
+        if (consecutiveReloads >= maxConsecutiveReloads) {
+            Log.w(TAG, "[MPV-RELOAD] giving up after $consecutiveReloads attempts ch=$currentChannelId reason=$reason")
+            return
+        }
+        lastForcedReloadAtMs = now
+        consecutiveReloads++
+        Log.w(TAG, "[MPV-RELOAD] live stall reload ch=$currentChannelId reason=$reason attempt=$consecutiveReloads")
+        // Disarm until the re-primed stream reaches steady playback again.
+        hasReachedPlaybackRestart = false
+        lastKnownPositionMs = 0L
+        lastPositionAdvanceAtMs = now
+        val source = buildMediaSource(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
+        p.setMediaSource(source)
+        p.prepare()
+        p.playWhenReady = true
+    }
+
+    /** Reset watchdog state for a brand-new stream (iOS play(url:)/swapStream). */
+    private fun resetWatchdogStateForNewStream() {
+        hasReachedPlaybackRestart = false
+        consecutiveReloads = 0
+        lastForcedReloadAtMs = 0L
+        lastKnownPositionMs = 0L
+        lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
     }
 
     private object LoggingPlayerListener : Player.Listener {
