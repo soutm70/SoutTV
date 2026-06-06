@@ -90,12 +90,15 @@ fun AddMoreCategoriesScreen(
                 )
             },
             navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
+                // No back arrow on Android TV -- the remote BACK pops it.
+                if (!rememberIsTvDevice()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
                         )
+                    }
                 }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(

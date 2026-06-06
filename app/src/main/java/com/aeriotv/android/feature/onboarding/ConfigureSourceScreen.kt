@@ -65,6 +65,7 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.onboarding.components.InfoBanner
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 
 /**
  * Configure-source form. Mirrors iOS App Store screenshots IMG_1078 (Dispatcharr
@@ -133,12 +134,16 @@ fun ConfigureSourceScreen(
         TopAppBar(
             title = { Text("Configure", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
             navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                // No back arrow on Android TV -- the remote BACK steps back to
+                // source-type pick. Phones/tablets keep it.
+                if (!rememberIsTvDevice()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.adaptive.rememberViewport
 
 /**
@@ -54,12 +55,16 @@ fun ChooseSourceTypeScreen(
         TopAppBar(
             title = { Text("Add Playlist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
             navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                // No back arrow on Android TV -- the remote BACK steps back
+                // (out of the Add Playlist wizard). Phones/tablets keep it.
+                if (!rememberIsTvDevice()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(

@@ -33,11 +33,14 @@ fun SettingsSubScreenPlaceholder(
         TopAppBar(
             title = { Text(title, style = MaterialTheme.typography.titleMedium) },
             navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                    )
+                // No back arrow on Android TV -- the remote BACK pops it.
+                if (!rememberIsTvDevice()) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(

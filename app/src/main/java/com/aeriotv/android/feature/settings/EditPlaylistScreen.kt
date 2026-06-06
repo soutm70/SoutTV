@@ -116,8 +116,12 @@ fun EditPlaylistScreen(
                 )
             },
             navigationIcon = {
-                TextButton(onClick = onBack) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                // No Cancel/back affordance on Android TV -- the remote BACK
+                // discards and pops the screen. Phones/tablets keep Cancel.
+                if (!rememberIsTvDevice()) {
+                    TextButton(onClick = onBack) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                    }
                 }
             },
             actions = {
