@@ -94,28 +94,7 @@ fun AppearanceSettingsScreen(
     var accentPickerOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Appearance",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        SettingsDetailTopBar(title = "Appearance", onBack = onBack)
 
         val vp = rememberViewport()
         Box(
@@ -327,7 +306,12 @@ private fun LazyListScope.settingsCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                        RoundedCornerShape(12.dp),
+                    ),
             ) {
                 content()
             }
@@ -590,16 +574,14 @@ private fun ToggleRow(
             )
         }
         Spacer(Modifier.size(12.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            ),
-        )
+        OnOffIndicator(on = checked)
     }
 }
+
+/** tvOS Display Scale segments (s_05/s_06): 85 / 92 / 100 / 114 / 125 %. */
+private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
+    0.85f to "85%", 0.92f to "92%", 1.00f to "100%", 1.14f to "114%", 1.25f to "125%",
+)
 
 @Composable
 private fun ScaleSliderRow(
@@ -607,39 +589,43 @@ private fun ScaleSliderRow(
     value: Float,
     onValueChange: (Float) -> Unit,
 ) {
-    Column(
+    // tvOS renders Display Scale as inline percentage segments, not a slider
+    // (cleaner with a remote + no focus-trap). The selected segment is filled.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "${(value * 100).toInt()}%",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = 0.85f..1.25f,
-            steps = 7, // 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25
-            // D-pad escape (v0.1.6 report): UP/DOWN move focus off the slider
-            // on Android TV instead of trapping the user on it.
-            modifier = Modifier.dpadFocusEscape(),
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-            ),
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
         )
+        SCALE_SEGMENTS.forEach { (segValue, segLabel) ->
+            val selected = kotlin.math.abs(value - segValue) < 0.03f
+            Box(
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                        else Color.Transparent,
+                    )
+                    .clickable { onValueChange(segValue) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = segLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
     }
 }
 
