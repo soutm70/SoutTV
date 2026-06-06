@@ -120,28 +120,7 @@ fun SyncSettingsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Sync",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        SettingsDetailTopBar(title = "Sync", onBack = onBack)
 
         androidx.compose.foundation.layout.Box(
             modifier = Modifier.fillMaxSize(),
@@ -204,7 +183,7 @@ fun SyncSettingsScreen(
                 item { SignedOutWelcomeBanner() }
             }
             item {
-                Section(
+                SettingsSection(
                     header = "Drive Sync",
                     footer = "Playlists, watch progress, reminders, app preferences and credentials sync via your Drive AppData folder. Files are scoped per-app and never appear in your main Drive UI.",
                 ) {
@@ -212,8 +191,7 @@ fun SyncSettingsScreen(
                         signedIn = signedIn,
                         email = accountEmail,
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                    ToggleRow(
+                    SettingsToggleRow(
                         title = "Sync enabled",
                         subtitle = if (signedIn)
                             "Auto-syncing the categories you've toggled below."
@@ -259,31 +237,31 @@ fun SyncSettingsScreen(
                 }
 
             item {
-                Section(header = "Categories", footer = "Choose what syncs across your devices.") {
-                    SyncCategory.entries.forEachIndexed { idx, category ->
+                SettingsSection(header = "Categories", footer = "Choose what syncs across your devices.") {
+                    SyncCategory.entries.forEach { category ->
                         val enabled by viewModel.categoryEnabled(category).collectAsStateWithLifecycle(initialValue = true)
-                        ToggleRow(
+                        SettingsToggleRow(
                             title = category.displayName,
                             subtitle = category.subtitle,
                             checked = enabled,
                             onCheckedChange = { viewModel.setCategoryEnabled(category, it) },
                         )
-                        if (idx < SyncCategory.entries.lastIndex) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        }
                     }
                 }
             }
 
-            item {
-                Section(
-                    header = "Actions",
-                    footer = "Sync Now pushes local changes then pulls remote changes. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.",
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Button(
-                            enabled = !inFlight && statusObj is DriveSyncManager.Status.SignedIn,
+            if (signedIn) {
+                item {
+                    SettingsSection(
+                        header = "Actions",
+                        footer = "Sync Now pushes local changes then pulls remote changes. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.",
+                    ) {
+                        SettingsActionRow(
+                            label = "Sync Now",
+                            subtitle = "Last synced: ${formatTimestamp(lastPull)}",
+                            leadingIcon = Icons.Filled.Sync,
                             onClick = {
+                                if (inFlight) return@SettingsActionRow
                                 inFlight = true
                                 scope.launch {
                                     val result = viewModel.syncNow()
@@ -297,18 +275,13 @@ fun SyncSettingsScreen(
                                     inFlight = false
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        ) {
-                            Icon(imageVector = Icons.Filled.Sync, contentDescription = null)
-                            Spacer(Modifier.size(8.dp))
-                            Text("Sync Now")
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        TextButton(
+                        )
+                        SettingsActionRow(
+                            label = "Clear Drive Data",
+                            leadingIcon = Icons.Filled.CloudOff,
+                            destructive = true,
                             onClick = {
+                                if (inFlight) return@SettingsActionRow
                                 inFlight = true
                                 scope.launch {
                                     val ok = viewModel.clearRemote()
@@ -320,17 +293,7 @@ fun SyncSettingsScreen(
                                     inFlight = false
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !inFlight && statusObj is DriveSyncManager.Status.SignedIn,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.CloudOff,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                            Spacer(Modifier.size(8.dp))
-                            Text("Clear Drive Data", color = MaterialTheme.colorScheme.error)
-                        }
+                        )
                     }
                 }
             }
@@ -430,6 +393,7 @@ private fun AccountRow(signedIn: Boolean, email: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .settingsRowCard(focused = false)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
