@@ -117,28 +117,7 @@ fun DeveloperSettingsScreen(
     val logFileExists = sizeBytes > 0L || debugLogger.logFile().exists()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Developer",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        SettingsDetailTopBar(title = "Developer", onBack = onBack)
 
         LazyColumn(
             // 104dp bottom clears the MainScaffold NavigationBar so the
@@ -247,59 +226,21 @@ private fun LoggingSection(
     onRequestEnable: () -> Unit,
     onRequestDisable: () -> Unit,
 ) {
-    DevSectionGroup(
+    SettingsSection(
         header = "Logging",
         footer = "When enabled, detailed logs are written to a file in the app's private " +
             "storage. Logs include network requests, playback events, EPG activity, errors, " +
             "and app lifecycle events. No personally identifiable information is collected.",
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.BugReport,
-                    contentDescription = null,
-                    tint = if (enabled) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.size(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Debug Logging",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = if (enabled) "Active — writing to aerio_debug_logs.txt"
-                    else "Off — no data is collected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (enabled) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = { value ->
-                    if (value) onRequestEnable() else onRequestDisable()
-                },
-            )
-        }
+        SettingsToggleRow(
+            title = "Debug Logging",
+            subtitle = if (enabled) "Active — writing to aerio_debug_logs.txt"
+            else "Off — no data is collected",
+            leadingIcon = Icons.Filled.BugReport,
+            checked = enabled,
+            // Route through the confirm dialogs instead of flipping directly.
+            onCheckedChange = { value -> if (value) onRequestEnable() else onRequestDisable() },
+        )
     }
 }
 
@@ -310,35 +251,31 @@ private fun LogFileSection(
     onShare: () -> Unit,
     onClear: () -> Unit,
 ) {
-    DevSectionGroup(
+    SettingsSection(
         header = "Log File",
         footer = "Logs rotate automatically when the file exceeds 10 MB. The previous log is " +
             "preserved as aerio_debug_logs_archive.txt.",
     ) {
-        InfoRow(
-            icon = Icons.Outlined.Description,
+        SettingsInfoRow(
             label = "Log File Size",
             value = formatBytes(sizeBytes),
+            leadingIcon = Icons.Outlined.Description,
         )
-        DevRowDivider()
-        ActionRow(
-            icon = Icons.Outlined.Article,
+        SettingsActionRow(
             label = "View Log File",
             subtitle = "Scroll through entries in the app",
+            leadingIcon = Icons.Outlined.Article,
             onClick = onView,
         )
-        DevRowDivider()
-        ActionRow(
-            icon = Icons.Filled.Share,
+        SettingsActionRow(
             label = "Share Log File",
             subtitle = "Email, Messages, Drive, etc.",
+            leadingIcon = Icons.Filled.Share,
             onClick = onShare,
         )
-        DevRowDivider()
-        ActionRow(
-            icon = Icons.Filled.Delete,
+        SettingsActionRow(
             label = "Clear Log File",
-            subtitle = null,
+            leadingIcon = Icons.Filled.Delete,
             onClick = onClear,
             destructive = true,
         )

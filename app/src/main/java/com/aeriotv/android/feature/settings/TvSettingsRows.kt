@@ -264,6 +264,90 @@ fun OnOffIndicator(on: Boolean) {
 }
 
 /**
+ * Action row (View Log File, Share, Clear, ...): leading icon + accent label
+ * (red when [destructive]) + optional subtitle, on the shared focus card.
+ * tvOS `TVSettingsActionRow`.
+ */
+@Composable
+fun SettingsActionRow(
+    label: String,
+    leadingIcon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    destructive: Boolean = false,
+) {
+    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    SettingsRowContainer(onClick = onClick, modifier = modifier) {
+        Icon(
+            imageVector = leadingIcon,
+            contentDescription = null,
+            tint = accent,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = accent,
+                fontWeight = FontWeight.Medium,
+            )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Read-only info row: label (left) + value (right), on the resting card (not
+ * focusable). For "Log File Size", About facts, etc.
+ */
+@Composable
+fun SettingsInfoRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    leadingIcon: ImageVector? = null,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .settingsRowCard(focused = false)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (leadingIcon != null) {
+            Icon(
+                imageVector = leadingIcon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
  * A section: uppercase header, a column of per-row cards (spaced, NOT grouped
  * into one card), and an optional footer. Drop the row helpers above inside.
  */

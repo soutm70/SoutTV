@@ -56,28 +56,7 @@ fun MultiviewSettingsScreen(
     val rounded by viewModel.multiviewTileCornersRounded.collectAsStateWithLifecycle(initialValue = false)
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Multiview",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                        )
-                }
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        SettingsDetailTopBar(title = "Multiview", onBack = onBack)
 
         androidx.compose.foundation.layout.Box(
             modifier = Modifier.fillMaxSize(),
@@ -99,39 +78,44 @@ fun MultiviewSettingsScreen(
                 ),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SettingsCard(
+            SettingsSection(
                 header = "Audio Focus Indicator",
                 footer = "How the grid shows which tile is unmuted. Center Icon fades with the chrome, Gray Outline stays visible, Accent Outline appears on switch and fades after 5 seconds.",
             ) {
-                AUDIO_FOCUS_OPTIONS.forEachIndexed { idx, opt ->
-                    RadioRow(
-                        title = opt.label,
+                AUDIO_FOCUS_OPTIONS.forEach { opt ->
+                    SettingsSelectionRow(
+                        label = opt.label,
                         subtitle = opt.detail,
                         selected = style == opt.id,
                         onClick = { viewModel.setMultiviewAudioFocusStyle(opt.id) },
                     )
-                    if (idx < AUDIO_FOCUS_OPTIONS.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                    }
                 }
             }
 
-            SettingsCard(
-                header = "Tile Appearance",
-                footer = "How tiles sit in the grid. Both default to off, matching the iOS edge-to-edge look.",
+            SettingsSection(
+                header = "Spacing",
+                footer = "Insert a small gap between tiles so each stream stands on its own.",
             ) {
-                ToggleRow(
+                SettingsToggleRow(
                     title = "Padding Between Tiles",
                     subtitle = "Add a small gap between tiles for visual separation.",
                     checked = padding,
                     onCheckedChange = viewModel::setMultiviewTilePadding,
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                ToggleRow(
-                    title = "Rounded Corners",
-                    subtitle = "Soften tile edges with a 12dp corner radius.",
-                    checked = rounded,
-                    onCheckedChange = viewModel::setMultiviewTileCornersRounded,
+            }
+
+            // tvOS presents corners as a Square / Rounded selection (s_09)
+            // rather than a single toggle; same underlying Boolean.
+            SettingsSection(header = "Tile Corners") {
+                SettingsSelectionRow(
+                    label = "Square",
+                    selected = !rounded,
+                    onClick = { viewModel.setMultiviewTileCornersRounded(false) },
+                )
+                SettingsSelectionRow(
+                    label = "Rounded",
+                    selected = rounded,
+                    onClick = { viewModel.setMultiviewTileCornersRounded(true) },
                 )
             }
         }
@@ -146,109 +130,3 @@ private val AUDIO_FOCUS_OPTIONS: List<AudioFocusOption> = listOf(
     AudioFocusOption("grayPersistent", "Gray Outline", "Subtle gray border always around the active tile."),
     AudioFocusOption("themeFading", "Accent Outline (Fading)", "Accent-tinted border that auto-hides after 5 seconds."),
 )
-
-@Composable
-private fun SettingsCard(
-    header: String,
-    footer: String?,
-    content: @Composable () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = header.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
-        ) {
-            content()
-        }
-        if (footer != null) {
-            Text(
-                text = footer,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun RadioRow(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(
-            selected = selected,
-            onClick = onClick,
-            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.size(12.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            ),
-        )
-    }
-}
