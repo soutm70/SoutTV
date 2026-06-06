@@ -561,6 +561,9 @@ fun GuideScreen(
                                     else MaterialTheme.typography.labelLarge,
                                 )
                             },
+                            // Fully-rounded capsule so the group filter row matches the
+                            // top navigation pills (was the default squared-off chip).
+                            shape = CircleShape,
                             // tvOS TVGroupPill (ChannelListView.swift:2830): unselected
                             // pills are FILLED capsules (Color.elevatedBackground), not
                             // outlined -- selected fills with accentPrimary + dark text.

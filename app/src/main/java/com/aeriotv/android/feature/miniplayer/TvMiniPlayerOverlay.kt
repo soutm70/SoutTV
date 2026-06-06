@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * TV mini-player chrome overlay (Phase 165).
@@ -56,9 +57,12 @@ fun BoxScope.TvMiniPlayerOverlay(
     // bottom edge. No clickable / focusable surface -- resume is owned
     // by MainActivity.dispatchKeyEvent's double-press-OK detection so
     // this overlay doesn't trap D-pad focus.
+    // Hint text shrunk 25% from labelSmall (relative, so it tracks the app's
+    // TV-scaled typography).
+    val hintBase = MaterialTheme.typography.labelSmall
     Text(
         text = "Double press OK to resume",
-        style = MaterialTheme.typography.labelSmall,
+        style = hintBase.copy(fontSize = (hintBase.fontSize.value * 0.75f).sp),
         color = Color.White,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
