@@ -193,7 +193,27 @@ class MainActivity : ComponentActivity() {
      * documented opt-in. Filters to the current resolution so we never switch the
      * panel's pixel size, only its refresh rate. No-op when one mode exists.
      */
+    /**
+     * True for Android TV / leanback set-top boxes (Mecool, Shield, Google TV
+     * Streamer, etc). FEATURE_LEANBACK is the canonical TV signal; the uiMode
+     * check is a belt-and-braces fallback for boxes that under-report it.
+     */
+    private fun isTelevisionDevice(): Boolean {
+        if (packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) return true
+        val mode = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+        return mode == Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
     private fun requestHighestRefreshRate() {
+        // User report (v0.1.6, Mecool KM2 Plus / Amlogic S905X4): "the screen
+        // goes black when opening the app." Pinning preferredDisplayModeId
+        // forces an HDMI display-mode switch, and TV boxes (Amlogic especially)
+        // do a full black-screen re-handshake on ANY mode change. This routine
+        // exists for Samsung Z Fold panels, where 60->120Hz switching is
+        // seamless and worthwhile; on a TV the panel is already at its native
+        // rate, so the only effect is a black flash on every resume for zero
+        // gain. Skip it on TV/leanback devices; keep it for phones + foldables.
+        if (isTelevisionDevice()) return
         val disp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             display
         } else {
