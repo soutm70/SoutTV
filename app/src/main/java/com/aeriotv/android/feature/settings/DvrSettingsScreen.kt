@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.aeriotv.android.ui.tv.dpadFocusEscape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -160,6 +161,10 @@ fun DvrSettingsScreen(
                             onValueChange = { settingsVm.setDvrMaxLocalStorageMB(it.toInt()) },
                             valueRange = 1024f..102400f,
                             steps = 99,
+                            // D-pad escape (v0.1.6 report): UP/DOWN move focus
+                            // off the slider on Android TV instead of trapping
+                            // the user on it.
+                            modifier = Modifier.dpadFocusEscape(),
                             colors = SliderDefaults.colors(
                                 thumbColor = MaterialTheme.colorScheme.primary,
                                 activeTrackColor = MaterialTheme.colorScheme.primary,

@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.aeriotv.android.ui.tv.dpadFocusEscape
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -631,6 +632,9 @@ private fun ScaleSliderRow(
             onValueChange = onValueChange,
             valueRange = 0.85f..1.25f,
             steps = 7, // 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20, 1.25
+            // D-pad escape (v0.1.6 report): UP/DOWN move focus off the slider
+            // on Android TV instead of trapping the user on it.
+            modifier = Modifier.dpadFocusEscape(),
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
                 activeTrackColor = MaterialTheme.colorScheme.primary,

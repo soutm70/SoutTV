@@ -6,7 +6,14 @@ import androidx.compose.animation.core.spring
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.zIndex
 
 /**
@@ -70,5 +77,35 @@ fun Modifier.tvFocusScale(
             }
     } else {
         this
+    }
+}
+
+/**
+ * Lets a focused [androidx.compose.material3.Slider] be escaped with the
+ * D-pad on Android TV.
+ *
+ * User report (v0.1.6, Amlogic S905X4): "When I press the down button on
+ * my remote [on a focused slider], it doesn't go to the other options
+ * below." A Compose Slider claims LEFT/RIGHT to change its value, but it
+ * does not reliably hand UP/DOWN back to the focus system on a leanback
+ * remote, so the user gets stuck on the slider with no way down.
+ *
+ * Apply this to the Slider's `modifier`. `onPreviewKeyEvent` fires on the
+ * way DOWN the tree -- before the Slider's own key handling -- so we can
+ * intercept UP/DOWN, explicitly move focus, and consume them, while
+ * LEFT/RIGHT (and everything else) fall through to the Slider so value
+ * adjustment is unchanged. No-op on touch devices, which never deliver
+ * these key events, so it's safe to apply without an `isTv` guard.
+ */
+@Composable
+fun Modifier.dpadFocusEscape(): Modifier {
+    val focusManager = LocalFocusManager.current
+    return this.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+            Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+            else -> false
+        }
     }
 }

@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.aeriotv.android.ui.tv.dpadFocusEscape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -175,6 +176,9 @@ private fun ConnectionSection(
                 onValueChange = { onTimeoutChange(it.toDouble()) },
                 valueRange = 5f..60f,
                 steps = 10, // 5..60 step 5 -> 11 marks -> 10 intermediate steps
+                // D-pad escape (v0.1.6 report): UP/DOWN move focus off the
+                // slider on Android TV instead of trapping the user on it.
+                modifier = Modifier.dpadFocusEscape(),
                 colors = SliderDefaults.colors(
                     thumbColor = MaterialTheme.colorScheme.primary,
                     activeTrackColor = MaterialTheme.colorScheme.primary,
