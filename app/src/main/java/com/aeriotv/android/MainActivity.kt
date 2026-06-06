@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.Rational
 import android.view.KeyEvent
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -236,6 +237,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // GH #1: on Android TV the leanback IME is an overlay; letting the window
+        // RESIZE per IME-animation frame feeds a recompose + bring-into-view loop
+        // in the verticalScroll onboarding form, so the fields visibly jiggle.
+        // Pan instead, keeping the window height constant. Phones keep the default
+        // adjustResize (they need the focused field lifted above a real keyboard).
+        if (isTelevisionDevice()) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
+        }
         // Keep the window's PiP params in sync with player video state so the
         // system auto-enters Picture-in-Picture when the user leaves the app while
         // video is playing (API 31+). Audio-only is excluded -- onUserLeaveHint

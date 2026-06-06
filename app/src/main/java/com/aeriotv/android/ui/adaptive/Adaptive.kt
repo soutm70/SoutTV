@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -29,13 +29,17 @@ import androidx.compose.ui.unit.dp
  * left/right band.
  */
 @Composable
-@ReadOnlyComposable
 fun rememberViewport(): Viewport {
     val config = LocalConfiguration.current
-    return Viewport(
-        widthDp = config.screenWidthDp,
-        heightDp = config.screenHeightDp,
-    )
+    // Memoize against width/height only: an IME-driven LocalConfiguration tick
+    // (Android TV soft keyboard) must NOT churn a fresh Viewport and re-measure
+    // every form/list that reads this (contributes to GH #1).
+    return remember(config.screenWidthDp, config.screenHeightDp) {
+        Viewport(
+            widthDp = config.screenWidthDp,
+            heightDp = config.screenHeightDp,
+        )
+    }
 }
 
 data class Viewport(val widthDp: Int, val heightDp: Int) {
