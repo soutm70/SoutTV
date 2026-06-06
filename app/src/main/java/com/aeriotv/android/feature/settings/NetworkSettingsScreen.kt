@@ -69,28 +69,7 @@ fun NetworkSettingsScreen(
     val homeSsids by viewModel.homeSsids.collectAsStateWithLifecycle(initialValue = emptySet<String>())
 
     Column(modifier = Modifier.fillMaxSize()) {
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Network",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.primary,
-                        )
-                }
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        SettingsDetailTopBar(title = "Network", onBack = onBack)
 
         androidx.compose.foundation.layout.Box(
             modifier = Modifier.fillMaxSize(),
@@ -151,60 +130,40 @@ private fun ConnectionSection(
     onTimeoutChange: (Double) -> Unit,
     onMaxRetriesChange: (Int) -> Unit,
 ) {
-    SettingsCard(header = "Connection", footer = "Adjust timeouts if you have a slow or unstable connection.") {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Request Timeout",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "${timeoutSecs.toInt()}s",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Slider(
-                value = timeoutSecs.toFloat(),
-                onValueChange = { onTimeoutChange(it.toDouble()) },
-                valueRange = 5f..60f,
-                steps = 10, // 5..60 step 5 -> 11 marks -> 10 intermediate steps
-                // D-pad escape (v0.1.6 report): UP/DOWN move focus off the
-                // slider on Android TV instead of trapping the user on it.
-                modifier = Modifier.dpadFocusEscape(),
-                colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
-                ),
+    // tvOS Network (s_10) presents Request Timeout as a selection list
+    // (5/10/15/30/60 seconds), not a slider -- cleaner to drive with a remote.
+    SettingsSection(
+        header = "Request Timeout",
+        footer = "Adjust timeouts if you have a slow or unstable connection.",
+    ) {
+        TIMEOUT_OPTIONS.forEach { secs ->
+            SettingsSelectionRow(
+                label = if (secs == 1) "1 second" else "$secs seconds",
+                selected = timeoutSecs.toInt() == secs,
+                onClick = { onTimeoutChange(secs.toDouble()) },
             )
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+    }
+
+    // Max Retries stays a stepper (no tvOS equivalent), now on a resting card.
+    SettingsSection(
+        header = "Max Retries",
+        footer = "Per-request retry budget (0-10).",
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .settingsRowCard(focused = false)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Max Retries",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "Per-request retry budget (0-10).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                text = "Retries",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
             IconButton(
                 onClick = { if (maxRetries > 0) onMaxRetriesChange(maxRetries - 1) },
                 enabled = maxRetries > 0,
@@ -216,7 +175,6 @@ private fun ConnectionSection(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.size(32.dp).padding(top = 4.dp),
             )
             IconButton(
                 onClick = { if (maxRetries < 10) onMaxRetriesChange(maxRetries + 1) },
@@ -233,42 +191,17 @@ private fun BufferSizeSection(
     current: String,
     onSelect: (String) -> Unit,
 ) {
-    SettingsCard(
+    SettingsSection(
         header = "Buffer Size",
         footer = "Controls how much stream data is pre-loaded. Larger buffers reduce stuttering on poor connections but add startup delay.",
     ) {
-        BUFFER_OPTIONS.forEachIndexed { idx, opt ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(opt.id) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = opt.label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        text = opt.detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (opt.id == current) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = "Selected",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            if (idx < BUFFER_OPTIONS.lastIndex) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            }
+        BUFFER_OPTIONS.forEach { opt ->
+            SettingsSelectionRow(
+                label = opt.label,
+                subtitle = opt.detail,
+                selected = opt.id == current,
+                onClick = { onSelect(opt.id) },
+            )
         }
     }
 }
@@ -316,39 +249,22 @@ private fun EpgWindowSection(
     currentHours: Int,
     onSelect: (Int) -> Unit,
 ) {
-    SettingsCard(
+    SettingsSection(
         header = "EPG Window",
         footer = "How far ahead the TV Guide timeline extends. The guide always shows 1 hour of history. Wider windows need more horizontal scrolling; \"All available\" spans your full loaded guide data.",
     ) {
-        EPG_WINDOW_OPTIONS.forEachIndexed { idx, opt ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(opt.hours) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = opt.label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                if (opt.hours == currentHours) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = "Selected",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-            }
-            if (idx < EPG_WINDOW_OPTIONS.lastIndex) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            }
+        EPG_WINDOW_OPTIONS.forEach { opt ->
+            SettingsSelectionRow(
+                label = opt.label,
+                selected = opt.hours == currentHours,
+                onClick = { onSelect(opt.hours) },
+            )
         }
     }
 }
+
+/** tvOS Request Timeout options (s_10): 5/10/15/30/60 seconds. */
+private val TIMEOUT_OPTIONS: List<Int> = listOf(5, 10, 15, 30, 60)
 
 /**
  * Audit task #48: master toggle for the periodic background EPG + channel
@@ -363,62 +279,25 @@ private fun BackgroundRefreshSection(
     onToggle: (Boolean) -> Unit,
     onSelectInterval: (Int) -> Unit,
 ) {
-    SettingsCard(
+    SettingsSection(
         header = "Background Refresh",
         footer = "Refresh channels + the EPG in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. Off here means data refreshes only when you launch AerioTV or pull to refresh.",
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onToggle(!enabled) }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Refresh in the background",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = enabled,
-                onCheckedChange = onToggle,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
-        }
+        SettingsToggleRow(
+            title = "Refresh in the background",
+            checked = enabled,
+            onCheckedChange = onToggle,
+        )
         if (enabled) {
-            // iOS bgRefreshIntervalMins (audit P1 #7) parity: how often the
-            // periodic refresh fires. Hidden when the master toggle is off
-            // so the UI doesn't suggest setting frequency on a disabled
-            // worker. WorkManager UPDATE policy on the worker re-anchors the
-            // schedule the moment the user picks a new value.
+            // iOS bgRefreshIntervalMins (audit P1 #7): how often the periodic
+            // refresh fires. Hidden when the master toggle is off so the UI
+            // doesn't suggest setting frequency on a disabled worker.
             BG_REFRESH_INTERVAL_OPTIONS.forEach { opt ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelectInterval(opt.mins) }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = opt.label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (opt.mins == intervalMins) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
+                SettingsSelectionRow(
+                    label = opt.label,
+                    selected = opt.mins == intervalMins,
+                    onClick = { onSelectInterval(opt.mins) },
+                )
             }
         }
     }
