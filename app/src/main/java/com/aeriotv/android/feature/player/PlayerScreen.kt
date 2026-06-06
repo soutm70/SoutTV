@@ -344,6 +344,7 @@ fun PlayerScreen(
             nowProgramme = nowProgramme,
             chromeVisible = chromeVisible,
             pillVisible = pillVisible,
+            isTv = isTvForm,
             // Explicit X tap = user is done with this channel; clear the mini-player
             // session, destroy the held MPV instance, and stop the background
             // PlaybackService so the notification disappears. System back keeps

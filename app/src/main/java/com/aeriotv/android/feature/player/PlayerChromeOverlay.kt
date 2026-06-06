@@ -5,6 +5,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +33,7 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.outlined.AspectRatio
@@ -62,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +86,7 @@ import com.aeriotv.android.core.pip.enterPip16x9
 import com.aeriotv.android.core.pip.findActivity
 import com.aeriotv.android.core.pip.supportsPip
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
+import com.aeriotv.android.ui.tv.tvFocusScale
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -105,6 +113,7 @@ fun PlayerChromeOverlay(
     nowProgramme: EPGProgramme?,
     chromeVisible: Boolean,
     pillVisible: Boolean = chromeVisible,
+    isTv: Boolean = false,
     onClose: () -> Unit,
     onAddToMultiview: () -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
@@ -125,18 +134,40 @@ fun PlayerChromeOverlay(
     val inPip by PipState.inPictureInPicture
     val pipAvailable = remember { context.supportsPip() }
 
-    // Initial focus target when chrome appears -- Close button on the top
-    // row. Without this, the focus stays on PlayerScreen's tap-target
-    // Box (which has clickable from gesture handling), so D-pad presses
-    // don't traverse to the chrome buttons. Compose's `focusRequester`
-    // is fired by the LaunchedEffect below whenever chromeVisible flips
-    // to true.
+    // Initial focus target when chrome appears -- the leftmost "Options"
+    // pill on the bottom row. Without this, focus stays on PlayerScreen's
+    // tap-target Box (which has clickable from gesture handling), so D-pad
+    // presses don't traverse to the pills. Fired by the LaunchedEffect
+    // below whenever chromeVisible flips to true.
+    val optionsFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val closeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(chromeVisible) {
         if (chromeVisible) {
             kotlinx.coroutines.delay(100)
-            runCatching { closeFocus.requestFocus() }
+            runCatching { (if (isTv) optionsFocus else closeFocus).requestFocus() }
         }
+    }
+
+    // Recording is Dispatcharr-only (server-side scheduling), so gate the
+    // Record pill + the Options menu's Record row on it. recordCurrent
+    // builds a target from live EPG, falling back to a generic 60-minute
+    // window when EPG isn't loaded (Dispatcharr playlists often lack it).
+    val canRecord = channel?.dispatcharrChannelId != null && LocalCanRecordToServer.current
+    val recordCurrent: () -> Unit = {
+        val target = nowProgramme?.toInfoTarget(channel?.name.orEmpty(), channel?.dispatcharrChannelId)
+            ?: channel?.let {
+                val now = System.currentTimeMillis()
+                ProgramInfoTarget(
+                    channelName = it.name,
+                    title = "${it.name} live recording",
+                    startMillis = now,
+                    endMillis = now + 3_600_000L,
+                    description = "",
+                    category = "",
+                    channelDispatcharrId = it.dispatcharrChannelId,
+                )
+            }
+        target?.let(onShowRecord)
     }
 
     // Phase 170: one outer Box at root so both AnimatedVisibilities live
@@ -152,68 +183,55 @@ fun PlayerChromeOverlay(
         exit = fadeOut(),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Top scrim — gradient-like dark fade so the buttons read against the video.
+            // Top + bottom gradient scrims so the card and pills stay legible
+            // over bright video (matches the tvOS player chrome gradients).
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .align(Alignment.TopCenter),
+                    .height(170.dp)
+                    .align(Alignment.TopCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                        ),
+                    ),
             )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .align(Alignment.BottomCenter),
+                    .height(190.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)),
+                        ),
+                    ),
             )
 
-            // Top row: X close (left), ⋯ more + + add (right). statusBarsPadding
-            // keeps the circle buttons below the camera notch / status bar since
-            // the player runs under edge-to-edge with no Scaffold to inset it.
+            if (isTv) {
+            // Android TV (tvOS parity): a centered row of action pills at the
+            // bottom -- Options | Record | Add Stream. The channel info card is
+            // rendered top-left by the sibling AnimatedVisibility below.
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp)
+                    .focusGroup(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircleIconButton(
-                    icon = Icons.Filled.Close,
-                    contentDescription = "Close",
-                    onClick = onClose,
-                    modifier = Modifier.focusRequester(closeFocus),
-                )
-                // Phase 172: pill rendered INLINE to the right of Close
-                // when chrome is visible (so it doesn't consume a
-                // separate vertical band of screen). The launch-hint
-                // path (chromeVisible == false but pillVisible == true)
-                // uses the separate AnimatedVisibility below, which
-                // stays at top-left over the bare video.
-                channel?.let { ch ->
-                    Spacer(Modifier.width(12.dp))
-                    InfoCard(
-                        channel = ch,
-                        programme = nowProgramme,
-                        sleepRemainingMillis = sleepRemainingMillis,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
                 Box {
-                    CircleIconButton(
-                        icon = Icons.Filled.MoreHoriz,
-                        contentDescription = "More",
+                    PlayerPill(
+                        icon = Icons.Filled.Tune,
+                        label = "Options",
                         onClick = { moreOpen = true },
+                        modifier = Modifier.focusRequester(optionsFocus),
                     )
                     PlayerMoreMenu(
                         expanded = moreOpen,
                         onDismiss = { moreOpen = false },
-                        // Record row gated on iOS's `canRecord` equivalent:
-                        // a now-playing program AND a Dispatcharr-managed
-                        // channel (server-side scheduling is Dispatcharr-only).
-                        // Matches the channel long-press menu's gating.
-                        canRecord = nowProgramme != null && channel?.dispatcharrChannelId != null && LocalCanRecordToServer.current,
+                        canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
                         aspectLabel = aspectModeLabel,
@@ -232,20 +250,92 @@ fun PlayerChromeOverlay(
                         },
                         onRecord = {
                             moreOpen = false
-                            val target = nowProgramme?.toInfoTarget(channel?.name.orEmpty(), channel?.dispatcharrChannelId)
-                                ?: channel?.let {
-                                    val now = System.currentTimeMillis()
-                                    ProgramInfoTarget(
-                                        channelName = it.name,
-                                        title = "${it.name} live recording",
-                                        startMillis = now,
-                                        endMillis = now + 3_600_000L,
-                                        description = "",
-                                        category = "",
-                                        channelDispatcharrId = it.dispatcharrChannelId,
-                                    )
-                                }
-                            target?.let(onShowRecord)
+                            recordCurrent()
+                        },
+                        onSleepTimer = {
+                            moreOpen = false
+                            sleepOpen = true
+                        },
+                        onStreamInfo = {
+                            moreOpen = false
+                            onShowStreamInfo()
+                        },
+                        onAudioOnly = {
+                            moreOpen = false
+                            onToggleAudioOnly()
+                        },
+                    )
+                }
+                if (canRecord) {
+                    PlayerPill(
+                        icon = Icons.Filled.FiberManualRecord,
+                        label = "Record",
+                        iconTint = Color(0xFFFF4757),
+                        onClick = { recordCurrent() },
+                    )
+                }
+                PlayerPill(
+                    icon = Icons.Filled.Add,
+                    label = "Add Stream",
+                    onClick = onAddToMultiview,
+                )
+            }
+            } else {
+            // Phone / tablet (iOS PlayerView parity): top bar with Close on the
+            // left, the channel card inline, and More / PiP / Add on the right;
+            // live-progress band along the bottom.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircleIconButton(
+                    icon = Icons.Filled.Close,
+                    contentDescription = "Close",
+                    onClick = onClose,
+                    modifier = Modifier.focusRequester(closeFocus),
+                )
+                channel?.let { ch ->
+                    Spacer(Modifier.width(12.dp))
+                    InfoCard(
+                        channel = ch,
+                        programme = nowProgramme,
+                        sleepRemainingMillis = sleepRemainingMillis,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Box {
+                    CircleIconButton(
+                        icon = Icons.Filled.MoreHoriz,
+                        contentDescription = "More",
+                        onClick = { moreOpen = true },
+                    )
+                    PlayerMoreMenu(
+                        expanded = moreOpen,
+                        onDismiss = { moreOpen = false },
+                        canRecord = canRecord,
+                        audioOnly = audioOnly,
+                        sleepActive = sleepRemainingMillis != null,
+                        aspectLabel = aspectModeLabel,
+                        onCycleAspect = onCycleAspect,
+                        onSubtitles = {
+                            moreOpen = false
+                            onShowSubtitles()
+                        },
+                        onAudioTracks = {
+                            moreOpen = false
+                            onShowAudioTracks()
+                        },
+                        onPlaybackSpeed = {
+                            moreOpen = false
+                            onShowPlaybackSpeed()
+                        },
+                        onRecord = {
+                            moreOpen = false
+                            recordCurrent()
                         },
                         onSleepTimer = {
                             moreOpen = false
@@ -277,14 +367,6 @@ fun PlayerChromeOverlay(
                 )
             }
 
-            // Info card just below the top-row. Stacks the same status-bar inset
-            // so it slides down with the buttons when the system bar is taller.
-            // (InfoCard moved out of this AnimatedVisibility so it can be
-            //  rendered independently when the user just launched the
-            //  channel; see the second AnimatedVisibility block below.)
-
-            // Bottom progress + remaining row. navigationBarsPadding keeps the
-            // copy clear of the system gesture handle.
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -313,7 +395,6 @@ fun PlayerChromeOverlay(
                         )
                     }
                 } ?: run {
-                    // No EPG: just show the channel name centered.
                     Text(
                         text = channel?.name ?: "AerioTV",
                         style = MaterialTheme.typography.titleMedium,
@@ -323,23 +404,22 @@ fun PlayerChromeOverlay(
                     )
                 }
             }
+            }
         }
     }
 
-    // Standalone launch-hint pill: only renders when the user just
-    // opened a channel (pillVisible == true) AND the full chrome is
-    // hidden (chromeVisible == false). When chrome is visible the pill
-    // is shown INLINE in the chrome row above (right of Close). This
-    // path covers the "what am I watching" hint that fades out after
-    // 4s on its own without surfacing the rest of the chrome.
+    // Top-left channel info card. On TV it's the primary "what am I watching"
+    // surface, shown whenever chrome OR the launch hint is up. On phone the
+    // card lives inline in the top bar above, so this standalone copy only
+    // covers the brief launch hint while the full chrome is hidden.
     AnimatedVisibility(
-        visible = pillVisible && !chromeVisible && !inPip,
+        visible = if (isTv) (pillVisible && !inPip) else (pillVisible && !chromeVisible && !inPip),
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = Modifier
             .align(Alignment.TopStart)
             .statusBarsPadding()
-            .padding(top = 14.dp, start = 70.dp),
+            .padding(top = if (isTv) 24.dp else 14.dp, start = if (isTv) 28.dp else 70.dp),
     ) {
         channel?.let {
             InfoCard(
@@ -384,6 +464,52 @@ private fun CircleIconButton(
                 tint = Color.White,
             )
         }
+    }
+}
+
+/**
+ * tvOS-style action pill: a rounded capsule with a leading icon + label and
+ * a clear D-pad focus treatment (brighter fill + white border + grow).
+ * Mirrors PlaybackBottomChrome_tvOS's Options / Record / Add Stream pills.
+ */
+@Composable
+private fun PlayerPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconTint: Color = Color.White,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .tvFocusScale(focused)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = if (focused) 0.22f else 0.12f))
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) Color.White else Color.White.copy(alpha = 0.20f),
+                shape = CircleShape,
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
