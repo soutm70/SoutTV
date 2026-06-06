@@ -269,6 +269,9 @@ private fun ActionButtons(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
+                // Clip to the rounded shape BEFORE clickable so the D-pad focus
+                // highlight follows the corners instead of a squared rectangle.
+                .clip(shape)
                 .background(brush = gradient, shape = shape)
                 .clickable(onClick = onConnectServer),
             contentAlignment = Alignment.Center,
