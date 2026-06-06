@@ -492,6 +492,12 @@ fun GuideScreen(
                     modifier = Modifier.size(20.dp),
                 )
             }
+            // Gap between the two control circles. Material3 IconButton's
+            // focus/state layer is 40dp -- wider than the 36dp button -- so
+            // adjacent buttons overlapped both their persistent circles and
+            // their focus highlights (user report). 12dp clears both and
+            // matches the category-pill spacing.
+            if (isTv) Spacer(Modifier.width(12.dp))
             // Filter toggle: opens the group on/off picker (Manage Groups).
             IconButton(
                 onClick = { showManageGroups = true },
