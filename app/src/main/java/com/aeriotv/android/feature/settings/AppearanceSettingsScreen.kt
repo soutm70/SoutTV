@@ -450,17 +450,15 @@ private fun CustomAccentRow(
             )
             Spacer(Modifier.size(8.dp))
         }
-        Switch(
-            checked = enabled,
-            onCheckedChange = { isOn ->
-                onToggle(isOn)
-                if (isOn && hex.isBlank()) onPick()
+        Box(
+            modifier = Modifier.clickable {
+                val next = !enabled
+                onToggle(next)
+                if (next && hex.isBlank()) onPick()
             },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            ),
-        )
+        ) {
+            OnOffIndicator(on = enabled)
+        }
     }
 }
 
