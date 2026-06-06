@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +107,10 @@ fun MultiviewScreen(
     // sleeping mid-grid. iOS parity via IdleTimerRefCount.
     com.aeriotv.android.feature.player.KeepScreenOnWhilePlaying()
 
+    val isTvDevice = (
+        LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK
+        ) == Configuration.UI_MODE_TYPE_TELEVISION
+
     val selected by storeHandle.selected.collectAsState()
     val focused by storeHandle.audioFocusedIndex.collectAsState()
     val bufferSize by settingsVm.streamBufferSize.collectAsState(initial = "default")
@@ -136,6 +141,22 @@ fun MultiviewScreen(
         focusFadedOut = false
         kotlinx.coroutines.delay(5_000L)
         focusFadedOut = true
+    }
+
+    // User report (v0.1.6, Amlogic S905X4): "there is an X near the top left
+    // but no matter what I press on the remote, it doesn't let me exit
+    // Multiview." The grid host is the single focusable and consumes every
+    // D-pad arrow for tile navigation, so the touch-only X is never reachable
+    // by a remote -- leaving no exit. BACK is the Android-TV exit convention;
+    // wire it explicitly with the same cascade the X uses (cancel relocate ->
+    // exit fullscreen -> leave multiview) so a sub-mode is backed out of
+    // first instead of dumping the user straight to the guide.
+    BackHandler {
+        when {
+            relocatingIndex != null -> relocatingIndex = null
+            fullscreenIndex != null -> fullscreenIndex = null
+            else -> onClose()
+        }
     }
 
     if (selected.isEmpty()) {
@@ -230,8 +251,12 @@ fun MultiviewScreen(
                 }
             })
             val countLabel = when {
-                relocatingIndex != null -> "Tap a tile to swap"
-                fullscreenIndex != null -> "Double-tap to exit fullscreen"
+                // On TV the tile gestures are D-pad: arrows move, OK picks
+                // audio, BACK exits. Surface that so a remote user isn't
+                // hunting for the touch-only X.
+                relocatingIndex != null -> if (isTvDevice) "OK on a tile to swap · Back to cancel" else "Tap a tile to swap"
+                fullscreenIndex != null -> if (isTvDevice) "Back to exit fullscreen" else "Double-tap to exit fullscreen"
+                isTvDevice -> "${selected.size} / ${storeHandle.maxTiles} · Back to exit"
                 else -> "${selected.size} / ${storeHandle.maxTiles}"
             }
             val labelHighlighted = relocatingIndex != null || fullscreenIndex != null

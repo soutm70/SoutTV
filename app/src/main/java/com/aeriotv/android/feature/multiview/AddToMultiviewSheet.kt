@@ -25,6 +25,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -112,10 +115,22 @@ fun AddToMultiviewSheet(
         }
     }
 
+    // User report (v0.1.6, Amlogic S905X4): the channel-picker "seems to
+    // instruct me to drag down, but I am not on a touchscreen." The default
+    // ModalBottomSheet renders a drag handle (a grab bar that reads as
+    // "drag") which is meaningless on a remote. On TV drop the handle and
+    // rely on the "Done" button + BACK to dismiss; BackHandler guarantees the
+    // remote BACK button closes the picker.
+    val isTvDevice = (
+        androidx.compose.ui.platform.LocalConfiguration.current.uiMode and
+            Configuration.UI_MODE_TYPE_MASK
+        ) == Configuration.UI_MODE_TYPE_TELEVISION
+    BackHandler { onDismiss() }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = if (isTvDevice) null else { { BottomSheetDefaults.DragHandle() } },
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
