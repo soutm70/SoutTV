@@ -5,7 +5,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -499,17 +498,16 @@ private fun PlayerPill(
 ) {
     var focused by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
+    // Android-native focus treatment: a solid dark chip that fills white when
+    // focused (high-contrast, the Compose-for-TV convention) plus the shared
+    // focus-scale. No translucent "glass" fill or light rim.
+    val contentColor = if (focused) Color.Black else Color.White
     Row(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .tvFocusScale(focused)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = if (focused) 0.22f else 0.12f))
-            .border(
-                width = if (focused) 2.dp else 1.dp,
-                color = if (focused) Color.White else Color.White.copy(alpha = 0.20f),
-                shape = CircleShape,
-            )
+            .background(if (focused) Color.White else Color.Black.copy(alpha = 0.6f))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -518,12 +516,12 @@ private fun PlayerPill(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = iconTint,
+            tint = if (iconTint == Color.White) contentColor else iconTint,
             modifier = Modifier.size(20.dp),
         )
         Text(
             text = label,
-            color = Color.White,
+            color = contentColor,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )

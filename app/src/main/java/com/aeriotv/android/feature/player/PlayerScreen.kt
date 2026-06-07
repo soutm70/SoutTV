@@ -22,7 +22,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -98,6 +104,9 @@ fun PlayerScreen(
     }
     var currentIndex by remember(channels) { mutableIntStateOf(initialIndex) }
     val currentChannel = channels.getOrNull(currentIndex)
+    // Focus target that holds D-pad focus during fullscreen playback (chrome
+    // hidden) so the remote's up/down reaches the channel-flip handler on TV.
+    val playbackFocus = remember { FocusRequester() }
     val nowProgramme by remember(epgByChannel, currentChannel) {
         derivedStateOf { currentChannel?.let { epgByChannel[it.guideMatchKey]?.nowPlaying() } }
     }
@@ -332,9 +341,30 @@ fun PlayerScreen(
             // chrome is visible so the auto-hide timer keeps re-arming.
             // onPreviewKeyEvent returns false -> doesn't consume; the
             // event still reaches the chrome buttons below.
-            .onPreviewKeyEvent {
+            .onPreviewKeyEvent { event ->
                 if (chromeVisible) {
                     lastInteractionAt = android.os.SystemClock.uptimeMillis()
+                }
+                // Android TV: D-pad up/down flips channels during fullscreen
+                // playback (tvOS Siri Remote parity). Matches the touch swipe
+                // (up = next). Gated to chrome-hidden so up/down still moves
+                // focus through the chrome controls while it is showing.
+                if (isTvForm && appleTVChannelFlip && !chromeVisible &&
+                    channels.size >= 2 && event.type == KeyEventType.KeyDown
+                ) {
+                    val delta = when (event.key) {
+                        Key.DirectionUp -> 1
+                        Key.DirectionDown -> -1
+                        else -> 0
+                    }
+                    if (delta != 0) {
+                        val next = (currentIndex + delta).coerceIn(0, channels.lastIndex)
+                        if (next != currentIndex) {
+                            currentIndex = next
+                            chromeVisible = true
+                        }
+                        return@onPreviewKeyEvent true
+                    }
                 }
                 false
             },
@@ -345,6 +375,7 @@ fun PlayerScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .focusRequester(playbackFocus)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -474,6 +505,16 @@ fun PlayerScreen(
         if (chromeVisible && !interactionLocked) {
             delay(AUTO_HIDE_MS)
             chromeVisible = false
+        }
+    }
+
+    // On TV, when the chrome hides (fullscreen video), pull D-pad focus to the
+    // playback surface so the remote's up/down reaches the channel-flip handler
+    // instead of being swallowed by a stale focus target.
+    LaunchedEffect(chromeVisible, isTvForm) {
+        if (isTvForm && !chromeVisible) {
+            delay(100)
+            runCatching { playbackFocus.requestFocus() }
         }
     }
 
