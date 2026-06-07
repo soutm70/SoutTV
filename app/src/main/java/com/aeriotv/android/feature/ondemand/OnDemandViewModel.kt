@@ -50,6 +50,17 @@ class OnDemandViewModel @Inject constructor(
         val movies: List<DispatcharrVODMovie> = emptyList(),
         val totalCount: Int = 0,
         val searchQuery: String = "",
+        // Server-side search results (Dispatcharr `?search=`). `visible` renders
+        // these whenever the query is non-blank, so search reaches the WHOLE
+        // library, not just the pages walked into `movies` so far. Empty when
+        // not searching.
+        val searchResults: List<DispatcharrVODMovie> = emptyList(),
+        val isSearching: Boolean = false,
+        // Lazy-pagination cursor: the `next` URL after the last page appended to
+        // `movies`. loadMoreMovies() consumes it as the grid nears its end. Null
+        // once the library is fully walked.
+        val moviesNextCursor: String? = null,
+        val isLoadingMore: Boolean = false,
         val unsupportedSource: Boolean = false,
         // XC only: the cheap init probe found VOD/series categories but the
         // expensive per-category enumeration is deferred until the On Demand tab
@@ -63,6 +74,10 @@ class OnDemandViewModel @Inject constructor(
         val series: List<DispatcharrVODSeries> = emptyList(),
         val seriesTotalCount: Int = 0,
         val seriesSearchQuery: String = "",
+        val seriesSearchResults: List<DispatcharrVODSeries> = emptyList(),
+        val isSearchingSeries: Boolean = false,
+        val seriesNextCursor: String? = null,
+        val isLoadingMoreSeries: Boolean = false,
         // Episode cache: each series gets a lazy-loaded slot. The detail
         // screen reads its slot and shows a spinner while episodesLoadingFor
         // contains the seriesId.
@@ -78,20 +93,22 @@ class OnDemandViewModel @Inject constructor(
         val movieProviderInfoLoading: Set<Int> = emptySet(),
         val seriesProviderInfoLoading: Set<Int> = emptySet(),
     ) {
-        val visible: List<DispatcharrVODMovie> get() {
-            val q = searchQuery.trim()
-            if (q.isEmpty()) return movies
-            return movies.filter { it.displayName.contains(q, ignoreCase = true) }
-        }
-        val visibleSeries: List<DispatcharrVODSeries> get() {
-            val q = seriesSearchQuery.trim()
-            if (q.isEmpty()) return series
-            return series.filter { it.displayName.contains(q, ignoreCase = true) }
-        }
+        // While searching, render the server-side results (full library). While
+        // browsing, render the progressively-paginated list. The search request
+        // itself lives in setSearchQuery(); these getters just pick the source.
+        val visible: List<DispatcharrVODMovie> get() =
+            if (searchQuery.isBlank()) movies else searchResults
+        val visibleSeries: List<DispatcharrVODSeries> get() =
+            if (seriesSearchQuery.isBlank()) series else seriesSearchResults
     }
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    // Debounced server-side search jobs, cancelled + restarted per keystroke so
+    // only the final query in a fast burst of typing hits the network.
+    private var searchMoviesJob: kotlinx.coroutines.Job? = null
+    private var searchSeriesJob: kotlinx.coroutines.Job? = null
 
     init {
         refresh()
@@ -132,12 +149,160 @@ class OnDemandViewModel @Inject constructor(
         _state.value = UiState()
     }
 
+    /**
+     * Movies search. On Dispatcharr this queries the server (`?search=`) so a
+     * match anywhere in the full library is found even if its page was never
+     * walked into `movies`. Non-Dispatcharr sources keep the instant client
+     * filter (their whole library is already loaded). Debounced so a fast burst
+     * of typing only fires the final query.
+     */
     fun setSearchQuery(value: String) {
         _state.update { it.copy(searchQuery = value) }
+        searchMoviesJob?.cancel()
+        val q = value.trim()
+        if (q.isEmpty()) {
+            _state.update { it.copy(searchResults = emptyList(), isSearching = false) }
+            return
+        }
+        searchMoviesJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(SEARCH_DEBOUNCE_MS)
+            val playlist = playlistRepository.activePlaylist()
+            val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
+            val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+                    sourceType == SourceType.DispatcharrUserPass
+            if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
+                _state.update { st ->
+                    st.copy(
+                        searchResults = st.movies.filter { it.displayName.contains(q, ignoreCase = true) },
+                        isSearching = false,
+                    )
+                }
+                return@launch
+            }
+            _state.update { it.copy(isSearching = true) }
+            val base = playlist.urlString.trimEnd('/')
+            val url = "$base/api/vod/movies/?search=" +
+                    java.net.URLEncoder.encode(q, "UTF-8") + "&page_size=100"
+            val page = runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                    dispatcharrClient.getVODMoviesPage(url, key)
+                }
+            }.getOrNull()
+            // Discard a stale response if the user kept typing past this query.
+            if (_state.value.searchQuery.trim() != q) return@launch
+            _state.update { it.copy(searchResults = page?.results ?: emptyList(), isSearching = false) }
+        }
     }
 
+    /** Series search. Mirrors [setSearchQuery] against `/api/vod/series/`. */
     fun setSeriesSearchQuery(value: String) {
         _state.update { it.copy(seriesSearchQuery = value) }
+        searchSeriesJob?.cancel()
+        val q = value.trim()
+        if (q.isEmpty()) {
+            _state.update { it.copy(seriesSearchResults = emptyList(), isSearchingSeries = false) }
+            return
+        }
+        searchSeriesJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(SEARCH_DEBOUNCE_MS)
+            val playlist = playlistRepository.activePlaylist()
+            val sourceType = playlist?.sourceType?.let { SourceType.entries.firstOrNull { st -> st.name == it } }
+            val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+                    sourceType == SourceType.DispatcharrUserPass
+            if (playlist == null || !isDispatcharr || playlist.apiKey.isNullOrBlank()) {
+                _state.update { st ->
+                    st.copy(
+                        seriesSearchResults = st.series.filter { it.displayName.contains(q, ignoreCase = true) },
+                        isSearchingSeries = false,
+                    )
+                }
+                return@launch
+            }
+            _state.update { it.copy(isSearchingSeries = true) }
+            val base = playlist.urlString.trimEnd('/')
+            val url = "$base/api/vod/series/?search=" +
+                    java.net.URLEncoder.encode(q, "UTF-8") + "&page_size=100"
+            val page = runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                    dispatcharrClient.getVODSeriesPage(url, key)
+                }
+            }.getOrNull()
+            if (_state.value.seriesSearchQuery.trim() != q) return@launch
+            _state.update { it.copy(seriesSearchResults = page?.results ?: emptyList(), isSearchingSeries = false) }
+        }
+    }
+
+    /**
+     * Append the next browse page when the grid nears its end. No-op while a
+     * load is already in flight, while searching (search isn't paginated here),
+     * or once the cursor is exhausted. De-dups on uuid like the eager walk.
+     */
+    fun loadMoreMovies() {
+        val st = _state.value
+        if (st.isLoadingMore || st.searchQuery.isNotBlank()) return
+        val cursor = st.moviesNextCursor ?: return
+        // Flag in-flight synchronously BEFORE launching: the ~8 near-end items
+        // that each trigger this within one frame then collapse to a single
+        // fetch (main-thread serialization sees the flag set on the 2nd+ call).
+        _state.update { it.copy(isLoadingMore = true) }
+        viewModelScope.launch {
+            val playlist = playlistRepository.activePlaylist()
+            if (playlist == null) {
+                _state.update { it.copy(isLoadingMore = false) }
+                return@launch
+            }
+            runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                    dispatcharrClient.getVODMoviesPage(cursor, key)
+                }
+            }.fold(
+                onSuccess = { p ->
+                    _state.update { s ->
+                        val merged = s.movies.toMutableList()
+                        val seen = merged.mapTo(HashSet()) { it.uuid }
+                        p.results.forEach { m -> if (m.uuid !in seen) { merged += m; seen += m.uuid } }
+                        s.copy(movies = merged, totalCount = p.count, moviesNextCursor = p.next, isLoadingMore = false)
+                    }
+                },
+                onFailure = { t ->
+                    Log.w(TAG, "VOD movies load-more failed", t)
+                    _state.update { it.copy(isLoadingMore = false) }
+                },
+            )
+        }
+    }
+
+    /** Series counterpart of [loadMoreMovies]; de-dups on id. */
+    fun loadMoreSeries() {
+        val st = _state.value
+        if (st.isLoadingMoreSeries || st.seriesSearchQuery.isNotBlank()) return
+        val cursor = st.seriesNextCursor ?: return
+        _state.update { it.copy(isLoadingMoreSeries = true) }
+        viewModelScope.launch {
+            val playlist = playlistRepository.activePlaylist()
+            if (playlist == null) {
+                _state.update { it.copy(isLoadingMoreSeries = false) }
+                return@launch
+            }
+            runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                    dispatcharrClient.getVODSeriesPage(cursor, key)
+                }
+            }.fold(
+                onSuccess = { p ->
+                    _state.update { s ->
+                        val merged = s.series.toMutableList()
+                        val seen = merged.mapTo(HashSet()) { it.id }
+                        p.results.forEach { x -> if (x.id !in seen) { merged += x; seen += x.id } }
+                        s.copy(series = merged, seriesTotalCount = p.count, seriesNextCursor = p.next, isLoadingMoreSeries = false)
+                    }
+                },
+                onFailure = { t ->
+                    Log.w(TAG, "VOD series load-more failed", t)
+                    _state.update { it.copy(isLoadingMoreSeries = false) }
+                },
+            )
+        }
     }
 
     fun refresh() {
@@ -185,6 +350,7 @@ class OnDemandViewModel @Inject constructor(
                             isLoading = false,
                             movies = page.results,
                             totalCount = page.count,
+                            moviesNextCursor = page.next,
                             error = null,
                         )
                     }
@@ -215,7 +381,7 @@ class OnDemandViewModel @Inject constructor(
                                         seen += m.uuid
                                     }
                                 }
-                                st.copy(movies = merged, totalCount = p.count)
+                                st.copy(movies = merged, totalCount = p.count, moviesNextCursor = p.next)
                             }
                         }
                         nextResult.exceptionOrNull()?.let { t ->
@@ -274,6 +440,7 @@ class OnDemandViewModel @Inject constructor(
                             isLoadingSeries = false,
                             series = page.results,
                             seriesTotalCount = page.count,
+                            seriesNextCursor = page.next,
                             seriesError = null,
                         )
                     }
@@ -300,7 +467,7 @@ class OnDemandViewModel @Inject constructor(
                                         seen += s.id
                                     }
                                 }
-                                st.copy(series = merged, seriesTotalCount = p.count)
+                                st.copy(series = merged, seriesTotalCount = p.count, seriesNextCursor = p.next)
                             }
                         }
                         nextResult.exceptionOrNull()?.let { t ->
@@ -761,14 +928,19 @@ class OnDemandViewModel @Inject constructor(
         const val STATE_FLUSH_EVERY = 16
 
         /**
-         * Cap on the eager VOD next-cursor walk. A large Dispatcharr provider can
-         * expose 30k+ movies (340+ pages) plus thousands of series; walking the
-         * whole library on load fired ~420 back-to-back requests, ballooned the
-         * Dalvik heap past 90MB, and starved the EPG + UI for minutes (Z Fold 5
-         * field report: page 90/344 after 2 min, EPG never painting). Load a
-         * browsable head eagerly; fetching the rest lazily on scroll is a
-         * follow-up. 100 rows/page, so this is ~1,000 movies + ~1,000 series.
+         * Size of the eagerly-walked head of the VOD library. A large Dispatcharr
+         * provider can expose 30k+ movies (340+ pages) plus thousands of series;
+         * walking the whole library on load fired ~420 back-to-back requests,
+         * ballooned the Dalvik heap past 90MB, and starved the EPG + UI for
+         * minutes (Z Fold 5 field report: page 90/344 after 2 min, EPG never
+         * painting). We now load this browsable head eagerly and fetch the rest
+         * lazily on scroll via loadMoreMovies()/loadMoreSeries(); search reaches
+         * the full library server-side regardless. 100 rows/page, so ~1,000
+         * movies + ~1,000 series up front.
          */
         const val MAX_EAGER_VOD_PAGES = 10
+
+        /** Debounce before a keystroke fires a server-side VOD search. */
+        const val SEARCH_DEBOUNCE_MS = 300L
     }
 }

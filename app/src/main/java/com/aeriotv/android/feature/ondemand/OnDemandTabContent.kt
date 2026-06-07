@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -347,7 +348,16 @@ private fun MoviesSubScreen(
             verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
             horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
         ) {
-            items(items = visibleFiltered, key = { it.id }) { movie ->
+            itemsIndexed(items = visibleFiltered, key = { _, it -> it.id }) { index, movie ->
+                // Prefetch the next page as the user nears the end of what's
+                // loaded. Browse only -- search results aren't paginated here,
+                // and the cursor guard stops once the library is fully walked.
+                if (state.moviesNextCursor != null &&
+                    state.searchQuery.isBlank() &&
+                    index >= visibleFiltered.size - 8
+                ) {
+                    LaunchedEffect(visibleFiltered.size) { viewModel.loadMoreMovies() }
+                }
                 MoviePoster(
                     movie = movie,
                     isTv = isTv,
@@ -489,7 +499,13 @@ private fun SeriesSubScreen(
             verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
             horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
         ) {
-            items(items = visibleSeriesFiltered, key = { it.id }) { series ->
+            itemsIndexed(items = visibleSeriesFiltered, key = { _, it -> it.id }) { index, series ->
+                if (state.seriesNextCursor != null &&
+                    state.seriesSearchQuery.isBlank() &&
+                    index >= visibleSeriesFiltered.size - 8
+                ) {
+                    LaunchedEffect(visibleSeriesFiltered.size) { viewModel.loadMoreSeries() }
+                }
                 SeriesPoster(
                     series = series,
                     isTv = isTv,
