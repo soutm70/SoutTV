@@ -69,6 +69,7 @@ class DebugLogger @Inject constructor(
 
     fun setEnabled(value: Boolean) {
         enabled.set(value)
+        runtimeEnabled.set(value)
         if (value) {
             // Mark the moment logging came on so a future bug report has a
             // visible start-of-session anchor.
@@ -246,7 +247,7 @@ class DebugLogger @Inject constructor(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "DebugLogger"
         const val LOGS_DIR = "logs"
         const val LOG_FILE = "aerio_debug_logs.txt"
@@ -259,5 +260,15 @@ class DebugLogger @Inject constructor(
         // for the same reason.
         val TIMESTAMP_FMT: SimpleDateFormat =
             SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+        /**
+         * Process-global mirror of the enable flag, kept in sync by [setEnabled].
+         * Lets plain non-DI code (the Ktor network-logger config in HttpLogging)
+         * gate on the runtime "Enable Debug Logging" toggle without a Context, so
+         * a release build can capture the network trace once the user opts in.
+         */
+        private val runtimeEnabled = AtomicBoolean(false)
+
+        fun isLoggingEnabled(): Boolean = runtimeEnabled.get()
     }
 }
