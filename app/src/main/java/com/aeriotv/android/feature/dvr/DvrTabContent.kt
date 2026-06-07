@@ -498,7 +498,11 @@ private fun RecordingRow(
     val statusColor = when (rec.status) {
         DvrViewModel.Recording.Status.Recording -> Color(0xFFFF4757)
         DvrViewModel.Recording.Status.Completed -> MaterialTheme.colorScheme.primary
-        DvrViewModel.Recording.Status.Stopped -> Color(0xFFFFA502)
+        // A "stopped" Dispatcharr recording still wrote a finished, playable file
+        // (Dispatcharr's own web UI shows it as COMPLETED), so present it like a
+        // completed recording instead of an alarming orange warning. A genuine
+        // failure is the separate Failed status below.
+        DvrViewModel.Recording.Status.Stopped -> MaterialTheme.colorScheme.primary
         DvrViewModel.Recording.Status.Failed -> Color(0xFFFF4757)
         DvrViewModel.Recording.Status.Scheduled -> MaterialTheme.colorScheme.onSurfaceVariant
         DvrViewModel.Recording.Status.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -506,7 +510,8 @@ private fun RecordingRow(
     val statusLabel = when (rec.status) {
         DvrViewModel.Recording.Status.Recording -> "Recording"
         DvrViewModel.Recording.Status.Completed -> "Completed"
-        DvrViewModel.Recording.Status.Stopped -> "Stopped"
+        // Stopped-but-saved reads as Completed, matching Dispatcharr (see color).
+        DvrViewModel.Recording.Status.Stopped -> "Completed"
         DvrViewModel.Recording.Status.Failed -> "Failed"
         DvrViewModel.Recording.Status.Scheduled -> "Scheduled"
         DvrViewModel.Recording.Status.Unknown -> "Unknown"
