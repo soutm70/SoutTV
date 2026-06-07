@@ -115,13 +115,13 @@ private fun WelcomeSingleColumn(
                 .padding(horizontal = 24.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(12.dp))
             BrandBlock()
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(18.dp))
             SupportedTypesGroup(alignStart = false)
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
             InfoCardsGroup()
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
             ActionButtons(
                 onConnectServer = onConnectServer,
                 onSkip = onSkip,
@@ -207,18 +207,24 @@ private fun BrandBlock(alignStart: Boolean = false) {
         horizontalAlignment = if (alignStart) Alignment.Start else Alignment.CenterHorizontally,
     ) {
         BrandLogo()
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
         Text(
             text = "AerioTV",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold,
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
             text = "Your IPTV & Media Hub",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "Android TV · Phone · Tablet",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -372,10 +378,10 @@ private fun BrandLogo() {
     // bitmap instead — same visual effect, API-agnostic.
     val accent = MaterialTheme.colorScheme.primary
     Box(
-        modifier = Modifier.size(140.dp),
+        modifier = Modifier.size(96.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(140.dp)) {
+        Canvas(modifier = Modifier.size(96.dp)) {
             drawCircle(
                 brush = Brush.radialGradient(
                     colorStops = arrayOf(
@@ -394,7 +400,7 @@ private fun BrandLogo() {
         Image(
             painter = painterResource(id = R.drawable.aerio_logo),
             contentDescription = null,
-            modifier = Modifier.size(96.dp),
+            modifier = Modifier.size(64.dp),
         )
     }
 }
