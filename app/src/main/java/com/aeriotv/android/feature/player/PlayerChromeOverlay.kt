@@ -127,12 +127,18 @@ fun PlayerChromeOverlay(
     audioOnly: Boolean,
     onSetSleepMinutes: (Int) -> Unit,
     sleepRemainingMillis: Long?,
+    onInteractingChange: (Boolean) -> Unit = {},
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val inPip by PipState.inPictureInPicture
     val pipAvailable = remember { context.supportsPip() }
+
+    // Tell the host the chrome is "busy" (Options menu or Sleep sheet open) so
+    // its auto-hide timer pauses while the user is interacting. tvOS keeps the
+    // panel up as long as it is open.
+    LaunchedEffect(moreOpen, sleepOpen) { onInteractingChange(moreOpen || sleepOpen) }
 
     // Initial focus target when chrome appears -- the leftmost "Options"
     // pill on the bottom row. Without this, focus stays on PlayerScreen's
@@ -428,6 +434,17 @@ fun PlayerChromeOverlay(
                 sleepRemainingMillis = sleepRemainingMillis,
             )
         }
+    }
+
+    // Dim the video (and the rest of the chrome) behind the Options menu so the
+    // panel reads clearly over bright content. tvOS dims the player while its
+    // Options panel is open; the menu popup renders above this scrim.
+    if (moreOpen) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f)),
+        )
     }
     }  // close the outer Box added in Phase 170
 

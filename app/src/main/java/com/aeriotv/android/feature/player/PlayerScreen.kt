@@ -289,6 +289,9 @@ fun PlayerScreen(
     var audioTracks by remember { mutableStateOf<AudioTracksState?>(null) }
     var playbackSpeedSheet by remember { mutableStateOf<Float?>(null) }
     var multiviewPickerOpen by remember { mutableStateOf(false) }
+    // True while the chrome's Options menu or Sleep sheet is open; pauses the
+    // auto-hide timer so the chrome does not fade mid-interaction.
+    var chromeMenuOpen by remember { mutableStateOf(false) }
 
     // Sleep timer: stores the wall-clock millis at which the player should close.
     var sleepEndsAt by remember { mutableStateOf<Long?>(null) }
@@ -452,6 +455,7 @@ fun PlayerScreen(
                 sleepEndsAt = if (minutes == 0) null else System.currentTimeMillis() + minutes * 60_000L
             },
             sleepRemainingMillis = sleepRemainingMillis,
+            onInteractingChange = { chromeMenuOpen = it },
         )
     }
 
@@ -460,8 +464,14 @@ fun PlayerScreen(
     // so D-pad navigation through the chrome buttons resets the timer
     // instead of letting it fire mid-traversal. The key is
     // lastInteractionAt -- changing that restarts the LaunchedEffect.
-    LaunchedEffect(chromeVisible, lastInteractionAt) {
-        if (chromeVisible) {
+    // While a menu or sheet is open, pause the auto-hide so the chrome (and the
+    // open panel) stay put while the user interacts. tvOS keeps the Options
+    // panel up until it is dismissed.
+    val interactionLocked = chromeMenuOpen || recordTarget != null || streamInfo != null ||
+        subtitles != null || audioTracks != null || playbackSpeedSheet != null ||
+        multiviewPickerOpen
+    LaunchedEffect(chromeVisible, lastInteractionAt, interactionLocked) {
+        if (chromeVisible && !interactionLocked) {
             delay(AUTO_HIDE_MS)
             chromeVisible = false
         }
