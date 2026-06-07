@@ -35,6 +35,7 @@ import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.main.MainScaffold
 import com.aeriotv.android.feature.onboarding.ChooseSourceTypeScreen
 import com.aeriotv.android.feature.onboarding.ConfigureSourceScreen
+import com.aeriotv.android.feature.onboarding.SettingUpScreen
 import com.aeriotv.android.feature.onboarding.WelcomeScreen
 import com.aeriotv.android.feature.multiview.MultiviewScreen
 import com.aeriotv.android.feature.ondemand.OnDemandViewModel
@@ -168,7 +169,13 @@ fun AerioTVNavHost(
                     }
                 }
 
-                BootstrapSplash()
+                SettingUpScreen(
+                    onSkip = {
+                        navController.navigate(Routes.MAIN) {
+                            popUpTo(Routes.PLAYLIST_GRAPH) { inclusive = false }
+                        }
+                    },
+                )
             }
 
             composable(Routes.WELCOME) { entry ->
