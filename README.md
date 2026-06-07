@@ -12,7 +12,7 @@ It is the Android port of [AerioTV for Apple platforms](https://github.com/jonze
 
 ## Screenshots
 
-Screenshots are coming soon. The groups below are ready to fill in (drop images into `docs/screenshots/`).
+Screenshots are coming soon.
 
 <details>
 <summary><strong>Phone</strong></summary>
