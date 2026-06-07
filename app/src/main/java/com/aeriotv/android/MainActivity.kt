@@ -74,38 +74,13 @@ class MainActivity : ComponentActivity() {
      * is showing. That keeps single-press OK working in all other contexts.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN &&
-            (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                event.keyCode == KeyEvent.KEYCODE_ENTER)
-        ) {
-            val now = SystemClock.uptimeMillis()
-            val sinceLast = now - lastSelectPressMs
-            lastSelectPressMs = now
-            val miniActive = miniPlayerSession.state.value is MiniPlayerSession.State.Active
-            Log.i(
-                "MiniPlayerResume",
-                "OK pressed: sinceLast=${sinceLast}ms miniActive=$miniActive " +
-                    "threshold=${DOUBLE_PRESS_THRESHOLD_MS}ms",
-            )
-            // Audit task #22 + Phase 162 crash fix: while the mini is Active,
-            // consume EVERY OK press, not just the second one. Otherwise the
-            // first press falls through to Compose and clicks whatever's
-            // focused in the guide (a programme cell, group chip, etc.),
-            // navigating to PLAYER -- and then the second press fires the
-            // resume which navigates to PLAYER *again*. Two NavController
-            // navigations within ~350ms of each other against the same
-            // singleTop route was producing the crash. Single OK while
-            // mini-Active is now a deliberate no-op; user knows from the hint
-            // chip that double-press is the resume gesture.
-            if (miniActive) {
-                if (sinceLast in 1L..DOUBLE_PRESS_THRESHOLD_MS) {
-                    Log.i("MiniPlayerResume", "Double-press detected -> requestResume()")
-                    miniPlayerSession.requestResume()
-                    lastSelectPressMs = 0L
-                }
-                return true
-            }
-        }
+        // The mini-player no longer hijacks OK. Previously, while the mini was
+        // Active, EVERY D-pad Select was consumed (double-press = resume), which
+        // trapped the user: a single OK on a guide cell did nothing, so they
+        // couldn't start a different channel without restarting the app
+        // (Coolwolf report). OK now always reaches Compose, so selecting any
+        // channel in the guide plays it fullscreen and supersedes the mini.
+        // Resume = just select the channel that's playing in the corner.
         return super.dispatchKeyEvent(event)
     }
 
@@ -165,6 +140,22 @@ class MainActivity : ComponentActivity() {
             PipState.videoPlaybackActive.value &&
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> enterPip16x9()
         }
+    }
+
+    override fun onDestroy() {
+        // Explicit app exit (Back -> Exit dialog -> finish) must stop playback.
+        // The ExoPlayer holder + media session are process-scoped singletons, so
+        // without this they keep decoding audio after the activity is gone (the
+        // "audio still plays after Exit" report). Gated on isFinishing so a
+        // config-change recreation doesn't kill playback; HOME / leave keeps
+        // playing via onUserLeaveHint, which does NOT finish the activity.
+        if (isFinishing) {
+            runCatching { miniPlayerSession.dismiss() }
+            runCatching { exoWindowState.hide() }
+            runCatching { exoHolder.destroy() }
+            AerioMediaPlaybackService.stop(this)
+        }
+        super.onDestroy()
     }
 
     /**

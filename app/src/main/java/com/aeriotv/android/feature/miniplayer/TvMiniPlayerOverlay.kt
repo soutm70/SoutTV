@@ -61,7 +61,7 @@ fun BoxScope.TvMiniPlayerOverlay(
     // TV-scaled typography).
     val hintBase = MaterialTheme.typography.labelSmall
     Text(
-        text = "Double press OK to resume",
+        text = "Press Back to close",
         style = hintBase.copy(fontSize = (hintBase.fontSize.value * 0.75f).sp),
         color = Color.White,
         fontWeight = FontWeight.Medium,
