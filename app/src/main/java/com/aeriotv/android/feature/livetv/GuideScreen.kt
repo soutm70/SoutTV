@@ -24,8 +24,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,13 +42,21 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import com.aeriotv.android.feature.main.LocalTvTopNavFocusRequester
@@ -105,6 +115,10 @@ import java.util.Locale
 import java.util.TimeZone
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalConfiguration
@@ -337,7 +351,7 @@ fun GuideScreen(
     val visibleWindow by remember(windowStart, hourWidthPx, stripViewportPx) {
         derivedStateOf {
             val bucketMs = 5L * 60_000L
-            val padMs = 30L * 60_000L
+            val padMs = GUIDE_VIEWPORT_PAD_MS
             val scrollPx = horizontalScrollState.value.toFloat()
             val startMs = windowStart + (scrollPx / hourWidthPx * 3_600_000f).toLong()
             val snappedStart = (startMs / bucketMs) * bucketMs
@@ -729,11 +743,32 @@ fun GuideScreen(
         // grid. `null` on phone (the CompositionLocal is unset off-TV) so
         // the .then(...) call is a no-op.
         val topNavRequester = LocalTvTopNavFocusRequester.current
+        // EPG vertical-nav model (GH D-pad fixes). On TV the guide owns D-pad
+        // UP/DOWN explicitly instead of relying on Compose's default focus
+        // search, which had two failure modes:
+        //   Bug 1 (timeline jumps on channel up/down): the default search lands
+        //     focus on whatever cell happens to overlap, then bring-into-view
+        //     scrolls the SHARED horizontal timeline to align it -> every row
+        //     lurches sideways. We instead move focus to the cell in the
+        //     prev/next row at the SAME anchor time (same on-screen column) and
+        //     suppress horizontal scroll for that move.
+        //   Bug 2 (fast UP escapes to the nav pill mid-list): when UP outran
+        //     LazyColumn composition the row above wasn't composed yet, the
+        //     search found nothing focusable, and focus fell through to
+        //     `up = topNavRequester`. We instead scroll the target row into
+        //     existence first, then focus it -- so UP only reaches the nav pill
+        //     when already on channel index 0.
+        val guideNav = remember { GuideVerticalNavState() }
+        val navScope = rememberCoroutineScope()
         // GH #5: anchor a focused cell's LEADING edge so an oversized programme
         // (wider than the timeline viewport) doesn't fling the horizontal scroll
         // to its END on D-pad focus. Flows down into each row's horizontalScroll;
         // vertical row scrolling is unaffected (rows are shorter than the viewport).
-        CompositionLocalProvider(LocalBringIntoViewSpec provides GuideLeadingEdgeBringIntoViewSpec) {
+        // The spec also returns 0 while a vertical move is in flight (see Bug 1).
+        val bringIntoViewSpec = remember {
+            GuideLeadingEdgeBringIntoViewSpec { guideNav.suppressHorizontalScroll }
+        }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoViewSpec) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -746,6 +781,48 @@ fun GuideScreen(
                         Modifier.focusProperties { up = topNavRequester }
                     } else Modifier
                 )
+                // EPG vertical-nav interception (TV only -- a touch device never
+                // delivers these key events, so this is inert off-TV even without
+                // an isTv guard). Fires on the way DOWN the tree, before the
+                // focusable cells, so we can claim UP/DOWN and steer focus
+                // ourselves. LEFT/RIGHT/CENTER fall through untouched, preserving
+                // horizontal timeline nav + OK-to-play.
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // LEFT/RIGHT: the user IS navigating the timeline, so allow the
+                    // shared horizontal scroll again and let the default focus
+                    // search + bring-into-view run unchanged.
+                    if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
+                        guideNav.allowHorizontalScroll()
+                        return@onPreviewKeyEvent false
+                    }
+                    val delta = when (event.key) {
+                        Key.DirectionDown -> 1
+                        Key.DirectionUp -> -1
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    val cur = guideNav.focusedChannelIndex
+                    // No cell focused yet (e.g. focus is still on the chips/top
+                    // bar): let the default search drive the first descent.
+                    if (cur < 0) return@onPreviewKeyEvent false
+                    val target = cur + delta
+                    // UP from the very top channel -> do NOT consume, so focus
+                    // falls through to `up = topNavRequester` and escapes to the
+                    // Live TV nav pill (Bug 2's intended top-of-guide behaviour).
+                    if (target < 0) return@onPreviewKeyEvent false
+                    // DOWN past the last channel -> nothing below; swallow so we
+                    // don't wrap or escape downward.
+                    if (target > filteredChannels.lastIndex) return@onPreviewKeyEvent true
+                    // In range: consume and move focus to the time-aligned cell in
+                    // the target row, composing it first if it scrolled off. Hold
+                    // the timeline still for the whole move (released on the next
+                    // LEFT/RIGHT) so a wide cell's bring-into-view never pans it.
+                    guideNav.beginVerticalMove()
+                    navScope.launch {
+                        guideNav.moveFocusToChannel(target, listState)
+                    }
+                    true
+                }
                 // Pinch-to-zoom the timeline. Custom detector that only acts on
                 // two-or-more pointers so single-finger pans still reach the
                 // LazyColumn's vertical scroll + the rows' horizontal scroll.
@@ -770,10 +847,12 @@ fun GuideScreen(
                     }
                 },
         ) {
-            items(items = filteredChannels, key = { it.id }) { channel ->
+            itemsIndexed(items = filteredChannels, key = { _, ch -> ch.id }) { channelIndex, channel ->
                 val programmes = state.epgByChannel[channel.guideMatchKey].orEmpty()
                 ChannelGuideRow(
                     channel = channel,
+                    channelIndex = channelIndex,
+                    guideNav = guideNav,
                     programmes = programmes,
                     windowStart = windowStart,
                     windowDurationMs = windowDurationMs,
@@ -846,6 +925,8 @@ fun GuideScreen(
 @Composable
 private fun ChannelGuideRow(
     channel: M3UChannel,
+    channelIndex: Int,
+    guideNav: GuideVerticalNavState,
     programmes: List<EPGProgramme>,
     windowStart: Long,
     windowDurationMs: Long,
@@ -874,6 +955,16 @@ private fun ChannelGuideRow(
     val context = LocalContext.current
     var railMenuOpen by remember { mutableStateOf(false) }
     val railMenuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
+    // Stable FocusRequester per programme (keyed by start time, unique within a
+    // channel). The guide's vertical-nav handler asks this row to focus the cell
+    // spanning a given anchor time; that needs a requester it can drive even
+    // though the visible cell set churns as the timeline scrolls.
+    val cellRequesters = remember(channel.id) { mutableMapOf<Long, FocusRequester>() }
+    // Spans of the CURRENTLY composed cells, rebuilt each composition (cleared at
+    // the top of the strip layout below, refilled as cells render). The row-focus
+    // handler picks the entry whose span contains the anchor time (or the
+    // nearest), so a channel up/down lands in the same time column.
+    val visibleCellSpans = remember { mutableListOf<CellSpan>() }
 
     // Compact rail sizing. On TV we keep it tight (narrow rail, small logo) so
     // more channels fit; legibility comes from the name/cell text, not bulk.
@@ -1093,6 +1184,8 @@ private fun ChannelGuideRow(
             }
         }
 
+        visibleCellSpans.clear()
+
         // Programme strip - horizontally scrolled with the header.
         Box(
             modifier = Modifier
@@ -1143,6 +1236,12 @@ private fun ChannelGuideRow(
                             ((nowMillis - clippedStart) / span).coerceIn(0f, 1f)
                         } else null
                     } else null
+                    // Vertical-nav plumbing: a stable requester for this programme
+                    // and a record of its visible span so the row handler can focus
+                    // it by anchor time. The anchor reported on focus is the cell's
+                    // clipped start (the column it occupies on screen).
+                    val cellRequester = cellRequesters.getOrPut(programme.startMillis) { FocusRequester() }
+                    visibleCellSpans.add(CellSpan(clippedStart, clippedEnd, cellRequester))
                     ProgrammeCell(
                         programme = programme,
                         channelName = channel.name,
@@ -1154,6 +1253,10 @@ private fun ChannelGuideRow(
                         horizontalScrollState = horizontalScrollState,
                         activeReminderKeys = activeReminderKeys,
                         remindersVm = remindersVm,
+                        focusRequester = cellRequester,
+                        channelIndex = channelIndex,
+                        anchorTimeMs = clippedStart,
+                        guideNav = guideNav,
                         // Dispatcharr bulk grid drops <category>; fall back
                         // to the channel's group title so guide cells still
                         // tint even before any per-program lazy enrichment
@@ -1190,7 +1293,43 @@ private fun ChannelGuideRow(
             }
         }
     }
+
+    // Register this row's "focus the cell at the anchor time" hook with the
+    // guide's vertical-nav state. The handler reads `visibleCellSpans` lazily
+    // (it's mutated in place each composition), so it always sees the cells that
+    // are currently composed when a channel up/down lands here.
+    DisposableEffect(channelIndex) {
+        guideNav.registerRow(channelIndex) { anchorTimeMs ->
+            val spans = visibleCellSpans
+            if (spans.isEmpty()) return@registerRow false
+            // Prefer the cell whose [start, end) contains the anchor time; if the
+            // anchor falls in a gap (no EPG there), snap to the nearest cell so a
+            // channel with sparser data still keeps focus on this row.
+            val containing = spans.firstOrNull { anchorTimeMs in it.startMs until it.endMs }
+            val target = containing ?: spans.minByOrNull { span ->
+                when {
+                    anchorTimeMs < span.startMs -> span.startMs - anchorTimeMs
+                    anchorTimeMs >= span.endMs -> anchorTimeMs - span.endMs + 1
+                    else -> 0L
+                }
+            }
+            if (target == null) return@registerRow false
+            // requestFocus() throws if the node isn't attached yet (row composed
+            // but not laid out). The caller retries for a few frames, so swallow
+            // and report failure rather than crash.
+            runCatching { target.requester.requestFocus() }.isSuccess
+        }
+        onDispose { guideNav.unregisterRow(channelIndex) }
+    }
 }
+
+/** A composed programme cell's visible time span + its focus handle, used by the
+ *  guide's vertical-nav handler to focus the cell at a given anchor time. */
+private class CellSpan(
+    val startMs: Long,
+    val endMs: Long,
+    val requester: FocusRequester,
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1207,6 +1346,12 @@ private fun ProgrammeCell(
     horizontalScrollState: androidx.compose.foundation.ScrollState? = null,
     activeReminderKeys: Set<String>,
     remindersVm: RemindersViewModel,
+    focusRequester: FocusRequester,
+    /** Index of this cell's channel row + the time column it occupies, reported
+     *  to [guideNav] on focus so D-pad up/down can stay in the same column. */
+    channelIndex: Int,
+    anchorTimeMs: Long,
+    guideNav: GuideVerticalNavState,
     categoryTint: androidx.compose.ui.graphics.Color?,
     modifier: Modifier,
     onPlay: () -> Unit,
@@ -1295,6 +1440,10 @@ private fun ProgrammeCell(
         modifier = modifier
             .width(widthDp)
             .fillMaxHeight()
+            // Vertical-nav handle: the guide's D-pad up/down handler focuses this
+            // cell by anchor time via this requester. Must precede the focusable
+            // (combinedClickable) below so the requester binds to that node.
+            .focusRequester(focusRequester)
             .then(
                 // TV: a 1dp trailing seam so adjacent flat cells stay distinct.
                 // Phone: the original inset that floats the rounded card.
@@ -1314,7 +1463,14 @@ private fun ProgrammeCell(
                     Modifier.border(cellBorderWidth, cellBorderColor, cellShape)
                 else Modifier,
             )
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                // Record which channel row + time column owns focus so the
+                // guide's vertical-nav handler can step to the same column in
+                // the next/prev row.
+                if (it.isFocused) guideNav.onCellFocused(channelIndex, anchorTimeMs)
+                else guideNav.onCellUnfocused(channelIndex)
+            }
             .combinedClickable(
                 // Single tap/click plays the channel; the program-info sheet +
                 // actions live behind a long press (the menu below). iOS parity.
@@ -1477,9 +1633,190 @@ private object GuideMetrics {
 
 private const val MS_PER_HOUR_F = 3_600_000f
 
+/** Off-screen pre-render pad (each side) for the horizontal viewport clip. Cells
+ *  whose visible span lies entirely within this pad are composed but not actually
+ *  on-screen; the vertical-nav nearest-cell fallback excludes them so a channel
+ *  up/down never lands focus on a row's off-viewport pad (M3). */
+private const val GUIDE_VIEWPORT_PAD_MS = 30L * 60_000L
+
 /** Convert a millisecond span to its dp width on the (already scaled) time axis. */
 private fun msToDp(ms: Long, hourWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp =
     (hourWidth.value * (ms.toFloat() / MS_PER_HOUR_F)).dp
+
+/**
+ * Drives D-pad UP/DOWN through the EPG grid on Android TV.
+ *
+ * The guide is one [LazyColumn] of rows that all share a single horizontal
+ * scroll. Letting Compose's default focus search handle channel up/down had two
+ * bugs (see the call site for the full write-up): it scrolled the SHARED
+ * timeline sideways to align whatever cell it landed on (Bug 1), and when a fast
+ * UP outran row composition it leaked focus to the top nav pill (Bug 2).
+ *
+ * This holder keeps the focus deterministic:
+ *  - Every composed row registers a [RowFocusHandler] keyed by its channel index
+ *    ([registerRow]); the handler can focus the cell at a given anchor time.
+ *  - Each programme cell reports focus + its leading-edge time via
+ *    [onCellFocused], which records the focused channel index and the anchor
+ *    time (the column the user is "in").
+ *  - [moveFocusToChannel] scrolls the target row into existence if needed, then
+ *    focuses its cell at the anchor time, with [suppressHorizontalScroll] held
+ *    true across the move so the shared timeline never pans.
+ */
+private class GuideVerticalNavState {
+    /** Index (into the filtered channel list) of the row whose cell is focused;
+     *  -1 when focus is outside the grid. Read by the key handler. */
+    var focusedChannelIndex by mutableStateOf(-1)
+        private set
+
+    /** Anchor time (ms) the user is navigating along -- the start time of the
+     *  focused cell, clamped to the guide window. Vertical moves target the cell
+     *  in the next/prev row that spans this time, keeping the on-screen column
+     *  fixed. */
+    var anchorTimeMs: Long = Long.MIN_VALUE
+        private set
+
+    /** While true the [GuideLeadingEdgeBringIntoViewSpec] returns 0 so a
+     *  vertical move never scrolls the shared horizontal timeline. Set true at
+     *  the start of a channel up/down move and held until the user next presses
+     *  LEFT/RIGHT (a deliberate horizontal move). A plain volatile flag, not a
+     *  Compose state -- the spec reads it imperatively, not in composition. */
+    @Volatile
+    var suppressHorizontalScroll: Boolean = false
+        private set
+
+    /** True only between a programmatic (vertical-move) requestFocus and the
+     *  onCellFocused it triggers, so that focus is treated as column-preserving
+     *  and does NOT overwrite [anchorTimeMs]. Consumed by onCellFocused, or
+     *  cleared if the focus request fails. Without this the anchor drifts to each
+     *  landed cell's programme start (Bug 1). Main-thread only, so a plain var. */
+    private var programmaticFocusPending: Boolean = false
+
+    /** Bumped at the start of each vertical move so only the latest move's tail
+     *  releases the timeline freeze -- a rapid auto-repeat holds it until the
+     *  final landing instead of an earlier move's finally releasing it early. */
+    private var moveGeneration: Int = 0
+
+    /** Begin a vertical (channel up/down) move: freeze the shared timeline so the
+     *  focus-driven bring-into-view of a wide cell can't pan it sideways. */
+    fun beginVerticalMove() {
+        suppressHorizontalScroll = true
+    }
+
+    /** The user pressed LEFT/RIGHT (or clicked): release the timeline so normal
+     *  horizontal navigation scrolls again. */
+    fun allowHorizontalScroll() {
+        suppressHorizontalScroll = false
+    }
+
+    /** Per-row hook: focus the cell at [anchorTimeMs]; returns true if a cell
+     *  was found and focused. */
+    fun interface RowFocusHandler {
+        fun focusAtTime(anchorTimeMs: Long): Boolean
+    }
+
+    private val rowHandlers = mutableMapOf<Int, RowFocusHandler>()
+
+    fun registerRow(channelIndex: Int, handler: RowFocusHandler) {
+        rowHandlers[channelIndex] = handler
+    }
+
+    fun unregisterRow(channelIndex: Int) {
+        rowHandlers.remove(channelIndex)
+    }
+
+    /** Called by a cell when it gains focus. Records which channel row owns
+     *  focus and the time column the user is in. */
+    fun onCellFocused(channelIndex: Int, cellStartMs: Long) {
+        focusedChannelIndex = channelIndex
+        // Preserve the navigation column across vertical (channel up/down) moves.
+        // A handler-driven focus sets programmaticFocusPending first; we consume it
+        // and keep the existing anchor instead of snapping to this cell's start.
+        // Only a user horizontal / fresh-entry focus (flag false) adopts a new
+        // column. (Bug 1: without this the anchor drifts up to an hour per press.)
+        if (programmaticFocusPending) {
+            programmaticFocusPending = false
+        } else {
+            anchorTimeMs = cellStartMs
+        }
+    }
+
+    /** Called by a cell when it loses focus; clears the focused index only if it
+     *  still pointed at this cell's row (a sibling may already have claimed it). */
+    fun onCellUnfocused(channelIndex: Int) {
+        if (focusedChannelIndex == channelIndex) focusedChannelIndex = -1
+    }
+
+    /**
+     * Move focus to [targetIndex]'s row at the current [anchorTimeMs]. Scrolls
+     * the row into the viewport first if it isn't fully visible (so a fast UP/DOWN
+     * never loses focus to an uncomposed row), then retries focusing for a few
+     * frames while the row composes and registers its handler.
+     */
+    suspend fun moveFocusToChannel(targetIndex: Int, listState: LazyListState) {
+        // The shared timeline is frozen for the duration of this move (set true by
+        // beginVerticalMove on the key handler) so the landing cell's bring-into-
+        // view can't pan it sideways. We release it in the finally once the move
+        // settles, plus a short tail for a late bring-into-view, rather than
+        // latching it until the next LEFT/RIGHT -- so OK / Back / jump-to-now can
+        // still reveal off-screen cells afterwards (fixes the latch regression).
+        val gen = ++moveGeneration
+        try {
+            ensureRowVisible(targetIndex, listState)
+            // The row may have only just composed (after a scroll); poll its handler
+            // for a handful of frames before giving up.
+            var attempts = 0
+            while (attempts < 8) {
+                val handler = rowHandlers[targetIndex]
+                if (handler != null) {
+                    // This requestFocus is programmatic: have onCellFocused PRESERVE
+                    // the current anchor column rather than adopt the landing cell's
+                    // start (the Bug-1 anchor-drift fix).
+                    programmaticFocusPending = true
+                    if (handler.focusAtTime(anchorTimeMs)) {
+                        focusedChannelIndex = targetIndex
+                        return
+                    }
+                    programmaticFocusPending = false
+                }
+                attempts++
+                kotlinx.coroutines.delay(8L)
+            }
+        } finally {
+            // Hold the freeze a few frames so a bring-into-view that lands a frame
+            // late is still suppressed, then release -- but only if this is still
+            // the most recent move (rapid auto-repeat keeps it frozen until the
+            // final landing). NonCancellable so a superseding press that cancels
+            // this coroutine still runs the release decision.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                kotlinx.coroutines.delay(48L)
+                if (gen == moveGeneration) suppressHorizontalScroll = false
+            }
+        }
+    }
+
+    /** Scroll [listState] the minimum amount to bring [index] fully on-screen,
+     *  composing it if it was scrolled off entirely. */
+    private suspend fun ensureRowVisible(index: Int, listState: LazyListState) {
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+        if (item == null) {
+            // Off-screen: jump it into view (aligned to the leading edge). Fast
+            // enough to be invisible and guarantees the row is composed.
+            listState.scrollToItem(index)
+            return
+        }
+        // Partially clipped at an edge: nudge by the deficit so the whole row is
+        // visible before we focus it.
+        val viewportStart = info.viewportStartOffset
+        val viewportEnd = info.viewportEndOffset
+        val topGap = item.offset - viewportStart
+        val bottomOverflow = (item.offset + item.size) - viewportEnd
+        when {
+            topGap < 0 -> listState.scrollBy(topGap.toFloat())
+            bottomOverflow > 0 -> listState.scrollBy(bottomOverflow.toFloat())
+        }
+    }
+}
 
 /**
  * Guide timeline bring-into-view (GH #5). Compose's default spec aligns a
@@ -1489,22 +1826,40 @@ private fun msToDp(ms: Long, hourWidth: androidx.compose.ui.unit.Dp): androidx.c
  * LEADING edge for oversized cells (their tail simply overflows right) and
  * otherwise falls back to the default minimal-nudge, so ordinary navigation
  * feels unchanged.
+ *
+ * [suppressHorizontalScroll] is consulted on every focus-driven bring-into-view:
+ * while a D-pad UP/DOWN vertical move is in flight (the guide's own key handler
+ * is moving focus to a time-aligned cell in the prev/next row), it returns 0 so
+ * the SHARED horizontal timeline does NOT pan. Without this, focusing a long
+ * program whose leading edge sits off the left of the viewport would fling every
+ * row sideways on a plain channel-up/down -- the "jumps around a lot" report.
+ * LEFT/RIGHT navigation leaves the flag false, so horizontal scroll behaves
+ * exactly as before.
  */
 @OptIn(ExperimentalFoundationApi::class)
-private val GuideLeadingEdgeBringIntoViewSpec = object : BringIntoViewSpec {
+private class GuideLeadingEdgeBringIntoViewSpec(
+    private val suppressHorizontalScroll: () -> Boolean,
+) : BringIntoViewSpec {
     override fun calculateScrollDistance(
         offset: Float,
         size: Float,
         containerSize: Float,
-    ): Float = when {
-        // Already fully visible: no scroll.
-        offset >= 0f && offset + size <= containerSize -> 0f
-        // Oversized cell (wider than the viewport): pin its LEADING edge to the
-        // viewport start so the tail overflows right -- never fling to its end.
-        size > containerSize -> offset
-        // Normal cell off the start edge: align leading (default behavior).
-        offset < 0f -> offset
-        // Normal cell off the end edge: align trailing (default behavior).
-        else -> offset + size - containerSize
+    ): Float {
+        // Vertical (channel up/down) move in flight: never scroll the shared
+        // timeline horizontally. The target cell is chosen at the current
+        // anchor time so it is already in the right column; any nudge here
+        // would desync every other row.
+        if (suppressHorizontalScroll()) return 0f
+        return when {
+            // Already fully visible: no scroll.
+            offset >= 0f && offset + size <= containerSize -> 0f
+            // Oversized cell (wider than the viewport): pin its LEADING edge to the
+            // viewport start so the tail overflows right -- never fling to its end.
+            size > containerSize -> offset
+            // Normal cell off the start edge: align leading (default behavior).
+            offset < 0f -> offset
+            // Normal cell off the end edge: align trailing (default behavior).
+            else -> offset + size - containerSize
+        }
     }
 }
