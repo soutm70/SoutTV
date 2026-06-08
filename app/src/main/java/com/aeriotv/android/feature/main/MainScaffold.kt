@@ -512,7 +512,7 @@ private fun TvTopTabBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 6.dp),
+            .padding(top = 8.dp, bottom = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -523,10 +523,10 @@ private fun TvTopTabBar(
                 // and only flips false when focus leaves the bar entirely, so it
                 // is the reliable "is the user in the bar" signal for [armed].
                 .onFocusChanged { navHasFocus = it.hasFocus }
-                .clip(RoundedCornerShape(30.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEach { tab ->
@@ -570,12 +570,12 @@ private fun TvTab(
                 if (it.isFocused) onFocused()
             }
             .tvFocusScale(focused)
-            .clip(RoundedCornerShape(26.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(background)
             .focusable()
-            .padding(horizontal = 20.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(
             imageVector = if (selected) tab.iconSelected else tab.iconUnselected,

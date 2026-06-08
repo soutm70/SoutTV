@@ -490,7 +490,7 @@ fun GuideScreen(
                     searchActive = !searchActive
                     if (!searchActive) viewModel.onSearchQueryChange("")
                 },
-                modifier = Modifier.size(36.dp).then(
+                modifier = Modifier.size(30.dp).then(
                     if (isTv) Modifier.background(
                         if (searchActive) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -506,7 +506,7 @@ fun GuideScreen(
                         searchActive -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
             // Gap between the two control circles. Material3 IconButton's
@@ -518,7 +518,7 @@ fun GuideScreen(
             // Filter toggle: opens the group on/off picker (Manage Groups).
             IconButton(
                 onClick = { showManageGroups = true },
-                modifier = Modifier.size(36.dp).then(
+                modifier = Modifier.size(30.dp).then(
                     if (isTv) Modifier.background(
                         if (hiddenGroups.isEmpty())
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
@@ -535,7 +535,7 @@ fun GuideScreen(
                         hiddenGroups.isEmpty() -> MaterialTheme.colorScheme.onSurfaceVariant
                         else -> MaterialTheme.colorScheme.primary
                     },
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
             Spacer(Modifier.width(if (isTv) 12.dp else 6.dp))
@@ -571,7 +571,7 @@ fun GuideScreen(
                             label = {
                                 Text(
                                     group,
-                                    style = if (isTv) MaterialTheme.typography.titleMedium
+                                    style = if (isTv) MaterialTheme.typography.titleSmall
                                     else MaterialTheme.typography.labelLarge,
                                 )
                             },
@@ -978,10 +978,10 @@ private fun ChannelGuideRow(
     // own full-width line and shows in full, mirroring tvOS channelLabel.
     val logoBox = 36.dp
     val logoImage = 32.dp
-    // TV name uses labelMedium (10.8sp at the 0.9 type scale) - the closest match
-    // to tvOS's 18pt name (~9sp proportional on 540dp). bodyMedium would be ~17%
-    // bigger than tvOS proportional. Phone keeps labelMedium.
-    val nameStyle = if (isTv) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelMedium
+    // TV name uses labelSmall (~9.9sp at the 0.9 type scale) - a touch smaller
+    // than labelMedium (10.8sp) per user request to free a little more rail width
+    // for long names while staying legible at 10 feet. Phone keeps labelMedium.
+    val nameStyle = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
     Row(
         modifier = Modifier
             .fillMaxWidth()
