@@ -1897,9 +1897,23 @@ private class GuideVerticalNavState {
         val info = listState.layoutInfo
         val item = info.visibleItemsInfo.firstOrNull { it.index == index }
         if (item == null) {
-            // Off-screen: jump it into view (aligned to the leading edge). Fast
-            // enough to be invisible and guarantees the row is composed.
-            listState.scrollToItem(index)
+            // The row is scrolled fully off an edge. Bring it to the NEAREST
+            // edge so a D-pad move advances ONE row at a time, instead of
+            // slamming the target to the leading (top) edge -- that was the
+            // "guide jumps to N..N+7 when you cross the bottom fold" bug (e.g.
+            // ch 1 -> down -> ch 9 suddenly shows 9..16). scrollToItem still
+            // composes the row instantly.
+            val visible = info.visibleItemsInfo
+            val firstVisible = visible.firstOrNull()?.index ?: index
+            if (visible.isEmpty() || index < firstVisible) {
+                // Off the TOP (moving up) or no anchor: align to the top edge,
+                // which is the minimal scroll in that direction.
+                listState.scrollToItem(index)
+            } else {
+                // Off the BOTTOM (moving down): land the target as the LAST
+                // visible row so the guide advances a single row.
+                listState.scrollToItem((index - visible.size + 1).coerceAtLeast(0))
+            }
             return
         }
         // Partially clipped at an edge: nudge by the deficit so the whole row is
