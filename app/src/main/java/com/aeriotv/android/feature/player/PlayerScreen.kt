@@ -524,10 +524,37 @@ fun PlayerScreen(
         )
     }
     if (multiviewPickerOpen) {
+        val multiviewStore = com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle()
+        // Snapshot the pre-open staged set so Cancel restores it EXACTLY
+        // (protects any Guide-staged selection from being wiped). Captured at
+        // composition time, i.e. BEFORE the seed LaunchedEffect below runs.
+        val mvSnapshot = remember { multiviewStore.selected.value }
+        val mvSnapshotFocus = remember { multiviewStore.audioFocusedIndex.value }
+        // Seed the now-playing channel as Tile 1 (index 0 = audio focus),
+        // preserving any already-staged tiles behind it. Keyed on Unit so it
+        // runs once per open, never re-clobbering the user's picks.
+        LaunchedEffect(Unit) { currentChannel?.let { multiviewStore.seedCurrent(it) } }
         AddToMultiviewSheet(
-            onDismiss = {
+            currentChannel = currentChannel,
+            multiviewStore = multiviewStore,
+            onLaunch = {
                 multiviewPickerOpen = false
+                // Stop the single-stream player BEFORE navigating so only the
+                // multiview tiles produce audio (no double-audio). Same teardown
+                // as the proven X-close path; onLaunchMultiview() is LAST because
+                // it pops PLAYER (this very composable) off the back stack.
+                miniPlayerVm.dismiss()
+                exoWindowState.hide()
+                exoHolder.stop()
+                com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                    .stop(context.applicationContext)
                 onLaunchMultiview()
+            },
+            onCancel = {
+                multiviewPickerOpen = false
+                // Restore the exact pre-open selection (NOT clear()), so a
+                // Guide-staged set survives an opened-then-cancelled picker.
+                multiviewStore.restore(mvSnapshot, mvSnapshotFocus)
             },
         )
     }

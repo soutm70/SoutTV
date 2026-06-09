@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +57,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -66,11 +70,13 @@ import com.aeriotv.android.ui.LocalCanRecordToServer
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MAX
 import com.aeriotv.android.core.preferences.GUIDE_SCALE_MIN
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -103,6 +109,7 @@ import com.aeriotv.android.core.data.db.entity.reminderKey
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
 import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
@@ -150,7 +157,7 @@ import androidx.compose.material.icons.filled.Check
  * "Now" indicator: a 2dp vertical cyan line drawn over the programme strip at
  * the current-time x position, recomputed every minute.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun GuideScreen(
     onChannelClick: (M3UChannel) -> Unit,
@@ -181,6 +188,29 @@ fun GuideScreen(
     // the top of the guide so they can launch without backing out to the
     // dedicated tab.
     val stagedMultiview by multiviewStore.selected.collectAsStateWithLifecycle()
+    // The "Play Multiview" staging banner sits above the control row + grid. On
+    // TV the D-pad can't reliably climb the grid -> pills -> banner chain (UP
+    // stalls on the group pills), leaving the banner -- and thus launching
+    // Multiview -- unreachable. So when channels first get staged, pull focus to
+    // the banner's Play button: the user presses OK to launch, or D-pad DOWN to
+    // stage more. Keyed on the empty<->staged transition so it only grabs focus
+    // on the FIRST add, not every subsequent one.
+    val multiviewBannerFocus = remember { FocusRequester() }
+    val isTvDevice = rememberIsTvDevice()
+    // Keyed on the staged COUNT (not just empty<->non-empty) so focus returns to
+    // the banner after EVERY add -- you stage several channels (each add bounces
+    // focus back to Play), then press OK to launch. Without this, only the first
+    // add reached the banner and a multi-tile Multiview was impossible to launch.
+    LaunchedEffect(stagedMultiview.size) {
+        if (isTvDevice && stagedMultiview.isNotEmpty()) {
+            // The banner composes the same frame the staged set flips non-empty;
+            // retry briefly so the requester is attached before we focus it.
+            repeat(10) {
+                if (runCatching { multiviewBannerFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+                kotlinx.coroutines.delay(16L)
+            }
+        }
+    }
     // tvOS-style guide controls: a search field toggle + a group on/off filter.
     val hiddenGroups by settingsVm.hiddenGroups.collectAsStateWithLifecycle(initialValue = emptySet())
     var searchActive by remember { mutableStateOf(false) }
@@ -435,6 +465,7 @@ fun GuideScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = if (isTv) 24.dp else 12.dp, vertical = 8.dp)
+                    .focusRequester(multiviewBannerFocus)
                     .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
                     .clickable(onClick = onLaunchMultiview)
@@ -471,11 +502,16 @@ fun GuideScreen(
         // Control + filter row, mirroring the tvOS guide: List/Guide switcher,
         // search toggle, and a group on/off filter on the left, then the
         // channel-group pills (or an inline search field) filling the rest.
+        // Control circle sizing. TV values are tvOS-pt x 0.5 (the 960dp canvas
+        // is half tvOS's 1920pt, so the same physical size => all the group
+        // pills fit across the row exactly like tvOS, no horizontal scroll).
+        val controlCircle = if (isTv) 30.dp else 24.dp
+        val controlIcon = if (isTv) 16.dp else 18.dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(if (isTv) 44.dp else 56.dp)
-                .padding(horizontal = if (isTv) 24.dp else 4.dp),
+                .padding(horizontal = if (isTv) 20.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // List / Guide view switcher.
@@ -493,47 +529,80 @@ fun GuideScreen(
                     )
                 }
             }
-            // Search toggle: reveals an inline channel-name search field.
-            // Bare glyph, no circular container (per user request -- the circles
-            // were crowding each other). Active state tints the glyph accent.
-            IconButton(
+            // Search toggle: reveals an inline channel-name search field. On TV
+            // it has NO resting fill or ring -- just the bare glyph -- and only
+            // shows the SAME 2dp white ring as a focused program cell WHEN it is
+            // focused (active = search open fills it accent regardless).
+            val searchInteraction = remember { MutableInteractionSource() }
+            val searchFocused by searchInteraction.collectIsFocusedAsState()
+            FilledTonalIconButton(
                 onClick = {
                     searchActive = !searchActive
                     if (!searchActive) viewModel.onSearchQueryChange("")
                 },
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier
+                    .size(controlCircle)
+                    .then(
+                        if (isTv && searchFocused)
+                            Modifier.border(2.dp, Color.White, CircleShape)
+                        else Modifier,
+                    ),
+                interactionSource = searchInteraction,
+                shape = CircleShape,
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = when {
+                        searchActive -> MaterialTheme.colorScheme.primary
+                        isTv && searchFocused -> Color.White.copy(alpha = 0.15f)
+                        isTv -> Color.Transparent
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    },
+                    contentColor = if (searchActive) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Search,
                     contentDescription = "Search channels",
-                    tint = if (searchActive) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(controlIcon),
                 )
             }
-            // Gap between the two control circles. Material3 IconButton's
-            // focus/state layer is 40dp -- wider than the 36dp button -- so
-            // adjacent buttons overlapped both their persistent circles and
-            // their focus highlights (user report). 12dp clears both and
-            // matches the category-pill spacing.
-            if (isTv) Spacer(Modifier.width(12.dp))
+            // Gap between the two control circles.
+            Spacer(Modifier.width(if (isTv) 8.dp else 8.dp))
             // Filter toggle: opens the group on/off picker (Manage Groups).
-            // Bare glyph, no circular container; active (some groups hidden)
-            // tints the glyph accent.
-            IconButton(
+            // Same treatment as Search: no resting fill/ring on TV, white focus
+            // ring only when focused; active (some groups hidden) fills accent.
+            val filterActive = hiddenGroups.isNotEmpty()
+            val filterInteraction = remember { MutableInteractionSource() }
+            val filterFocused by filterInteraction.collectIsFocusedAsState()
+            FilledTonalIconButton(
                 onClick = { showManageGroups = true },
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier
+                    .size(controlCircle)
+                    .then(
+                        if (isTv && filterFocused)
+                            Modifier.border(2.dp, Color.White, CircleShape)
+                        else Modifier,
+                    ),
+                interactionSource = filterInteraction,
+                shape = CircleShape,
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = when {
+                        filterActive -> MaterialTheme.colorScheme.primary
+                        isTv && filterFocused -> Color.White.copy(alpha = 0.15f)
+                        isTv -> Color.Transparent
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    },
+                    contentColor = if (filterActive) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             ) {
                 Icon(
                     imageVector = Icons.Filled.FilterList,
                     contentDescription = "Filter groups",
-                    tint = if (hiddenGroups.isEmpty())
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(controlIcon),
                 )
             }
-            Spacer(Modifier.width(if (isTv) 12.dp else 6.dp))
+            Spacer(Modifier.width(if (isTv) 10.dp else 6.dp))
             if (searchActive) {
                 OutlinedTextField(
                     value = state.searchQuery,
@@ -554,44 +623,71 @@ fun GuideScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight(),
-                    contentPadding = PaddingValues(end = if (isTv) 24.dp else 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (isTv) 7.dp else 8.dp),
+                    contentPadding = PaddingValues(end = if (isTv) 20.dp else 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isTv) 5.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     items(groups, key = { it }) { group ->
                         val pillSelected = state.selectedGroup == group
-                        FilterChip(
-                            selected = pillSelected,
-                            onClick = { viewModel.onGroupSelected(group) },
-                            label = {
+                        val pillInteraction = remember { MutableInteractionSource() }
+                        val pillFocused by pillInteraction.collectIsFocusedAsState()
+                        if (isTv) {
+                            // Custom TV pill at tvOS-pt x 0.5 metrics: 11sp label
+                            // (labelMedium), 12dp h-padding, 30dp tall. Material's
+                            // FilterChip forces ~16dp internal padding which made
+                            // each pill too wide to fit them all like tvOS; this
+                            // tight capsule fits the whole group row with no scroll.
+                            // Unfocused = soft filled capsule (no ring); focused =
+                            // the SAME 2dp white ring as a program cell.
+                            Box(
+                                modifier = Modifier
+                                    .height(30.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (pillSelected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                    )
+                                    .then(
+                                        if (pillFocused)
+                                            Modifier.border(2.dp, Color.White, CircleShape)
+                                        else Modifier,
+                                    )
+                                    .clickable(
+                                        interactionSource = pillInteraction,
+                                        indication = null,
+                                    ) { viewModel.onGroupSelected(group) }
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Text(
                                     group,
-                                    style = if (isTv) MaterialTheme.typography.labelMedium
-                                    else MaterialTheme.typography.labelLarge,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (pillSelected) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
                                 )
-                            },
-                            // Fully-rounded capsule so the group filter row matches the
-                            // top navigation pills (was the default squared-off chip).
-                            shape = CircleShape,
-                            // tvOS TVGroupPill (ChannelListView.swift:2830): unselected
-                            // pills are FILLED capsules (Color.elevatedBackground), not
-                            // outlined -- selected fills with accentPrimary + dark text.
-                            // Drop the FilterChip outline on TV and give the unselected
-                            // state a subtle elevated fill so the row reads as a strip
-                            // of soft pills exactly like the tvOS guide.
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = if (isTv)
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                                else Color.Transparent,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                            border = if (isTv) null else FilterChipDefaults.filterChipBorder(
-                                enabled = true,
+                            }
+                        } else {
+                            FilterChip(
                                 selected = pillSelected,
-                            ),
-                        )
+                                onClick = { viewModel.onGroupSelected(group) },
+                                interactionSource = pillInteraction,
+                                label = {
+                                    Text(group, style = MaterialTheme.typography.labelLarge)
+                                },
+                                shape = CircleShape,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = Color.Transparent,
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = pillSelected,
+                                ),
+                            )
+                        }
                     }
                 }
             }
@@ -822,11 +918,24 @@ fun GuideScreen(
                 // Treat the grid as one focus group so D-pad DOWN from the chips
                 // / top bar reliably descends into the programme cells on TV.
                 .focusGroup()
-                .then(
-                    if (topNavRequester != null) {
-                        Modifier.focusProperties { up = topNavRequester }
-                    } else Modifier
-                )
+                .focusProperties {
+                    // UP from the top row escapes to the nav pills (when present).
+                    if (topNavRequester != null) up = topNavRequester
+                    // The grid is full-width: there is nothing to its left or
+                    // right to focus, so horizontal focus must NEVER leave it.
+                    // Without this, pressing RIGHT at the edge of the currently
+                    // composed cells (the next cell sits just past the viewport
+                    // pad and is not yet laid out) made the default 2D focus
+                    // search exit the group and jump UP to the Search button.
+                    // Cancelling the L/R exit keeps focus on the edge cell; the
+                    // widened compose pad below keeps the next cell ready so
+                    // RIGHT/LEFT normally just steps cell-to-cell.
+                    exit = { direction ->
+                        if (direction == FocusDirection.Left || direction == FocusDirection.Right)
+                            FocusRequester.Cancel
+                        else FocusRequester.Default
+                    }
+                }
                 // EPG vertical-nav interception (TV only -- a touch device never
                 // delivers these key events, so this is inert off-TV even without
                 // an isTv guard). Fires on the way DOWN the tree, before the
@@ -835,17 +944,79 @@ fun GuideScreen(
                 // horizontal timeline nav + OK-to-play.
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    // LEFT/RIGHT: the user IS navigating the timeline, so allow the
-                    // shared horizontal scroll again and let the default focus
-                    // search + bring-into-view run unchanged.
+                    // LEFT/RIGHT: the user IS navigating the timeline, so release
+                    // the shared scroll lock. Then, if the FOCUSED program is wider
+                    // than the viewport and still has content off-screen in the
+                    // press direction, PAGE the timeline ~one screen WITHIN the
+                    // program (keeping it focused) instead of letting focus leap a
+                    // full long block (e.g. a 6-hour "season is over" cell) to the
+                    // next program in one press. Once the program's edge is on
+                    // screen, fall through so focus moves to the adjacent cell as
+                    // usual. Normal-length programs always fall straight through.
                     if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
                         guideNav.allowHorizontalScroll()
-                        return@onPreviewKeyEvent false
+                        val cellStartPx = guideNav.focusedCellStartPx
+                        val cellEndPx = guideNav.focusedCellEndPx
+                        if (guideNav.focusedChannelIndex >= 0 && cellEndPx > cellStartPx) {
+                            val scroll = horizontalScrollState.value
+                            val maxScroll = horizontalScrollState.maxValue
+                            val hours = (windowDurationMs / 3_600_000L).toInt().coerceAtLeast(1)
+                            val contentPx = with(density) { (scaledHourWidth * hours).toPx() }
+                            val viewportPx = (contentPx - maxScroll).coerceAtLeast(1f)
+                            val epsilon = with(density) { 8.dp.toPx() }
+                            val page = viewportPx * 0.85f
+                            val right = event.key == Key.DirectionRight
+                            if (right && cellEndPx > scroll + viewportPx + epsilon && scroll < maxScroll) {
+                                val target = (scroll + page).toInt().coerceIn(0, maxScroll)
+                                navScope.launch { horizontalScrollState.animateScrollTo(target) }
+                                return@onPreviewKeyEvent true
+                            }
+                            if (!right && cellStartPx < scroll - epsilon && scroll > 0) {
+                                val target = (scroll - page).toInt().coerceIn(0, maxScroll)
+                                navScope.launch { horizontalScrollState.animateScrollTo(target) }
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                        // Focus is not on a grid cell yet (fresh entry from the
+                        // chrome: focusedChannelIndex == -1). Let the default search
+                        // drive the descent INTO a cell, exactly like the UP/DOWN
+                        // handler does for cur < 0. (Change B keeps the focused cell
+                        // composed during navigation, so this -1 state only happens
+                        // on entry, never from a mid-scroll orphan.)
+                        if (guideNav.focusedChannelIndex < 0) return@onPreviewKeyEvent false
+                        // On a cell: step focus EXPLICITLY to the adjacent composed
+                        // cell. If there is one, we moved; if not (edge of the
+                        // composed window), CONSUME so Compose's default 2D
+                        // directional focus search never runs -- that search is the
+                        // only path that escalates out of the grid focusGroup to the
+                        // chrome (it is inert to guard via exit=Cancel because a 2D
+                        // DirectionRight never consults exit on this Compose version).
+                        // Consuming keeps focus on the current edge cell; the next
+                        // press retries once the pad recomposes the neighbour.
+                        val right = event.key == Key.DirectionRight
+                        guideNav.stepHorizontal(forward = right)
+                        return@onPreviewKeyEvent true
                     }
                     val delta = when (event.key) {
                         Key.DirectionDown -> 1
                         Key.DirectionUp -> -1
                         else -> return@onPreviewKeyEvent false
+                    }
+                    // THROTTLE held-key fast-scroll to a controllable rate. The
+                    // system fires key AUTO-REPEAT events (repeatCount > 0) every
+                    // ~50ms while the D-pad is held, so without a cap a "single
+                    // press" held even ~0.5s blasted through 7-8 channels before the
+                    // user could react. The INITIAL press (repeatCount == 0) always
+                    // moves -- so a tap is exactly one channel and stays snappy --
+                    // while repeats step only once per HOLD_SCROLL_MIN_INTERVAL_MS,
+                    // so a long hold gives a smooth fast-scroll you can stop on.
+                    // (Confirmed via logcat: one event = exactly one channel, so the
+                    // over-scroll was the unthrottled auto-repeat, not a cascade.)
+                    val nowMs = android.os.SystemClock.uptimeMillis()
+                    if (event.nativeKeyEvent.repeatCount != 0 &&
+                        nowMs - guideNav.lastVerticalMoveAtMs < HOLD_SCROLL_MIN_INTERVAL_MS
+                    ) {
+                        return@onPreviewKeyEvent true
                     }
                     // While a vertical move is in flight, focusedChannelIndex
                     // churns to -1 between the outgoing cell's unfocus and the
@@ -854,12 +1025,20 @@ fun GuideScreen(
                     // and only escapes to the nav pill from the genuine top
                     // (Bug 4: fast UP read -1 and fell through to the nav
                     // focusProperties).
-                    val cur = if (guideNav.verticalMoveInFlight &&
-                        guideNav.pendingTargetIndex >= 0
-                    ) {
-                        guideNav.pendingTargetIndex
-                    } else {
-                        guideNav.focusedChannelIndex
+                    val cur = when {
+                        guideNav.verticalMoveInFlight && guideNav.pendingTargetIndex >= 0 ->
+                            guideNav.pendingTargetIndex
+                        guideNav.focusedChannelIndex >= 0 -> guideNav.focusedChannelIndex
+                        // Focus was ORPHANED mid-scroll (a cell disposed out from
+                        // under it) -- recover from the STICKY last row instead of
+                        // reading -1 and escaping. This is the rapid-UP-jumps-to-the
+                        // -Live-TV-tab bug: the 48ms verticalMoveInFlight window
+                        // lapses between fast presses, focusedChannelIndex reads -1,
+                        // and the old code fell through to the nav focusProperties.
+                        // lastFocusedChannelIndex never blips to -1, so we keep
+                        // stepping. (It is only -1 on genuine fresh entry, where the
+                        // grid key handler is not firing yet anyway.)
+                        else -> guideNav.lastFocusedChannelIndex
                     }
                     // No cell focused yet (fresh entry from the chips/top bar):
                     // let the default search drive the first descent.
@@ -876,6 +1055,7 @@ fun GuideScreen(
                     // the target row, composing it first if it scrolled off. Hold
                     // the timeline still for the whole move (released on the next
                     // LEFT/RIGHT) so a wide cell's bring-into-view never pans it.
+                    guideNav.lastVerticalMoveAtMs = nowMs
                     guideNav.beginVerticalMove()
                     navScope.launch {
                         guideNav.moveFocusToChannel(target, listState)
@@ -1064,6 +1244,13 @@ private fun ChannelGuideRow(
                     if (isTv) MaterialTheme.colorScheme.surface
                     else MaterialTheme.colorScheme.surface.copy(alpha = 0.4f),
                 )
+                // TV: the channel rail must NOT be a D-pad focus target. tvOS
+                // focuses programme cells, not the channel column; leaving the
+                // rail focusable let vertical nav (and disposal-relocation) land
+                // focus on the channel card instead of a programme. canFocus=false
+                // removes it from focus traversal while keeping the tap (phone
+                // touch) working. Must precede the clickable that it modifies.
+                .focusProperties { if (isTv) canFocus = false }
                 .combinedClickable(
                     onClick = onChannelClick,
                     onLongClick = { railMenuOpen = true; railMenuGuard.arm() },
@@ -1265,7 +1452,19 @@ private fun ChannelGuideRow(
                     // window (+/- pad). Keeps each row to a handful of composed
                     // cells instead of all-in-window; the parent Box stays
                     // totalWidth so the scroll range is unchanged.
-                    if (rawEnd <= visibleStartMs || rawStart >= visibleEndMs) return@forEachIndexed
+                    // EXCEPTION: the row that currently owns focus composes ALL of
+                    // its cells within the window, not just the viewport pad. A
+                    // horizontal scroll (page / bring-into-view) would otherwise move
+                    // the focused cell -- or its step target -- past the pad and
+                    // dispose it mid-move, orphaning focus; Compose then relocates
+                    // focus to the chrome above (the RIGHT/UP focus-loss + escape
+                    // bug). Keeping the whole focused row alive means focus always
+                    // has a live cell to step onto. Only the single focused row pays
+                    // this; every other row stays clipped to the pad.
+                    val rowIsFocused = channelIndex == guideNav.lastFocusedChannelIndex
+                    if (!rowIsFocused &&
+                        (rawEnd <= visibleStartMs || rawStart >= visibleEndMs)
+                    ) return@forEachIndexed
                     val clippedStart = rawStart.coerceAtLeast(windowStart)
                     // Anti-overlap: clamp the cell end to the next programme's start
                     // so a feed with overlapping entries doesn't paint cells on top
@@ -1306,6 +1505,7 @@ private fun ChannelGuideRow(
                         channelName = channel.name,
                         channelId = channel.id,
                         widthDp = wDp,
+                        cellStartDp = xDp,
                         isLive = isLive,
                         liveProgress = liveProgress,
                         isTv = isTv,
@@ -1332,6 +1532,8 @@ private fun ChannelGuideRow(
                         canAddToMultiview = channel.url.isNotBlank() && (!atCap || inMultiview),
                         inMultiview = inMultiview,
                         onToggleMultiview = { multiviewStore.toggle(channel) },
+                        isFavorite = isFavorite,
+                        onToggleFavorite = onToggleFavorite,
                     )
                 }
                 // "Now" indicator vertical line, only drawn when "now" falls
@@ -1378,7 +1580,23 @@ private fun ChannelGuideRow(
             // and report failure rather than crash.
             runCatching { target.requester.requestFocus() }.isSuccess
         }
-        onDispose { guideNav.unregisterRow(channelIndex) }
+        // Explicit LEFT/RIGHT: step to the adjacent COMPOSED cell in this row.
+        guideNav.registerRowHorizontal(channelIndex) { forward, fromMs ->
+            val spans = visibleCellSpans.sortedBy { it.startMs }
+            if (spans.isEmpty()) return@registerRowHorizontal false
+            // The cell the user is currently in (contains fromMs), else the last
+            // one starting at/before fromMs (anchor sitting in a gap), else first.
+            var cur = spans.indexOfFirst { fromMs in it.startMs until it.endMs }
+            if (cur < 0) cur = spans.indexOfLast { it.startMs <= fromMs }
+            if (cur < 0) cur = 0
+            val target = spans.getOrNull(if (forward) cur + 1 else cur - 1)
+                ?: return@registerRowHorizontal false
+            runCatching { target.requester.requestFocus() }.isSuccess
+        }
+        onDispose {
+            guideNav.unregisterRow(channelIndex)
+            guideNav.unregisterRowHorizontal(channelIndex)
+        }
     }
 }
 
@@ -1397,6 +1615,10 @@ private fun ProgrammeCell(
     channelName: String,
     channelId: String,
     widthDp: androidx.compose.ui.unit.Dp,
+    /** This cell's left edge in the scroll content (dp from the window start).
+     *  Used to pin the title to the visible left edge for long programs that
+     *  began before the viewport (a left-clipped cell has cellStartDp == 0). */
+    cellStartDp: androidx.compose.ui.unit.Dp,
     isLive: Boolean,
     /** Elapsed fraction (0..1) of the now-airing program, or null if not live.
      * Drives the bottom progress bar that marks the currently-airing cell. */
@@ -1419,6 +1641,8 @@ private fun ProgrammeCell(
     canAddToMultiview: Boolean,
     inMultiview: Boolean,
     onToggleMultiview: () -> Unit,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -1429,6 +1653,7 @@ private fun ProgrammeCell(
     // Membership check against the set hoisted in GuideScreen -- no per-cell flow.
     val isReminderSet = key in activeReminderKeys
     var focused by remember { mutableStateOf(false) }
+    val cellDensity = androidx.compose.ui.platform.LocalDensity.current
     // Short time-range label ("7:00 - 7:30"), shown on the TV guide cell beneath
     // the title to match the tvOS Emby-style cell (title + time range).
     val cellTimeFmt = remember { SimpleDateFormat("h:mm", Locale.getDefault()) }
@@ -1485,13 +1710,23 @@ private fun ProgrammeCell(
         MaterialTheme.colorScheme.primary
     else
         MaterialTheme.colorScheme.onBackground
-    // Placeholder (no-EPG channel) titles stay pinned to the visible left edge as
-    // the user scrolls, so the channel name never disappears into the wide cell.
-    // The placeholder cell sits at x=0 spanning the window and the scroll range
-    // keeps the viewport inside it, so a plain scroll offset needs no extra clamp.
-    // offset {} runs in the placement phase, so this re-places without recomposing.
-    val stickyTitle = if (programme.isPlaceholder && horizontalScrollState != null) {
-        Modifier.offset { androidx.compose.ui.unit.IntOffset(horizontalScrollState.value, 0) }
+    // Long-program title pinning: keep the program's text block glued to the
+    // visible left edge of the guide as its cell scrolls left, so a currently-
+    // airing program that began before the viewport (left-clipped, so
+    // cellStartDp == 0) never has its title cut off by the guide's left edge --
+    // it keeps bumping right as time progresses. Also covers no-EPG placeholder
+    // cells (which sit at cellStartDp == 0 too). The shift is bounded only by the
+    // cell's OWN width: the cell already clips its content (clip(cellShape)), so
+    // the block can never paint over the next program, and the block rides along
+    // until the cell (the program) fully scrolls off the left. offset {} runs in
+    // the placement phase, so panning re-places without recomposing.
+    val contentSticky = if (horizontalScrollState != null) {
+        Modifier.offset {
+            val cellLeftPx = cellStartDp.roundToPx()
+            val cellWidthPx = widthDp.roundToPx()
+            val shift = (horizontalScrollState.value - cellLeftPx).coerceIn(0, cellWidthPx)
+            androidx.compose.ui.unit.IntOffset(shift, 0)
+        }
     } else {
         Modifier
     }
@@ -1527,8 +1762,14 @@ private fun ProgrammeCell(
                 // Record which channel row + time column owns focus so the
                 // guide's vertical-nav handler can step to the same column in
                 // the next/prev row.
-                if (it.isFocused) guideNav.onCellFocused(channelIndex, anchorTimeMs)
-                else guideNav.onCellUnfocused(channelIndex)
+                if (it.isFocused) {
+                    guideNav.onCellFocused(channelIndex, anchorTimeMs)
+                    // Record this cell's content-px span so the key handler can
+                    // page WITHIN a long program rather than leaping to the next.
+                    val startPx = with(cellDensity) { cellStartDp.roundToPx() }
+                    val endPx = with(cellDensity) { (cellStartDp + widthDp).roundToPx() }
+                    guideNav.setFocusedCellBounds(startPx, endPx)
+                } else guideNav.onCellUnfocused(channelIndex)
             }
             .combinedClickable(
                 // Single tap/click plays the channel; the program-info sheet +
@@ -1578,6 +1819,15 @@ private fun ProgrammeCell(
                     }
                 },
             )
+            DropdownMenuItem(
+                text = {
+                    Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites")
+                },
+                onClick = menuGuard.wrap {
+                    menuOpen = false
+                    onToggleFavorite()
+                },
+            )
             if (canAddToMultiview) {
                 DropdownMenuItem(
                     text = {
@@ -1600,58 +1850,71 @@ private fun ProgrammeCell(
                 )
             }
         }
+        // The text block is wrapped in one column carrying [contentSticky] so the
+        // title + description + time all stay pinned together at the visible left
+        // edge for a left-clipped long program (and measure their own width for
+        // the clamp). Column wraps its content width, so a short title over a wide
+        // (long-program) cell leaves plenty of room to slide right.
         if (isTv) {
             // tvOS cell: bold title + 1-line program description + a time-range
             // line, matching EPGGuideView.swift:3146 cellContent. Title turns
             // white on focus (over the bright fill); description dims to a
             // soft white, time-range dims further.
-            Text(
-                modifier = stickyTitle,
-                text = programme.title.ifBlank { "No info" },
-                style = MaterialTheme.typography.titleSmall,
-                color = if (focused) Color.White else MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (programme.description.isNotBlank()) {
+            Column(
+                modifier = contentSticky,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text(
-                    text = programme.description,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (focused) Color.White.copy(alpha = 0.85f)
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = programme.title.ifBlank { "No info" },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (focused) Color.White else MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            if (!programme.isPlaceholder) {
-                Text(
-                    text = timeRange,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (focused) Color.White.copy(alpha = 0.7f)
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (programme.description.isNotBlank()) {
+                    Text(
+                        text = programme.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (focused) Color.White.copy(alpha = 0.85f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (!programme.isPlaceholder) {
+                    Text(
+                        text = timeRange,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (focused) Color.White.copy(alpha = 0.7f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         } else {
-            Text(
-                modifier = stickyTitle,
-                text = programme.title.ifBlank { "No info" },
-                style = MaterialTheme.typography.labelMedium,
-                color = titleColor,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (programme.description.isNotBlank()) {
+            Column(
+                modifier = contentSticky,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text(
-                    text = programme.description,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = programme.title.ifBlank { "No info" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = titleColor,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (programme.description.isNotBlank()) {
+                    Text(
+                        text = programme.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         // Currently-airing progress bar: a thin elapsed-time track pinned to the
@@ -1692,11 +1955,22 @@ private object GuideMetrics {
 
 private const val MS_PER_HOUR_F = 3_600_000f
 
+/** Minimum gap between channel up/down moves driven by a HELD D-pad key
+ *  (auto-repeat). The initial press always moves (a tap is one channel); held
+ *  repeats are rate-limited to this so a long hold fast-scrolls at a
+ *  controllable ~8 channels/sec instead of the system's ~20/sec repeat rate
+ *  blasting 7-8 rows in one press. Tune up for a slower hold-scroll. */
+private const val HOLD_SCROLL_MIN_INTERVAL_MS = 120L
+
 /** Off-screen pre-render pad (each side) for the horizontal viewport clip. Cells
  *  whose visible span lies entirely within this pad are composed but not actually
  *  on-screen; the vertical-nav nearest-cell fallback excludes them so a channel
- *  up/down never lands focus on a row's off-viewport pad (M3). */
-private const val GUIDE_VIEWPORT_PAD_MS = 30L * 60_000L
+ *  up/down never lands focus on a row's off-viewport pad (M3). 90min (was 30):
+ *  D-pad RIGHT/LEFT needs the NEXT cell already composed so focus can step onto
+ *  it; at 30min the next program often sat just past the pad and unrendered, so
+ *  the focus search found no horizontal neighbour. Pairs with the grid's
+ *  L/R focus-exit cancel so horizontal nav never escapes to the chrome. */
+private const val GUIDE_VIEWPORT_PAD_MS = 90L * 60_000L
 
 /** Convert a millisecond span to its dp width on the (already scaled) time axis. */
 private fun msToDp(ms: Long, hourWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp =
@@ -1727,6 +2001,20 @@ private class GuideVerticalNavState {
     var focusedChannelIndex by mutableStateOf(-1)
         private set
 
+    /** STICKY last focused row index: set on every cell focus, NEVER reset to -1.
+     *  Drives the "compose the whole focused row" clip exception. Using the
+     *  churning [focusedChannelIndex] there created a feedback loop (it blips to
+     *  -1 -> row reverts to clipped -> the focused cell disposes -> more churn ->
+     *  escape). This stable value keeps the focused row fully composed across the
+     *  blips so the focused cell never disposes and focus is never orphaned. */
+    var lastFocusedChannelIndex by mutableStateOf(-1)
+        private set
+
+    /** uptimeMillis of the last vertical (channel up/down) move. Plain field, not
+     *  observable state -- only the key handler reads/writes it to throttle the
+     *  held-key fast-scroll to [HOLD_SCROLL_MIN_INTERVAL_MS]. */
+    var lastVerticalMoveAtMs = 0L
+
     /** True from [beginVerticalMove] until the move coroutine settles. Lets the
      *  key handler keep stepping channel-by-channel on rapid / long-press UP
      *  even while [focusedChannelIndex] is transiently -1 mid-move (Bug 4). */
@@ -1746,6 +2034,20 @@ private class GuideVerticalNavState {
      *  fixed. */
     var anchorTimeMs: Long = Long.MIN_VALUE
         private set
+
+    /** Content-coordinate px bounds (x relative to the scroll origin = window
+     *  start) of the currently-focused cell, set on focus. The key handler reads
+     *  these to PAGE the timeline within a long program instead of leaping a full
+     *  6-hour block to the next one. -1 when no cell is focused. */
+    var focusedCellStartPx: Int = -1
+        private set
+    var focusedCellEndPx: Int = -1
+        private set
+
+    fun setFocusedCellBounds(startPx: Int, endPx: Int) {
+        focusedCellStartPx = startPx
+        focusedCellEndPx = endPx
+    }
 
     /** While true the [GuideLeadingEdgeBringIntoViewSpec] returns 0 so a
      *  vertical move never scrolls the shared horizontal timeline. Set true at
@@ -1804,10 +2106,40 @@ private class GuideVerticalNavState {
         rowHandlers.remove(channelIndex)
     }
 
+    /** Per-row hook: focus the cell adjacent to [fromAnchorMs] in the [forward]
+     *  direction; returns true if an adjacent COMPOSED cell was focused, false at
+     *  the edge of the composed window. LEFT/RIGHT is driven explicitly through
+     *  this (mirroring the UP/DOWN model) so the default 2D focus search -- which
+     *  escalates out of the grid focusGroup to the chrome when it finds no
+     *  in-group neighbour -- is never invoked. */
+    fun interface RowHorizontalHandler {
+        fun focusAdjacent(forward: Boolean, fromAnchorMs: Long): Boolean
+    }
+
+    private val rowHorizontalHandlers = mutableMapOf<Int, RowHorizontalHandler>()
+
+    fun registerRowHorizontal(channelIndex: Int, handler: RowHorizontalHandler) {
+        rowHorizontalHandlers[channelIndex] = handler
+    }
+
+    fun unregisterRowHorizontal(channelIndex: Int) {
+        rowHorizontalHandlers.remove(channelIndex)
+    }
+
+    /** Step focus one cell left/right within the focused row. Returns false if
+     *  there is no focused row or no adjacent composed cell (caller then consumes
+     *  the key so focus stays put instead of escaping to the chrome). */
+    fun stepHorizontal(forward: Boolean): Boolean {
+        val i = focusedChannelIndex
+        if (i < 0 || anchorTimeMs == Long.MIN_VALUE) return false
+        return rowHorizontalHandlers[i]?.focusAdjacent(forward, anchorTimeMs) ?: false
+    }
+
     /** Called by a cell when it gains focus. Records which channel row owns
      *  focus and the time column the user is in. */
     fun onCellFocused(channelIndex: Int, cellStartMs: Long) {
         focusedChannelIndex = channelIndex
+        lastFocusedChannelIndex = channelIndex
         // Preserve the navigation column across vertical (channel up/down) moves.
         // A handler-driven focus sets programmaticFocusPending first; we consume it
         // and keep the existing anchor instead of snapping to this cell's start.
@@ -1901,8 +2233,8 @@ private class GuideVerticalNavState {
     /** Scroll [listState] the minimum amount to bring [index] fully on-screen,
      *  composing it if it was scrolled off entirely. */
     private suspend fun ensureRowVisible(index: Int, listState: LazyListState) {
-        val info = listState.layoutInfo
-        val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+        var info = listState.layoutInfo
+        var item = info.visibleItemsInfo.firstOrNull { it.index == index }
         if (item == null) {
             // The row is scrolled fully off an edge. Bring it to the NEAREST
             // edge so a D-pad move advances ONE row at a time, instead of
@@ -1921,7 +2253,13 @@ private class GuideVerticalNavState {
                 // visible row so the guide advances a single row.
                 listState.scrollToItem((index - visible.size + 1).coerceAtLeast(0))
             }
-            return
+            // Re-read after composing so the deficit nudge below can finish the
+            // job: scrollToItem(last) lands the target at the bottom but leaves it
+            // PARTIALLY CLIPPED (its bottom hangs below the fold), which read as
+            // "the bottom focused channel is cut off so I can't read it". Falling
+            // through to the bottomOverflow nudge pulls the whole row on-screen.
+            info = listState.layoutInfo
+            item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return
         }
         // Partially clipped at an edge: nudge by the deficit so the whole row is
         // visible before we focus it.
@@ -1968,16 +2306,24 @@ private class GuideLeadingEdgeBringIntoViewSpec(
         // anchor time so it is already in the right column; any nudge here
         // would desync every other row.
         if (suppressHorizontalScroll()) return 0f
-        return when {
-            // Already fully visible: no scroll.
-            offset >= 0f && offset + size <= containerSize -> 0f
-            // Oversized cell (wider than the viewport): pin its LEADING edge to the
-            // viewport start so the tail overflows right -- never fling to its end.
-            size > containerSize -> offset
-            // Normal cell off the start edge: align leading (default behavior).
-            offset < 0f -> offset
-            // Normal cell off the end edge: align trailing (default behavior).
-            else -> offset + size - containerSize
+        // Already fully visible: no scroll.
+        if (offset >= 0f && offset + size <= containerSize) return 0f
+        // Oversized cell (wider than the viewport): if ANY part already overlaps
+        // the viewport, do NOT scroll. The sticky program title keeps the name
+        // pinned + readable at the visible left edge, so focusing a long program
+        // must never fling the timeline (previously it slammed the cell's leading
+        // edge to the viewport start -- the "Right rapidly scrolls right / Left
+        // jumps to the beginning of the EPG" report). Only an oversized cell that
+        // is ENTIRELY off one side gets a minimal nudge onto screen.
+        if (size > containerSize) {
+            return when {
+                offset < containerSize && offset + size > 0f -> 0f   // overlaps viewport: stay put
+                offset >= containerSize -> offset                     // entirely off the right: leading edge -> start
+                else -> offset + size - containerSize                 // entirely off the left: trailing edge -> end
+            }
         }
+        // Normal cell: minimal nudge to bring it just into view (leading if off
+        // the start, trailing if off the end).
+        return if (offset < 0f) offset else offset + size - containerSize
     }
 }

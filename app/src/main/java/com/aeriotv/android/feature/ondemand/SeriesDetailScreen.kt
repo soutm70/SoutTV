@@ -96,6 +96,23 @@ fun SeriesDetailScreen(
         viewModel.loadEpisodes(seriesId)
         viewModel.loadSeriesProviderInfo(seriesId)
     }
+
+    // TMDB poster fallback (opt-in): only when the server gave no artwork.
+    var tmdbPosterUrl by remember(seriesId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(seriesId, info) {
+        val s = series ?: return@LaunchedEffect
+        val hasServerArt = !s.posterUrl.isNullOrBlank() ||
+            !info?.posterUrl.isNullOrBlank() || !info?.backdropUrl.isNullOrBlank()
+        val infoSettled = state.seriesProviderInfo.containsKey(seriesId) ||
+            !state.seriesProviderInfoLoading.contains(seriesId)
+        if (!hasServerArt && tmdbPosterUrl == null && infoSettled) {
+            tmdbPosterUrl = viewModel.resolveTmdbPoster(
+                tmdbId = info?.tmdbId ?: s.tmdbId,
+                title = s.displayName,
+                isMovie = false,
+            )
+        }
+    }
     BackHandler(enabled = true) { onBack() }
 
     val episodes = state.episodesBySeries[seriesId].orEmpty()
@@ -185,7 +202,7 @@ fun SeriesDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 item {
-                    SeriesHeroSection(series = series, info = info)
+                    SeriesHeroSection(series = series, info = info, tmdbPosterUrl = tmdbPosterUrl)
                 }
                 item {
                     SeriesInfoSection(
@@ -264,9 +281,13 @@ fun SeriesDetailScreen(
 }
 
 @Composable
-private fun SeriesHeroSection(series: DispatcharrVODSeries, info: DispatcharrVODProviderInfo?) {
-    val heroUrl = info?.backdropUrl ?: series.posterUrl
-    val posterUrl = series.posterUrl ?: info?.posterUrl
+private fun SeriesHeroSection(
+    series: DispatcharrVODSeries,
+    info: DispatcharrVODProviderInfo?,
+    tmdbPosterUrl: String?,
+) {
+    val heroUrl = info?.backdropUrl ?: series.posterUrl ?: tmdbPosterUrl
+    val posterUrl = series.posterUrl ?: info?.posterUrl ?: tmdbPosterUrl
     val displayYear = info?.year?.toString() ?: series.year?.toString()
     val displayRating = (info?.rating?.takeIf { it.isNotBlank() } ?: series.rating)
         ?.let { runCatching { String.format("%.1f", it.toDouble()) }.getOrDefault(it) }

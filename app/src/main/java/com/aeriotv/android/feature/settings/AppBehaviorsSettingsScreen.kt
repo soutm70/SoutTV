@@ -24,16 +24,26 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,6 +69,9 @@ fun AppBehaviorsSettingsScreen(
     val appleTVChannelFlip by viewModel.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
     val autoResumeLastChannel by viewModel.autoResumeLastChannel.collectAsStateWithLifecycle(initialValue = false)
     val defaultTab by viewModel.defaultTab.collectAsStateWithLifecycle(initialValue = "")
+    val programPostersTmdb by viewModel.programPostersTmdbEnabled.collectAsStateWithLifecycle(initialValue = false)
+    val savedTmdbKey by viewModel.tmdbApiKey.collectAsStateWithLifecycle(initialValue = "")
+    val tmdbKeyState by viewModel.tmdbKeyTestState.collectAsStateWithLifecycle()
 
     val isTv = rememberIsTvDevice()
     Column(modifier = Modifier.fillMaxSize()) {
@@ -119,6 +132,82 @@ fun AppBehaviorsSettingsScreen(
                     checked = appleTVChannelFlip,
                     onCheckedChange = viewModel::setAppleTVChannelFlip,
                 )
+            }
+
+            SettingsSection(
+                header = "Program Posters",
+                footer = "Fill missing movie / show / channel artwork from TMDB using your own free API key (themoviedb.org). Off by default. The key syncs across your devices via Google Drive (kept in your private app data).",
+            ) {
+                SettingsToggleRow(
+                    title = "TMDB poster fallback",
+                    subtitle = "When a poster is missing, look it up on TMDB. Needs the free API key below.",
+                    checked = programPostersTmdb,
+                    onCheckedChange = viewModel::setProgramPostersTmdbEnabled,
+                )
+                if (programPostersTmdb) {
+                    var keyDraft by remember(savedTmdbKey) { mutableStateOf(savedTmdbKey) }
+                    var keyVisible by remember { mutableStateOf(false) }
+                    OutlinedTextField(
+                        value = keyDraft,
+                        onValueChange = {
+                            keyDraft = it
+                            viewModel.resetTmdbKeyTestState()
+                        },
+                        label = { Text("TMDB API key (v3) or read token (v4)") },
+                        singleLine = true,
+                        visualTransformation = if (keyVisible) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { keyVisible = !keyVisible }) {
+                                Icon(
+                                    imageVector = if (keyVisible) Icons.Filled.VisibilityOff
+                                    else Icons.Filled.Visibility,
+                                    contentDescription = if (keyVisible) "Hide key" else "Show key",
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.testTmdbKey(keyDraft) },
+                            enabled = keyDraft.isNotBlank() &&
+                                tmdbKeyState != SettingsViewModel.TmdbKeyTestState.Testing,
+                        ) { Text("Test") }
+                        TextButton(
+                            onClick = { viewModel.saveTmdbKey(keyDraft) },
+                            enabled = keyDraft.isNotBlank() || savedTmdbKey.isNotBlank(),
+                        ) { Text("Save") }
+                        Spacer(Modifier.weight(1f))
+                        val (statusText, statusColor) = when (tmdbKeyState) {
+                            SettingsViewModel.TmdbKeyTestState.Testing ->
+                                "Checking..." to MaterialTheme.colorScheme.onSurfaceVariant
+                            SettingsViewModel.TmdbKeyTestState.Valid ->
+                                "Valid key" to androidx.compose.ui.graphics.Color(0xFF4CAF50)
+                            SettingsViewModel.TmdbKeyTestState.Invalid ->
+                                "Invalid key" to MaterialTheme.colorScheme.error
+                            SettingsViewModel.TmdbKeyTestState.Saved ->
+                                "Saved" to androidx.compose.ui.graphics.Color(0xFF4CAF50)
+                            SettingsViewModel.TmdbKeyTestState.Idle ->
+                                "" to MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        if (statusText.isNotEmpty()) {
+                            Text(
+                                statusText,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = statusColor,
+                            )
+                        }
+                    }
+                }
             }
 
             SettingsSection(

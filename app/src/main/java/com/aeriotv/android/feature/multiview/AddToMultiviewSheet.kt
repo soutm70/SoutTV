@@ -5,9 +5,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import android.content.res.Configuration
@@ -33,9 +37,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,15 +77,30 @@ import com.aeriotv.android.feature.settings.SettingsViewModel
  * Recent + search + section headers for full iOS parity. Recents are fed by
  * RecentChannelsStore (AppPreferences.recentChannelIds), written from
  * PlayerScreen on each channel flip.
+ *
+ * "Add a tile while watching" flow (player path): [currentChannel] is the
+ * stream the user is watching. It is implicitly Tile 1 (seeded into the store
+ * + audio-focused by the host), so it is EXCLUDED from the selectable list and
+ * shown as a pinned, non-interactive "Now playing" row at the top. The user
+ * picks ADDITIONAL channels; [onLaunch] (the "Play" button, enabled only once
+ * there are >= 2 tiles) transitions to the multiview grid, while [onCancel]
+ * (Back / swipe / "Cancel") closes the sheet and keeps single-stream playback.
+ * Search is a toggle button left of the "All" pill (no resting text field, so
+ * the IME never auto-opens on a scroll).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddToMultiviewSheet(
-    onDismiss: () -> Unit,
+    currentChannel: M3UChannel?,
+    onLaunch: () -> Unit,
+    onCancel: () -> Unit,
     multiviewStore: MultiviewStoreHandle = rememberMultiviewStoreHandle(),
     playlistVm: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
+    // Phone/tablet container: the native ModalBottomSheet with its natural
+    // swipe-to-dismiss. (TV uses a Dialog panel instead -- see the form-factor
+    // split below -- so a bottom sheet's gesture model never reaches a D-pad.)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by playlistVm.state.collectAsStateWithLifecycle()
     val selected by multiviewStore.selected.collectAsState()
@@ -87,9 +109,22 @@ fun AddToMultiviewSheet(
 
     var selectedGroup by remember { mutableStateOf(PlaylistViewModel.ALL_GROUPS) }
     var query by remember { mutableStateOf("") }
+    // Search is a toggle (button left of the "All" pill) so the IME never
+    // auto-opens: there is no resting text field for the ModalBottomSheet to
+    // land focus on. The field only exists while searchActive (no autofocus;
+    // the user taps/clicks the field to bring up the keyboard).
+    var searchActive by remember { mutableStateOf(false) }
 
-    // Playable channels only, indexed for the recents join.
-    val playable = remember(state.channels) { state.channels.filter { it.url.isNotBlank() } }
+    // Playable channels only, indexed for the recents join. The
+    // now-playing channel (currentChannel) is EXCLUDED here so it never
+    // appears as an "add" option -- it is implicitly Tile 1, shown pinned
+    // at the top. Excluding from `playable` also drops it from
+    // `recentChannels` (which resolves against byId), since it is otherwise
+    // the #1 recent on every flip.
+    val excludeId = currentChannel?.id
+    val playable = remember(state.channels, excludeId) {
+        state.channels.filter { it.url.isNotBlank() && it.id != excludeId }
+    }
     val byId = remember(playable) { playable.associateBy { it.id } }
 
     // Group filter chips: "All" + each distinct groupTitle in source order.
@@ -125,22 +160,25 @@ fun AddToMultiviewSheet(
         androidx.compose.ui.platform.LocalConfiguration.current.uiMode and
             Configuration.UI_MODE_TYPE_MASK
         ) == Configuration.UI_MODE_TYPE_TELEVISION
-    BackHandler { onDismiss() }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-        dragHandle = if (isTvDevice) null else { { BottomSheetDefaults.DragHandle() } },
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+    // Tile count gates the Play action: need the seeded current channel PLUS
+    // at least one picked channel (>= 2 tiles) for a real multiview grid.
+    val canLaunch = selected.size >= 2
+    // FORM-FACTOR SPLIT: phones/tablets get the native ModalBottomSheet (with
+    // its natural swipe-to-dismiss); Android TV gets a centered Dialog panel. A
+    // bottom sheet's drag / nested-scroll dismiss is a touch idiom that misfires
+    // on a D-pad (scrolling the list up past the top "fades it downward and
+    // closes"). The header + search + list BODY is shared; only the wrapper and
+    // the list's height strategy differ. Only the "Play" button launches
+    // multiview; every other dismissal path keeps single-stream playback.
+    val body: @Composable ColumnScope.() -> Unit = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onDismiss) {
-                    Text("Done", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onCancel) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
@@ -150,63 +188,102 @@ fun AddToMultiviewSheet(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.weight(1f))
-                Text(
-                    text = "${selected.size} / ${multiviewStore.maxTiles} max",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 12.dp),
-                )
-            }
-
-            // Group filter chips (skip when the playlist has no real groups).
-            if (groups.size > 1) {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(items = groups, key = { it }) { group ->
-                        FilterChip(
-                            selected = group == selectedGroup,
-                            onClick = { selectedGroup = group },
-                            label = { Text(group, maxLines = 1) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                selectedLabelColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    }
+                TextButton(onClick = onLaunch, enabled = canLaunch) {
+                    Text(
+                        text = "Play (${selected.size})",
+                        color = if (canLaunch) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
 
-            // Search field.
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+            // Control row: a search TOGGLE button to the LEFT of the "All"
+            // pill (Guide-chrome parity). Tapping it swaps the group-pill row
+            // for the search field IN PLACE; tapping it again (or its close)
+            // restores the pills and clears the query. No resting text field =
+            // the IME never auto-opens while the user scrolls the list.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 4.dp),
-                placeholder = { Text("Search channels") },
-                singleLine = true,
-                leadingIcon = {
-                    Icon(Icons.Filled.Search, contentDescription = null)
-                },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FilledTonalIconButton(
+                    onClick = {
+                        searchActive = !searchActive
+                        if (!searchActive) query = ""
+                    },
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = if (searchActive) "Close search" else "Search channels",
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                if (searchActive) {
+                    // No FocusRequester / autofocus on purpose: the keyboard
+                    // opens only when the user taps (or D-pad-selects) the field.
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("Search channels") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                IconButton(onClick = { query = "" }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                } else if (groups.size > 1) {
+                    LazyRow(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(end = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        items(items = groups, key = { it }) { group ->
+                            FilterChip(
+                                selected = group == selectedGroup,
+                                onClick = { selectedGroup = group },
+                                label = { Text(group, maxLines = 1) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
                         }
                     }
-                },
-            )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
 
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(520.dp), // explicit max — sheet expansion handles overflow scroll
+                // TV: fill the remaining Dialog-panel height (weight, inside the
+                // bounded-height panel Column). Phone: a fixed max height inside
+                // the wrap-height bottom sheet.
+                modifier = if (isTvDevice) Modifier.fillMaxWidth().weight(1f)
+                else Modifier.fillMaxWidth().height(520.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                // The now-playing channel, pinned + non-interactive: it is
+                // Tile 1 (already seeded into the store + audio-focused). Shown
+                // so the user sees it WILL be included, and not offered as an
+                // "add" toggle (a stray tap must not deselect it).
+                if (currentChannel != null) {
+                    item(key = "tile1_now") {
+                        NowPlayingPinnedRow(
+                            channel = currentChannel,
+                            nowTitle = state.epgByChannel[currentChannel.guideMatchKey]
+                                ?.nowPlaying()?.title.orEmpty(),
+                        )
+                    }
+                }
                 if (showRecent) {
                     item(key = "hdr_recent") { SectionHeader("Recent") }
                     items(items = recentChannels, key = { "recent_${it.id}" }) { channel ->
@@ -235,7 +312,33 @@ fun AddToMultiviewSheet(
                     )
                 }
             }
+    }
+
+    if (isTvDevice) {
+        // Android TV: a centered Dialog panel. No drag/swipe semantics, so the
+        // D-pad can scroll the list freely; Back / Cancel / Play dismiss it.
+        Dialog(
+            onDismissRequest = onCancel,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .fillMaxHeight(0.92f),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp), content = body)
+            }
         }
+    } else {
+        // Phone / tablet: native bottom sheet with its natural gestures.
+        ModalBottomSheet(
+            onDismissRequest = onCancel,
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.background,
+            content = body,
+        )
     }
 }
 
@@ -248,6 +351,88 @@ private fun SectionHeader(title: String) {
         fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
     )
+}
+
+/**
+ * Pinned, NON-interactive row for the now-playing channel (Tile 1). Mirrors
+ * [ChannelPickerRow] visually but carries no clickable / onToggle: it is
+ * already seeded into the multiview store + audio-focused, and a stray tap
+ * must not be able to deselect it (which would silently drop below the
+ * 2-tile launch threshold). Always shows the green check + a "Tile 1" badge.
+ */
+@Composable
+private fun NowPlayingPinnedRow(
+    channel: M3UChannel,
+    nowTitle: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = channel.channelNumber ?: "",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(28.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (channel.tvgLogo.isNotBlank()) {
+                AsyncImage(
+                    model = channel.tvgLogo,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                )
+            } else {
+                Text(
+                    text = channel.name.take(2).uppercase(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = channel.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (nowTitle.isNotBlank()) "Tile 1 · Now playing · $nowTitle"
+                else "Tile 1 · Now playing",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = "Included as Tile 1",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
 }
 
 @Composable

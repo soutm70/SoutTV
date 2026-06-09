@@ -12,7 +12,9 @@ import com.aeriotv.android.core.network.DispatcharrVODLogo
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODProviderInfo
 import com.aeriotv.android.core.network.DispatcharrVODSeries
+import com.aeriotv.android.core.network.TMDBService
 import com.aeriotv.android.core.network.XtreamCodesApi
+import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -42,6 +45,8 @@ class OnDemandViewModel @Inject constructor(
     private val dispatcharrClient: DispatcharrClient,
     private val dispatcharrAuth: DispatcharrAuthBroker,
     private val xtreamApi: XtreamCodesApi,
+    private val appPreferences: AppPreferences,
+    private val tmdbService: TMDBService,
 ) : ViewModel() {
 
     data class UiState(
@@ -492,6 +497,24 @@ class OnDemandViewModel @Inject constructor(
 
     fun movieByUuid(uuid: String): DispatcharrVODMovie? =
         _state.value.movies.firstOrNull { it.uuid == uuid }
+
+    /**
+     * TMDB poster fallback (iOS VODDetailView.loadTMDBPosterIfNeeded parity).
+     * Returns a poster image URL only when the user has opted in AND set a key;
+     * prefers an exact tmdb_id lookup, falling back to a title search. Returns
+     * null (caller keeps its placeholder) when disabled, unkeyed, or no match.
+     * Callers invoke this ONLY when the server provided no artwork.
+     */
+    suspend fun resolveTmdbPoster(tmdbId: String?, title: String, isMovie: Boolean): String? {
+        if (!appPreferences.programPostersTmdbEnabled.first()) return null
+        val key = appPreferences.tmdbApiKey.first()
+        if (key.isBlank()) return null
+        tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            tmdbService.posterUrlForId(id, isMovie, key)?.let { return it }
+        }
+        if (title.isBlank()) return null
+        return tmdbService.posterUrlForTitle(title, key)
+    }
 
     /**
      * Lazy-fetch provider-info for a movie — backdrop, cast, director,

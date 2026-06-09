@@ -5,11 +5,15 @@ import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.CustomCategoryEntry
 import com.aeriotv.android.core.category.ProgramCategory
+import com.aeriotv.android.core.network.TMDBService
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.ui.theme.AppTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -20,6 +24,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val prefs: AppPreferences,
+    private val tmdb: TMDBService,
 ) : ViewModel() {
 
     // Appearance
@@ -105,6 +110,38 @@ class SettingsViewModel @Inject constructor(
     val appleTVChannelFlip: Flow<Boolean> = prefs.appleTVChannelFlip
     fun setAppleTVChannelFlip(value: Boolean) {
         viewModelScope.launch { prefs.setAppleTVChannelFlip(value) }
+    }
+
+    // TMDB program posters (opt-in, off by default). Key is device-local.
+    val programPostersTmdbEnabled: Flow<Boolean> = prefs.programPostersTmdbEnabled
+    fun setProgramPostersTmdbEnabled(value: Boolean) {
+        viewModelScope.launch { prefs.setProgramPostersTmdbEnabled(value) }
+    }
+
+    val tmdbApiKey: Flow<String> = prefs.tmdbApiKey
+
+    enum class TmdbKeyTestState { Idle, Testing, Valid, Invalid, Saved }
+    private val _tmdbKeyTestState = MutableStateFlow(TmdbKeyTestState.Idle)
+    val tmdbKeyTestState: StateFlow<TmdbKeyTestState> = _tmdbKeyTestState.asStateFlow()
+
+    /** Reset the status label (called on each keystroke in the field). */
+    fun resetTmdbKeyTestState() { _tmdbKeyTestState.value = TmdbKeyTestState.Idle }
+
+    /** Validate the draft key against TMDB /configuration (no save). */
+    fun testTmdbKey(draft: String) {
+        viewModelScope.launch {
+            _tmdbKeyTestState.value = TmdbKeyTestState.Testing
+            val ok = tmdb.validateKey(draft)
+            _tmdbKeyTestState.value = if (ok) TmdbKeyTestState.Valid else TmdbKeyTestState.Invalid
+        }
+    }
+
+    /** Persist the draft key (device-local) and confirm with a Saved status. */
+    fun saveTmdbKey(draft: String) {
+        viewModelScope.launch {
+            prefs.setTmdbApiKey(draft)
+            _tmdbKeyTestState.value = TmdbKeyTestState.Saved
+        }
     }
 
     // Developer

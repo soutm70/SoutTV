@@ -36,6 +36,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,6 +94,25 @@ fun MovieDetailScreen(
     LaunchedEffect(movie?.id) {
         movie?.id?.let { viewModel.loadMovieProviderInfo(it) }
     }
+
+    // TMDB poster fallback (opt-in). Resolves ONLY when the server supplied no
+    // artwork (no logo, no provider poster/backdrop) and provider-info has
+    // settled, so it never overrides a real poster or hits TMDB needlessly.
+    var tmdbPosterUrl by remember(movie?.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(movie?.id, info) {
+        val m = movie ?: return@LaunchedEffect
+        val hasServerArt = !m.logo?.url.isNullOrBlank() ||
+            !info?.posterUrl.isNullOrBlank() || !info?.backdropUrl.isNullOrBlank()
+        val infoSettled = m.id == null || state.movieProviderInfo.containsKey(m.id) ||
+            !state.movieProviderInfoLoading.contains(m.id)
+        if (!hasServerArt && tmdbPosterUrl == null && infoSettled) {
+            tmdbPosterUrl = viewModel.resolveTmdbPoster(
+                tmdbId = info?.tmdbId ?: m.tmdbId,
+                title = m.displayName,
+                isMovie = true,
+            )
+        }
+    }
     BackHandler(enabled = true) { onBack() }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -115,6 +137,7 @@ fun MovieDetailScreen(
                     HeroSection(
                         movie = movie,
                         info = info,
+                        tmdbPosterUrl = tmdbPosterUrl,
                         hasResume = hasResume,
                         onPlay = { onPlay(movie) },
                     )
@@ -144,11 +167,12 @@ fun MovieDetailScreen(
 private fun HeroSection(
     movie: DispatcharrVODMovie,
     info: DispatcharrVODProviderInfo?,
+    tmdbPosterUrl: String?,
     hasResume: Boolean,
     onPlay: () -> Unit,
 ) {
-    val heroUrl = info?.backdropUrl ?: movie.logo?.url
-    val posterUrl = movie.logo?.url ?: info?.posterUrl
+    val heroUrl = info?.backdropUrl ?: movie.logo?.url ?: tmdbPosterUrl
+    val posterUrl = movie.logo?.url ?: info?.posterUrl ?: tmdbPosterUrl
     val displayYear = info?.year?.toString() ?: movie.year?.toString()
     val displayRating = (info?.rating?.takeIf { it.isNotBlank() } ?: movie.rating)
         ?.let { runCatching { String.format("%.1f", it.toDouble()) }.getOrDefault(it) }

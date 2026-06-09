@@ -212,6 +212,18 @@ fun MainScaffold(
         if (selectedTab !in tabs) selectedTab = AppTab.LiveTV
     }
 
+    // Back from any secondary tab (Favorites / DVR / On Demand / Settings)
+    // returns to Live TV instead of exiting the app -- Live TV is the home tab.
+    // On Live TV this handler is disabled so Back falls through to the default
+    // (mini-player / exit). The Settings sub-screen BackHandler in
+    // SettingsTabContent is composed DEEPER and is enabled only while a
+    // sub-screen is open, so it takes priority there; this only fires on a
+    // tab root.
+    androidx.activity.compose.BackHandler(enabled = selectedTab != AppTab.LiveTV) {
+        selectedTab = AppTab.LiveTV
+        initialTabApplied = true
+    }
+
     // iOS BackgroundWork activity pill (HomeView.swift). ORs the content-fetch
     // flags so the "Syncing" indicator shows while the channel list, EPG/guide,
     // or On Demand library is still loading -- an activity light, NOT a
@@ -523,10 +535,10 @@ private fun TvTopTabBar(
                 // and only flips false when focus leaves the bar entirely, so it
                 // is the reliable "is the user in the bar" signal for [armed].
                 .onFocusChanged { navHasFocus = it.hasFocus }
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(22.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                .padding(horizontal = 3.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEach { tab ->
@@ -550,7 +562,9 @@ private fun TvTab(
     val background by animateColorAsState(
         targetValue = when {
             focused -> MaterialTheme.colorScheme.primary
-            selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            // Selected-but-unfocused reads as a clearly filled pill (tvOS shows
+            // a bold filled selected tab), not a faint tint.
+            selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
             else -> Color.Transparent
         },
         label = "tvTabBackground",
@@ -570,23 +584,24 @@ private fun TvTab(
                 if (it.isFocused) onFocused()
             }
             .tvFocusScale(focused)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(background)
             .focusable()
-            .padding(horizontal = 11.dp, vertical = 4.dp),
+            .padding(horizontal = 13.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(
             imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
             contentDescription = null,
             tint = foreground,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
         )
         Text(
             text = tab.label,
             color = foreground,
-            style = MaterialTheme.typography.titleSmall,
+            // Bumped from titleSmall to match the tvOS nav-bar scale.
+            style = MaterialTheme.typography.titleMedium,
         )
     }
 }

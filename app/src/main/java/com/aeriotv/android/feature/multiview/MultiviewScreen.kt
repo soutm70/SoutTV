@@ -533,9 +533,14 @@ private fun Tile(
     // D-pad focus (which tile the remote is currently on) is owned by the
     // grid host and passed in as [isDpadFocused]. Distinct from AUDIO focus
     // (which tile is playing sound): the user moves the ring around the grid
-    // and presses OK to promote the ringed tile to audio focus. Without a
-    // visible ring the user can't tell which tile they're about to select.
-    val dpadFocused = isDpadFocused
+    // and presses OK to promote the ringed tile to audio focus.
+    //
+    // The bright white ring FADES OUT with the chrome (4s after the last D-pad
+    // move; onTileFocused re-arms `chromeVisible`) instead of persisting, so a
+    // resting grid isn't dominated by a hard white box. The persistent
+    // "which tile is active" cue is the audio-focus border configured in
+    // Settings > Multiview (Gray Outline / themeFading), which is unaffected.
+    val dpadFocused = isDpadFocused && chromeVisible
     // Resolve the AUDIO-focus indicator for this tile. iOS canon:
     //   centerIcon: speaker icon fades with the chrome
     //   grayPersistent: muted gray border always around the active tile
@@ -546,7 +551,7 @@ private fun Tile(
     // border styles, then the resting hairline. The D-pad ring deliberately
     // outranks the audio-focus border so the navigation cursor is never
     // ambiguous; the speaker icon still distinguishes the audio tile.
-    val borderColor = when {
+    val targetBorderColor = when {
         isDropTarget -> MaterialTheme.colorScheme.tertiary
         isRelocating -> MaterialTheme.colorScheme.primary
         dpadFocused -> Color.White
@@ -556,7 +561,7 @@ private fun Tile(
             MaterialTheme.colorScheme.primary
         else -> Color.White.copy(alpha = 0.08f)
     }
-    val borderWidth = when {
+    val targetBorderWidth = when {
         isDropTarget -> 4.dp
         dpadFocused -> 4.dp
         isRelocating -> 3.dp
@@ -564,6 +569,18 @@ private fun Tile(
                 (audioFocusStyle == "themeFading" && !focusFadedOut)) -> 2.dp
         else -> 1.dp
     }
+    // Animate the border so the white D-pad ring EASES out (and back in) with
+    // the chrome rather than popping. 350ms matches the chrome cross-fade feel.
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        targetValue = targetBorderColor,
+        animationSpec = androidx.compose.animation.core.tween(350),
+        label = "tileBorderColor",
+    )
+    val borderWidth by androidx.compose.animation.core.animateDpAsState(
+        targetValue = targetBorderWidth,
+        animationSpec = androidx.compose.animation.core.tween(350),
+        label = "tileBorderWidth",
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()

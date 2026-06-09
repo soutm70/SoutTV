@@ -148,35 +148,33 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Play your DVR recordings",
-            body = "Recordings on your Dispatcharr DVR now play right in the " +
-                "app. Open the DVR tab and tap a completed recording to watch it.",
+            title = "Add to Multiview while watching",
+            body = "From a live channel, open Add to Multiview, pick more " +
+                "channels, and jump straight into the split-screen grid. The " +
+                "channel you were watching becomes the first tile and keeps the " +
+                "sound.",
         ),
         WhatsNewItem(
-            title = "Save recordings for offline",
-            body = "Save to Device downloads a recording to your Downloads " +
-                "folder so you can watch it with no connection. Prefer somewhere " +
-                "else? Pick a custom folder in DVR Settings.",
+            title = "Smoother Android TV guide",
+            body = "A single D-pad press moves one channel and holding fast " +
+                "scrolls, the guide scale matches the tvOS app, and now-playing " +
+                "titles stay readable as a long program airs.",
         ),
         WhatsNewItem(
-            title = "Smoother on Android TV",
-            body = "Focus and D-pad navigation animate smoothly now, closer to " +
-                "the tvOS app, and the guide no longer lags as you move around.",
+            title = "Fill missing artwork from TMDB",
+            body = "Turn on Program Posters in App Behaviors and add your own " +
+                "free TMDB key to fill in missing movie, show, and channel " +
+                "artwork. The key syncs across your devices.",
         ),
         WhatsNewItem(
-            title = "Syncing indicator",
-            body = "A small pill shows when AerioTV is refreshing your playlist, " +
-                "guide, or On Demand library in the background.",
+            title = "Back returns to Live TV",
+            body = "Pressing Back from the DVR, On Demand, or Settings tab now " +
+                "takes you to the Live TV tab instead of closing the app.",
         ),
         WhatsNewItem(
-            title = "Player aspect ratio",
-            body = "Switch the picture between Fit, Fill, and Zoom from the " +
-                "player's More menu.",
-        ),
-        WhatsNewItem(
-            title = "Hide channel logos",
-            body = "A new Appearance toggle hides logos in the channel list and " +
-                "guide for a cleaner, text-only layout.",
+            title = "Smoother mini player",
+            body = "Sending a channel to the corner mini player no longer " +
+                "pauses for a moment before the picture and sound resume.",
         ),
     )
 }

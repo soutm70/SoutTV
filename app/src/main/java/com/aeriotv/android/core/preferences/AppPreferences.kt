@@ -162,6 +162,32 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * iOS TMDBPosters parity (Aerio VODService.swift). Opt-in, OFF by default:
+     * when on AND a key is set, missing artwork (VOD posters, and later EPG
+     * program posters) is filled from the user's OWN free TMDB key. The toggle
+     * and key SYNC via Drive (snapshotSyncablePreferences) so they carry across
+     * the user's devices -- the same model the app already uses for playlist
+     * credentials (buildCredentialsSnapshot), stored in the user's own Drive
+     * appData. (Encryption-at-rest for all synced credentials remains the
+     * holistic job of task #53.)
+     */
+    val programPostersTmdbEnabled: Flow<Boolean> =
+        store.data.map { it[KEY_PROGRAM_POSTERS_TMDB_ENABLED] ?: false }
+    suspend fun setProgramPostersTmdbEnabled(value: Boolean) {
+        store.edit { it[KEY_PROGRAM_POSTERS_TMDB_ENABLED] = value }
+    }
+
+    /** The user's TMDB v3 API key OR v4 read-access token. Empty = unset. */
+    val tmdbApiKey: Flow<String> = store.data.map { it[KEY_TMDB_API_KEY] ?: "" }
+    suspend fun setTmdbApiKey(value: String) {
+        store.edit { prefs ->
+            val trimmed = value.trim()
+            if (trimmed.isBlank()) prefs.remove(KEY_TMDB_API_KEY)
+            else prefs[KEY_TMDB_API_KEY] = trimmed
+        }
+    }
+
+    /**
      * iOS `debugLoggingEnabled` parity (DeveloperSettingsView line 14). The
      * Settings -> Developer screen flips this on/off; the DebugLogger
      * singleton reads it on startup and on every change to know whether to
@@ -580,6 +606,11 @@ class AppPreferences @Inject constructor(
         data[KEY_SKIP_LOADING_SCREEN]?.let { out["skipLoadingScreen"] = it.toString() }
         data[KEY_APPLE_TV_CHANNEL_FLIP]?.let { out["appleTVChannelFlip"] = it.toString() }
         data[KEY_AUTO_RESUME_LAST_CHANNEL]?.let { out["autoResumeLastChannel"] = it.toString() }
+        // TMDB poster fallback: sync the toggle + the user's own key via Drive
+        // (their own Drive appData) so it carries across their devices, matching
+        // how playlist credentials sync.
+        data[KEY_PROGRAM_POSTERS_TMDB_ENABLED]?.let { out["programPostersTmdbEnabled"] = it.toString() }
+        data[KEY_TMDB_API_KEY]?.let { out["tmdbApiKey"] = it }
         data[KEY_CATEGORY_MASTER_ENABLE]?.let { out["enableCategoryColors"] = it.toString() }
         data[KEY_CATEGORY_CUSTOM_JSON]?.let { out["customCategoryColors.v1"] = it }
         // Audit task #52: broaden Drive sync to match iOS coverage. iOS
@@ -607,6 +638,8 @@ class AppPreferences @Inject constructor(
             keys["skipLoadingScreen"]?.toBooleanStrictOrNull()?.let { prefs[KEY_SKIP_LOADING_SCREEN] = it }
             keys["appleTVChannelFlip"]?.toBooleanStrictOrNull()?.let { prefs[KEY_APPLE_TV_CHANNEL_FLIP] = it }
             keys["autoResumeLastChannel"]?.toBooleanStrictOrNull()?.let { prefs[KEY_AUTO_RESUME_LAST_CHANNEL] = it }
+            keys["programPostersTmdbEnabled"]?.toBooleanStrictOrNull()?.let { prefs[KEY_PROGRAM_POSTERS_TMDB_ENABLED] = it }
+            keys["tmdbApiKey"]?.let { prefs[KEY_TMDB_API_KEY] = it }
             keys["enableCategoryColors"]?.toBooleanStrictOrNull()?.let { prefs[KEY_CATEGORY_MASTER_ENABLE] = it }
             keys["customCategoryColors.v1"]?.let { prefs[KEY_CATEGORY_CUSTOM_JSON] = it }
             // Audit task #52: receive the broadened keys.
@@ -688,6 +721,10 @@ class AppPreferences @Inject constructor(
         val KEY_SKIP_LOADING_SCREEN = booleanPreferencesKey("app_behaviors_skip_loading_screen")
         val KEY_DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
+        // Synced via Drive (snapshotSyncablePreferences) -- the user's own key.
+        val KEY_PROGRAM_POSTERS_TMDB_ENABLED =
+            booleanPreferencesKey("app_behaviors_program_posters_tmdb_enabled")
+        val KEY_TMDB_API_KEY = stringPreferencesKey("tmdb_api_key")
         val KEY_AUTO_RESUME_LAST_CHANNEL = booleanPreferencesKey("app_behaviors_auto_resume_last_channel")
         val KEY_LAST_WATCHED_CHANNEL_ID = stringPreferencesKey("last_watched_channel_id")
         val KEY_LAST_SEEN_WHATSNEW_VERSION = stringPreferencesKey("last_seen_whatsnew_version")

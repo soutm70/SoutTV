@@ -124,6 +124,22 @@ fun BoxScope.PersistentExoWindow(
                         android.content.res.Configuration.UI_MODE_TYPE_MASK
                     if (tvUiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) {
                         (videoSurfaceView as? android.view.SurfaceView)?.let { sv ->
+                            // Pin the surface BUFFER to the display size so the
+                            // Fullscreen <-> Mini layout RESIZE does not recreate
+                            // the underlying Surface. A SurfaceView whose bounds
+                            // change otherwise destroys + recreates its Surface
+                            // (new "surface generation"), which forces the video
+                            // MediaCodec to be torn down and re-initialised against
+                            // the new surface -> a multi-second freeze + re-buffer
+                            // when entering the mini-player (NOT a network re-fetch;
+                            // the stream keeps playing, only the decoder resets).
+                            // With a fixed buffer size, SurfaceFlinger's hardware
+                            // scaler maps the constant-size buffer into whatever
+                            // display rect the view occupies (fullscreen or the
+                            // 210x118 mini), so the Surface -- and the codec bound
+                            // to it -- survive the transition untouched.
+                            val dm = ctx.resources.displayMetrics
+                            sv.holder.setFixedSize(dm.widthPixels, dm.heightPixels)
                             DisplayFrameRateMatcher.attach(player, sv)
                         }
                     }

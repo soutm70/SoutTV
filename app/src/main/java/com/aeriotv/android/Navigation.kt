@@ -492,7 +492,13 @@ fun AerioTVNavHost(
                     epgByChannel = state.epgByChannel,
                     onClose = { navController.popBackStack() },
                     onLaunchMultiview = {
-                        navController.navigate(Routes.MULTIVIEW)
+                        // The now-playing stream is being absorbed into the
+                        // multiview grid (PlayerScreen already stopped it), so
+                        // pop PLAYER off the stack -- no dead single-stream
+                        // route to return to. Back from multiview lands on MAIN.
+                        navController.navigate(Routes.MULTIVIEW) {
+                            popUpTo(Routes.PLAYER) { inclusive = true }
+                        }
                     },
                 )
                 }

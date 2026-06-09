@@ -51,6 +51,35 @@ class MultiviewStore @Inject constructor() {
         _audioFocusedIndex.value = 0
     }
 
+    /**
+     * Player-flow seed: ensure [channel] is present at index 0 (the
+     * audio-focused tile) WITHOUT discarding any already-staged tiles.
+     * Used when the user opens "Add to Multiview" while watching a single
+     * stream -- the now-playing channel becomes Tile 1 and keeps audio
+     * focus, while a previously Guide-staged set (if any) is preserved
+     * behind it. Idempotent: if the channel is already staged it is moved
+     * to the front rather than duplicated.
+     */
+    fun seedCurrent(channel: M3UChannel) {
+        val current = _selected.value
+        val without = current.filterNot { it.id == channel.id }
+        _selected.value = (listOf(channel) + without).take(maxTiles)
+        _audioFocusedIndex.value = 0
+    }
+
+    /**
+     * Restore an exact prior selection + audio-focus index. Backs the
+     * cancel path of the player-flow picker: if the user opens the sheet
+     * (which seeds the current channel) then backs out, we revert the
+     * store to precisely what it held before -- protecting a Guide-staged
+     * set instead of blanket-clearing it.
+     */
+    fun restore(snapshot: List<M3UChannel>, audioFocus: Int) {
+        val clamped = snapshot.take(maxTiles)
+        _selected.value = clamped
+        _audioFocusedIndex.value = audioFocus.coerceIn(0, (clamped.size - 1).coerceAtLeast(0))
+    }
+
     fun setAudioFocus(index: Int) {
         if (index in 0 until _selected.value.size) {
             _audioFocusedIndex.value = index
