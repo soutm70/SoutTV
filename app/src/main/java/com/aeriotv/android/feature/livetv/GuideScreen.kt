@@ -467,7 +467,7 @@ fun GuideScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isTv) 52.dp else 56.dp)
+                .height(if (isTv) 44.dp else 56.dp)
                 .padding(horizontal = if (isTv) 24.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -487,33 +487,21 @@ fun GuideScreen(
                 }
             }
             // Search toggle: reveals an inline channel-name search field.
-            // tvOS renders this as a TVGroupPill (icon-only) -- a filled
-            // capsule sitting beside the category pills -- so on TV give the
-            // icon a subtle filled circular container to match that contained
-            // look instead of a bare floating glyph. Active state fills with
-            // the accent.
+            // Bare glyph, no circular container (per user request -- the circles
+            // were crowding each other). Active state tints the glyph accent.
             IconButton(
                 onClick = {
                     searchActive = !searchActive
                     if (!searchActive) viewModel.onSearchQueryChange("")
                 },
-                modifier = Modifier.size(24.dp).then(
-                    if (isTv) Modifier.background(
-                        if (searchActive) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        CircleShape,
-                    ) else Modifier,
-                ),
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     imageVector = Icons.Filled.Search,
                     contentDescription = "Search channels",
-                    tint = when {
-                        isTv && searchActive -> MaterialTheme.colorScheme.onPrimary
-                        searchActive -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.size(16.dp),
+                    tint = if (searchActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
                 )
             }
             // Gap between the two control circles. Material3 IconButton's
@@ -523,26 +511,19 @@ fun GuideScreen(
             // matches the category-pill spacing.
             if (isTv) Spacer(Modifier.width(12.dp))
             // Filter toggle: opens the group on/off picker (Manage Groups).
+            // Bare glyph, no circular container; active (some groups hidden)
+            // tints the glyph accent.
             IconButton(
                 onClick = { showManageGroups = true },
-                modifier = Modifier.size(24.dp).then(
-                    if (isTv) Modifier.background(
-                        if (hiddenGroups.isEmpty())
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                        else MaterialTheme.colorScheme.primary,
-                        CircleShape,
-                    ) else Modifier,
-                ),
+                modifier = Modifier.size(24.dp),
             ) {
                 Icon(
                     imageVector = Icons.Filled.FilterList,
                     contentDescription = "Filter groups",
-                    tint = when {
-                        isTv && hiddenGroups.isNotEmpty() -> MaterialTheme.colorScheme.onPrimary
-                        hiddenGroups.isEmpty() -> MaterialTheme.colorScheme.onSurfaceVariant
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                    modifier = Modifier.size(16.dp),
+                    tint = if (hiddenGroups.isEmpty())
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
                 )
             }
             Spacer(Modifier.width(if (isTv) 12.dp else 6.dp))
@@ -567,7 +548,7 @@ fun GuideScreen(
                         .weight(1f)
                         .fillMaxHeight(),
                     contentPadding = PaddingValues(end = if (isTv) 24.dp else 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (isTv) 12.dp else 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isTv) 7.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     items(groups, key = { it }) { group ->
@@ -578,7 +559,7 @@ fun GuideScreen(
                             label = {
                                 Text(
                                     group,
-                                    style = if (isTv) MaterialTheme.typography.titleSmall
+                                    style = if (isTv) MaterialTheme.typography.labelMedium
                                     else MaterialTheme.typography.labelLarge,
                                 )
                             },
@@ -725,6 +706,11 @@ fun GuideScreen(
         // mini cleanly; once the mini is Hidden this re-enables so the next
         // Back scrolls the guide to the top, then the next shows the exit
         // dialog -- matching the requested tvOS-style ladder.
+        // guideNav drives D-pad vertical focus; declared HERE (above the
+        // BackHandler) so the scroll-to-top Back branch can re-focus the top
+        // channel instead of leaving focus on the "All" group pill.
+        val guideNav = remember { GuideVerticalNavState() }
+        val navScope = rememberCoroutineScope()
         val backScope = androidx.compose.runtime.rememberCoroutineScope()
         var showExitDialog by remember { mutableStateOf(false) }
         val activity = LocalContext.current.findActivity()
@@ -732,7 +718,13 @@ fun GuideScreen(
             val atTop = listState.firstVisibleItemIndex == 0 &&
                 listState.firstVisibleItemScrollOffset == 0
             if (!atTop) {
-                backScope.launch { listState.animateScrollToItem(0) }
+                backScope.launch {
+                    listState.animateScrollToItem(0)
+                    // Land focus on the top channel's NOW cell, not the "All"
+                    // group pill (user-reported: Back scrolled to top but left
+                    // focus on the pill row).
+                    if (isTv) guideNav.focusChannelAtNow(0, nowMillis, listState)
+                }
             } else {
                 showExitDialog = true
             }
@@ -782,8 +774,6 @@ fun GuideScreen(
         //     `up = topNavRequester`. We instead scroll the target row into
         //     existence first, then focus it -- so UP only reaches the nav pill
         //     when already on channel index 0.
-        val guideNav = remember { GuideVerticalNavState() }
-        val navScope = rememberCoroutineScope()
         // Focus-on-return (TV): backing out of the fullscreen player leaves the
         // mini-player Active over the guide. Land D-pad focus on the watched
         // channel's NOW cell so the user keeps channel-surfing with UP/DOWN
@@ -800,13 +790,13 @@ fun GuideScreen(
                 if (filteredChannels.isEmpty()) return@LaunchedEffect
                 val idx = filteredChannels.indexOfFirst { it.id == active.channel.id }
                 if (idx < 0) return@LaunchedEffect
-                // Let the nav-return composition + the top-nav focusRestorer
-                // settle, then claim focus LAST so it lands on the channel rather
-                // than the restored Live TV pill.
-                kotlinx.coroutines.delay(96L)
-                guideNav.seedAnchor(nowMillis)
-                guideNav.beginVerticalMove()
-                guideNav.moveFocusToChannel(idx, listState)
+                // Re-assert focus until it sticks on the watched channel's NOW
+                // cell. The top-nav focusRestorer fires on the fresh nav-return
+                // composition and would win a single one-shot request (the old
+                // delay(96)+single move landed on the Live TV pill
+                // intermittently); focusChannelAtNow retries until
+                // focusedChannelIndex == idx.
+                guideNav.focusChannelAtNow(idx, nowMillis, listState)
             }
         }
         // GH #5: anchor a focused cell's LEADING edge so an oversized programme
@@ -850,9 +840,22 @@ fun GuideScreen(
                         Key.DirectionUp -> -1
                         else -> return@onPreviewKeyEvent false
                     }
-                    val cur = guideNav.focusedChannelIndex
-                    // No cell focused yet (e.g. focus is still on the chips/top
-                    // bar): let the default search drive the first descent.
+                    // While a vertical move is in flight, focusedChannelIndex
+                    // churns to -1 between the outgoing cell's unfocus and the
+                    // incoming cell's focus. Read the in-flight TARGET instead so
+                    // a rapid / long-press UP keeps stepping channel-by-channel
+                    // and only escapes to the nav pill from the genuine top
+                    // (Bug 4: fast UP read -1 and fell through to the nav
+                    // focusProperties).
+                    val cur = if (guideNav.verticalMoveInFlight &&
+                        guideNav.pendingTargetIndex >= 0
+                    ) {
+                        guideNav.pendingTargetIndex
+                    } else {
+                        guideNav.focusedChannelIndex
+                    }
+                    // No cell focused yet (fresh entry from the chips/top bar):
+                    // let the default search drive the first descent.
                     if (cur < 0) return@onPreviewKeyEvent false
                     val target = cur + delta
                     // UP from the very top channel -> do NOT consume, so focus
@@ -1717,6 +1720,19 @@ private class GuideVerticalNavState {
     var focusedChannelIndex by mutableStateOf(-1)
         private set
 
+    /** True from [beginVerticalMove] until the move coroutine settles. Lets the
+     *  key handler keep stepping channel-by-channel on rapid / long-press UP
+     *  even while [focusedChannelIndex] is transiently -1 mid-move (Bug 4). */
+    var verticalMoveInFlight by mutableStateOf(false)
+        private set
+
+    /** The channel index the in-flight vertical move is heading to. The key
+     *  handler reads THIS (not the churning [focusedChannelIndex]) while a move
+     *  is in flight, so a fast UP coalesces to the next channel up instead of
+     *  reading -1 and escaping to the nav pill. -1 when no move is in flight. */
+    var pendingTargetIndex by mutableStateOf(-1)
+        private set
+
     /** Anchor time (ms) the user is navigating along -- the start time of the
      *  focused cell, clamped to the guide window. Vertical moves target the cell
      *  in the next/prev row that spans this time, keeping the on-screen column
@@ -1749,6 +1765,7 @@ private class GuideVerticalNavState {
      *  focus-driven bring-into-view of a wide cell can't pan it sideways. */
     fun beginVerticalMove() {
         suppressHorizontalScroll = true
+        verticalMoveInFlight = true
     }
 
     /** Pin the navigation anchor to a specific time before a programmatic focus.
@@ -1816,6 +1833,7 @@ private class GuideVerticalNavState {
         // latching it until the next LEFT/RIGHT -- so OK / Back / jump-to-now can
         // still reveal off-screen cells afterwards (fixes the latch regression).
         val gen = ++moveGeneration
+        pendingTargetIndex = targetIndex
         try {
             ensureRowVisible(targetIndex, listState)
             // The row may have only just composed (after a scroll); poll its handler
@@ -1845,8 +1863,31 @@ private class GuideVerticalNavState {
             // this coroutine still runs the release decision.
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 kotlinx.coroutines.delay(48L)
-                if (gen == moveGeneration) suppressHorizontalScroll = false
+                if (gen == moveGeneration) {
+                    suppressHorizontalScroll = false
+                    verticalMoveInFlight = false
+                    pendingTargetIndex = -1
+                }
             }
+        }
+    }
+
+    /**
+     * Land D-pad focus on [targetIndex]'s NOW cell, re-asserting until it
+     * sticks. On return-from-player and after a Back scroll-to-top the top nav
+     * bar's focusRestorer competes for focus; a single requestFocus can lose
+     * that race (focus ends on the Live TV pill / a group pill), so seed the
+     * 'now' column and retry [moveFocusToChannel] until [focusedChannelIndex]
+     * actually equals the target.
+     */
+    suspend fun focusChannelAtNow(targetIndex: Int, nowMs: Long, listState: LazyListState) {
+        if (targetIndex < 0) return
+        seedAnchor(nowMs)
+        beginVerticalMove()
+        repeat(14) {
+            moveFocusToChannel(targetIndex, listState)
+            if (focusedChannelIndex == targetIndex) return
+            kotlinx.coroutines.delay(16L)
         }
     }
 

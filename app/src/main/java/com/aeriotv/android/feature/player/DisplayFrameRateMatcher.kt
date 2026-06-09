@@ -35,6 +35,20 @@ object DisplayFrameRateMatcher {
     @OptIn(UnstableApi::class)
     fun attach(player: ExoPlayer, activity: Activity): Any? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        // DISABLED on TV boxes (currently the ONLY caller -- PlayerScreen gates
+        // attach behind isTvForm). applyMode pins preferredDisplayModeId, which
+        // on a TV box is a NON-SEAMLESS HDMI re-handshake: it destroys the
+        // persistent SurfaceView mid-stream (~1s after a channel starts) and
+        // nothing rebinds it, so MediaCodec keeps decoding into a DEAD surface
+        // -- audio plays but the picture goes BLACK (user-reported on a Google
+        // TV Streamer -> Hisense; confirmed via logcat: video frames flowing +
+        // AudioTrack started + a live "Display device changed ... modeId" during
+        // playback). MainActivity already refuses to pin preferredDisplayModeId
+        // on TV for this exact "goes black" reason. Re-enabling needs a SEAMLESS
+        // Surface.setFrameRate(CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS) reimpl.
+        val uiMode = activity.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_TYPE_MASK
+        if (uiMode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) return null
         val deltasUs = ArrayDeque<Long>()
         var lastPtsUs = -1L
         var lastIdeal = 0f

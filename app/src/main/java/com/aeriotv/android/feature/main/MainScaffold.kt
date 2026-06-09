@@ -523,10 +523,10 @@ private fun TvTopTabBar(
                 // and only flips false when focus leaves the bar entirely, so it
                 // is the reliable "is the user in the bar" signal for [armed].
                 .onFocusChanged { navHasFocus = it.hasFocus }
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(18.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                .padding(horizontal = 3.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEach { tab ->
@@ -570,23 +570,23 @@ private fun TvTab(
                 if (it.isFocused) onFocused()
             }
             .tvFocusScale(focused)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(background)
             .focusable()
-            .padding(horizontal = 14.dp, vertical = 5.dp),
+            .padding(horizontal = 11.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Icon(
             imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
             contentDescription = null,
             tint = foreground,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(18.dp),
         )
         Text(
             text = tab.label,
             color = foreground,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
         )
     }
 }

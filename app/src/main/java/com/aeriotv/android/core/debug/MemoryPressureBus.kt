@@ -51,6 +51,17 @@ class MemoryPressureBus @Inject constructor() {
     companion object {
         /** Shorthand for callers that don't want to import ComponentCallbacks2. */
         fun isCritical(level: Int): Boolean =
-            level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+            // Exact-match ONLY the genuine low-memory levels. The trim
+            // constants are NOT severity-monotonic: TRIM_MEMORY_UI_HIDDEN(20),
+            // BACKGROUND(40) and MODERATE(60) are LARGER numbers than
+            // RUNNING_CRITICAL(15) yet are routine "app went to background"
+            // lifecycle signals, NOT memory pressure. The old `>= 15` cutoff
+            // therefore matched UI_HIDDEN on every Home press, so
+            // PlaylistViewModel shed the entire in-memory EPG on a normal
+            // background and the guide came back BLANK on resume (the disk
+            // cache was still "fresh" so the staleness-gated refresh declined
+            // to refetch). Mirror MultiviewStore's exact-match guard.
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                level == ComponentCallbacks2.TRIM_MEMORY_COMPLETE
     }
 }
