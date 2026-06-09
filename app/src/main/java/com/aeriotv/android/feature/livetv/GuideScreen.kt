@@ -231,9 +231,9 @@ fun GuideScreen(
     // adjacent rows with the SAME category tint still read as distinct rows
     // (user request -- the 0.5dp / 15% line was nearly invisible between
     // same-colored channels).
-    val guideRowDivider = if (isTv) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+    val guideRowDivider = if (isTv) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
         else MaterialTheme.colorScheme.outline
-    val guideRowDividerThickness = if (isTv) 1.5.dp else 1.dp
+    val guideRowDividerThickness = if (isTv) 0.75.dp else 1.dp
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
