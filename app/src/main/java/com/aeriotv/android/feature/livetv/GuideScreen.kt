@@ -227,6 +227,13 @@ fun GuideScreen(
     // Phone keeps the existing gray surfaceVariant divider.
     val guideDivider = if (isTv) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
         else MaterialTheme.colorScheme.surfaceVariant
+    // Channel-to-channel separator: stronger than the header hairline so two
+    // adjacent rows with the SAME category tint still read as distinct rows
+    // (user request -- the 0.5dp / 15% line was nearly invisible between
+    // same-colored channels).
+    val guideRowDivider = if (isTv) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+        else MaterialTheme.colorScheme.outline
+    val guideRowDividerThickness = if (isTv) 1.5.dp else 1.dp
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
@@ -931,7 +938,7 @@ fun GuideScreen(
                     multiviewStore = multiviewStore,
                     showLogo = showChannelLogos,
                 )
-                HorizontalDivider(color = guideDivider, thickness = 0.5.dp)
+                HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
         }
         }
