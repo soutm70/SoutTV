@@ -40,6 +40,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.border
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -279,18 +284,32 @@ fun MainScaffold(
         // Section composables read it via LocalTvTopNavFocusRequester and
         // route D-pad UP from their topmost focusable here.
         val topNavRequester = remember { FocusRequester() }
+        // Timestamp of the last D-pad UP press, read by TvTopTabBar to tell a
+        // DELIBERATE bar entry (user pressed UP from the content; selection
+        // should follow the focused pill immediately) from an involuntary
+        // focus FALLBACK (a sub-screen transition removed the focused node and
+        // Compose handed focus to the leftmost pill; selecting there would
+        // yank the user to Live TV). Fallbacks are never preceded by UP.
+        val lastUpKeyMs = remember { longArrayOf(0L) }
         CompositionLocalProvider(LocalTvTopNavFocusRequester provides topNavRequester) {
             Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.background)
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
+                            lastUpKeyMs[0] = android.os.SystemClock.uptimeMillis()
+                        }
+                        false
+                    },
             ) {
                 TvTopTabBar(
                     tabs = tabs,
                     selected = selectedTab,
                     onSelect = { selectedTab = it; initialTabApplied = true },
                     focusRequester = topNavRequester,
+                    lastUpKeyMs = lastUpKeyMs,
                 )
                 // tvOS layout reference: when the mini-player is active the
                 // group filter pills + guide grid drop DOWN so the
@@ -488,6 +507,7 @@ private fun TvTopTabBar(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
     focusRequester: FocusRequester,
+    lastUpKeyMs: LongArray = longArrayOf(0L),
 ) {
     // Selection-follows-focus, but committed ONLY for focus moves BETWEEN pills
     // (real D-pad traversal of the bar), never for focus ENTERING the bar from
@@ -516,7 +536,12 @@ private fun TvTopTabBar(
     }
     LaunchedEffect(focusedTab) {
         val cur = focusedTab ?: return@LaunchedEffect
-        if (armed && cur != selected) onSelect(cur)
+        // Deliberate bar ENTRY (a fresh D-pad UP) selects immediately too, so
+        // highlighting a pill is always enough; the armed gate alone made the
+        // first-focused pill need an extra move or OK (user report).
+        val deliberateEntry =
+            android.os.SystemClock.uptimeMillis() - lastUpKeyMs[0] < 400L
+        if ((armed || deliberateEntry) && cur != selected) onSelect(cur)
     }
 
     // tvOS-style floating nav: the tabs are grouped into one centered, rounded

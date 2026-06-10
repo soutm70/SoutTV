@@ -22,6 +22,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +56,12 @@ data class TvMenuAction(
  * row clicks are wrapped here so the spurious OK-release that follows a TV
  * long-press cannot auto-pick a row. Callers compose this only while open:
  *   if (menuOpen) TvActionMenuDialog(..., onDismiss = { menuOpen = false })
+ *
+ * D-pad activation is latched per row, not time-based: a row only fires on
+ * an OK KeyUp whose KeyDown it also saw. The release of the long-press that
+ * OPENED the dialog arrives as a bare KeyUp (its KeyDown went to the
+ * launching row), so it is ignored no matter how long the button was held,
+ * including releases slower than the guard's grace window.
  */
 @Composable
 fun TvActionMenuDialog(
@@ -78,17 +89,45 @@ fun TvActionMenuDialog(
                     val tint = if (action.destructive) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.primary
                     var rowFocused by remember { mutableStateOf(false) }
+                    // OK activates only when this row saw the press start:
+                    // KeyDown (repeatCount 0) latches, KeyUp fires if latched.
+                    // Repeats belong to a press that began before the dialog
+                    // opened, so they must not latch.
+                    var okLatched by remember { mutableStateOf(false) }
+                    val activate = guard.wrap { onDismiss(); action.onClick() }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .onFocusChanged { rowFocused = it.isFocused }
+                            .onFocusChanged {
+                                rowFocused = it.isFocused
+                                if (!it.isFocused) okLatched = false
+                            }
+                            .onPreviewKeyEvent { event ->
+                                val isOk = event.key == Key.DirectionCenter ||
+                                    event.key == Key.Enter ||
+                                    event.key == Key.NumPadEnter
+                                if (!isOk) return@onPreviewKeyEvent false
+                                when (event.type) {
+                                    KeyEventType.KeyDown -> {
+                                        if (event.nativeKeyEvent.repeatCount == 0) okLatched = true
+                                        true
+                                    }
+                                    KeyEventType.KeyUp -> {
+                                        val latched = okLatched
+                                        okLatched = false
+                                        if (latched && action.enabled) activate()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
                             .background(
                                 if (rowFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                                 else Color.Transparent,
                             )
                             .clickable(
                                 enabled = action.enabled,
-                                onClick = guard.wrap { onDismiss(); action.onClick() },
+                                onClick = activate,
                             )
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,

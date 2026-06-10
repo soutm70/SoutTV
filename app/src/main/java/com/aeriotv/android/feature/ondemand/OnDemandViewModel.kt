@@ -13,6 +13,7 @@ import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODProviderInfo
 import com.aeriotv.android.core.network.DispatcharrVODSeries
 import com.aeriotv.android.core.network.TMDBService
+import com.aeriotv.android.core.network.TmdbDetails
 import com.aeriotv.android.core.network.XtreamCodesApi
 import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
@@ -514,6 +515,23 @@ class OnDemandViewModel @Inject constructor(
         }
         if (title.isBlank()) return null
         return tmdbService.posterUrlForTitle(title, key)
+    }
+
+    /**
+     * TMDB metadata backfill for detail fields the server left blank
+     * (plot / genre / cast / director / year / rating). Same opt-in + key
+     * gate and id-then-title resolution order as [resolveTmdbPoster].
+     * Callers invoke this ONLY when something is actually missing.
+     */
+    suspend fun resolveTmdbDetails(tmdbId: String?, title: String, isMovie: Boolean): TmdbDetails? {
+        if (!appPreferences.programPostersTmdbEnabled.first()) return null
+        val key = appPreferences.tmdbApiKey.first()
+        if (key.isBlank()) return null
+        tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            tmdbService.detailsForId(id, isMovie, key)?.let { return it }
+        }
+        if (title.isBlank()) return null
+        return tmdbService.detailsForTitle(title, isMovie, key)
     }
 
     /**

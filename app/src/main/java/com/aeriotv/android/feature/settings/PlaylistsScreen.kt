@@ -4,7 +4,6 @@ import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +31,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -45,8 +43,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.filled.Menu
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -56,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 
@@ -231,52 +229,27 @@ fun PlaylistsScreen(
         menuFor?.let { pl ->
             val index = workingOrder.indexOfFirst { it.id == pl.id }
             fun moveTo(target: Int) {
-                menuFor = null
                 val swapped = workingOrder.toMutableList().apply { add(target, removeAt(index)) }
                 workingOrder = swapped
                 viewModel.applyPlaylistOrder(swapped.map { it.id })
             }
-            Dialog(onDismissRequest = { menuFor = null }) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    Column(modifier = Modifier.padding(vertical = 10.dp)) {
-                        Text(
-                            text = pl.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                        )
-                        if (index > 0) {
-                            TvPlaylistMenuRow(
-                                label = "Move Up",
-                                icon = Icons.Filled.KeyboardArrowUp,
-                                onClick = tvGuard.wrap { moveTo(index - 1) },
-                            )
-                        }
-                        if (index in 0 until workingOrder.lastIndex) {
-                            TvPlaylistMenuRow(
-                                label = "Move Down",
-                                icon = Icons.Filled.KeyboardArrowDown,
-                                onClick = tvGuard.wrap { moveTo(index + 1) },
-                            )
-                        }
-                        TvPlaylistMenuRow(
-                            label = "Delete",
-                            icon = Icons.Filled.Delete,
-                            destructive = true,
-                            onClick = tvGuard.wrap { menuFor = null; pendingDelete = pl },
-                        )
-                        TvPlaylistMenuRow(
-                            label = "Cancel",
-                            icon = Icons.Filled.Close,
-                            onClick = tvGuard.wrap { menuFor = null },
-                        )
+            // TvActionMenuDialog dismisses (menuFor = null) before running the
+            // row's onClick, so the actions only carry their own effect.
+            TvActionMenuDialog(
+                title = pl.name,
+                actions = buildList {
+                    if (index > 0) {
+                        add(TvMenuAction("Move Up", Icons.Filled.KeyboardArrowUp) { moveTo(index - 1) })
                     }
-                }
-            }
+                    if (index in 0 until workingOrder.lastIndex) {
+                        add(TvMenuAction("Move Down", Icons.Filled.KeyboardArrowDown) { moveTo(index + 1) })
+                    }
+                    add(TvMenuAction("Delete", Icons.Filled.Delete, destructive = true) { pendingDelete = pl })
+                    add(TvMenuAction("Cancel", Icons.Filled.Close) {})
+                },
+                guard = tvGuard,
+                onDismiss = { menuFor = null },
+            )
         }
         }
     }
@@ -439,33 +412,3 @@ private fun SwipeablePlaylistRow(
     }
 }
 
-/**
- * Focusable action row for the TV long-press menu (mirrors SettingsScreen's
- * PlaylistMenuRow chrome): tinted wash under D-pad focus via dpadFocusWash.
- */
-@Composable
-private fun TvPlaylistMenuRow(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    destructive: Boolean = false,
-) {
-    val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .dpadFocusWash()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = tint)
-        Spacer(Modifier.size(12.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (destructive) MaterialTheme.colorScheme.error
-            else MaterialTheme.colorScheme.onBackground,
-        )
-    }
-}

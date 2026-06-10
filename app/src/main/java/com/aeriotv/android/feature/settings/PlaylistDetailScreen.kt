@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -191,23 +190,22 @@ fun PlaylistDetailScreen(
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                     ) {
                         DetailRow("Type", playlist.sourceType)
-                        DetailRow("Remote URL", playlist.urlString)
+                        // Checkmark marks whichever URL is currently in effect
+                        // per PlaylistRepository.effectiveBaseUrl's decision.
+                        val activeRoute = state.activeRoute
+                        DetailRow(
+                            label = "Remote URL",
+                            value = playlist.urlString,
+                            icon = Icons.Filled.CheckCircle.takeIf { activeRoute?.isLan == false },
+                            iconTint = MaterialTheme.colorScheme.primary,
+                        )
                         playlist.lanUrlString?.takeIf { it.isNotBlank() }?.let { lan ->
-                            DetailRow("LAN URL", lan)
-                            // Which URL is actually in effect right now, per
-                            // PlaylistRepository.effectiveBaseUrl's decision.
-                            state.activeRoute?.let { route ->
-                                DetailRow(
-                                    label = "Connection",
-                                    value = if (route.isLan) "LAN (${route.url})" else "WAN (${route.url})",
-                                    valueColor = if (route.isLan) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onBackground
-                                    },
-                                    icon = if (route.isLan) Icons.Outlined.Home else Icons.Outlined.Public,
-                                )
-                            }
+                            DetailRow(
+                                label = "Local URL",
+                                value = lan,
+                                icon = Icons.Filled.CheckCircle.takeIf { activeRoute?.isLan == true },
+                                iconTint = MaterialTheme.colorScheme.primary,
+                            )
                         }
                         DetailRow(
                             label = "Status",
@@ -363,6 +361,8 @@ private fun DetailRow(
     value: String,
     valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onBackground,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    // Lets the URL rows show a primary checkmark without tinting the URL text.
+    iconTint: androidx.compose.ui.graphics.Color = valueColor,
 ) {
     Row(
         modifier = Modifier
@@ -384,7 +384,7 @@ private fun DetailRow(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = valueColor,
+                    tint = iconTint,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.size(6.dp))

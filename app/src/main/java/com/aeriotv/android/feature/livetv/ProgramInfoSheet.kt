@@ -171,8 +171,10 @@ fun ProgramInfoSheet(
                 tonalElevation = 6.dp,
                 modifier = Modifier
                     .widthIn(max = 720.dp)
-                    .fillMaxWidth(0.55f)
-                    .heightIn(max = 620.dp),
+                    .fillMaxWidth(0.62f)
+                    // TV canvas is 960x540dp: cap below 540 so the card never
+                    // clips past the top/bottom edges; scroll is the backstop.
+                    .heightIn(max = 500.dp),
             ) {
                 Column(
                     modifier = Modifier
@@ -180,13 +182,15 @@ fun ProgramInfoSheet(
                         // focusable so the remote's D-pad up/down scrolls
                         // a long description instead of doing nothing.
                         .focusable()
-                        .padding(horizontal = 32.dp, vertical = 28.dp),
+                        .padding(horizontal = 28.dp, vertical = 20.dp),
                 ) {
                     ProgramInfoBody(
                         target = target,
                         effectiveCategory = effectiveCategory,
                         posterUrl = posterUrl,
-                        posterWidth = 140.dp,
+                        posterWidth = 120.dp,
+                        sectionGap = 12.dp,
+                        metaRowPadding = 2.dp,
                     )
                 }
             }
@@ -228,6 +232,10 @@ private fun ProgramInfoBody(
     effectiveCategory: String,
     posterUrl: String?,
     posterWidth: Dp,
+    // Defaults match the phone sheet; the TV dialog passes tighter values so
+    // the whole body fits inside its 500dp height cap.
+    sectionGap: Dp = 20.dp,
+    metaRowPadding: Dp = 4.dp,
 ) {
     Row(verticalAlignment = Alignment.Top) {
         Column(modifier = Modifier.weight(1f)) {
@@ -268,12 +276,12 @@ private fun ProgramInfoBody(
         }
     }
 
-    Spacer(Modifier.height(20.dp))
-    InfoColumnsRow(target)
+    Spacer(Modifier.height(sectionGap))
+    InfoColumnsRow(target, rowPadding = metaRowPadding)
 
-    Spacer(Modifier.height(20.dp))
+    Spacer(Modifier.height(sectionGap))
     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-    Spacer(Modifier.height(20.dp))
+    Spacer(Modifier.height(sectionGap))
 
     SectionLabel("Description")
     Spacer(Modifier.height(8.dp))
@@ -296,13 +304,13 @@ private fun ProgramInfoBody(
     if (tokens.isNotEmpty()) {
         val (metadata, genres) = tokens.partition { it.lowercase(Locale.getDefault()) in METADATA_TOKENS }
         if (metadata.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(sectionGap))
             SectionLabel("Metadata")
             Spacer(Modifier.height(8.dp))
             PillsFlow(tokens = metadata)
         }
         if (genres.isNotEmpty()) {
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(sectionGap))
             SectionLabel("Categories")
             Spacer(Modifier.height(8.dp))
             PillsFlow(tokens = genres)
@@ -311,7 +319,7 @@ private fun ProgramInfoBody(
 }
 
 @Composable
-private fun InfoColumnsRow(target: ProgramInfoTarget) {
+private fun InfoColumnsRow(target: ProgramInfoTarget, rowPadding: Dp) {
     val timeFormat = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     val dateFormat = remember { DateFormat.getDateInstance(DateFormat.MEDIUM) }
     val airs = "${timeFormat.format(Date(target.startMillis))} – ${timeFormat.format(Date(target.endMillis))}"
@@ -319,19 +327,19 @@ private fun InfoColumnsRow(target: ProgramInfoTarget) {
     val duration = formatDuration(target.endMillis - target.startMillis)
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        InfoRow(label = "Channel", value = target.channelName)
-        InfoRow(label = "Airs", value = airs)
-        InfoRow(label = "Date", value = date)
-        InfoRow(label = "Duration", value = duration)
+        InfoRow(label = "Channel", value = target.channelName, verticalPadding = rowPadding)
+        InfoRow(label = "Airs", value = airs, verticalPadding = rowPadding)
+        InfoRow(label = "Date", value = date, verticalPadding = rowPadding)
+        InfoRow(label = "Duration", value = duration, verticalPadding = rowPadding)
     }
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
+private fun InfoRow(label: String, value: String, verticalPadding: Dp) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = verticalPadding),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -425,7 +433,7 @@ private fun String.categoryTokens(): List<String> =
 /** Hilt EntryPoint so the sheet can reach the singleton Dispatcharr client +
  *  AuthBroker without injecting them through every call site. The sheet is a
  *  plain composable (no ViewModel), so the standard `@Inject` route isn't
- *  available — this is the Compose-idiomatic shortcut. */
+ *  available; this is the Compose-idiomatic shortcut. */
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface ProgramInfoEntryPoint {

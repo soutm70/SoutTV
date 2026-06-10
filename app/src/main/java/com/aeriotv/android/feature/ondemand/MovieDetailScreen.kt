@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODProviderInfo
+import com.aeriotv.android.core.network.TmdbDetails
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
 import com.aeriotv.android.ui.tv.tvFocusScale
@@ -120,6 +121,28 @@ fun MovieDetailScreen(
             )
         }
     }
+
+    // TMDB metadata backfill (same opt-in gate as the poster fallback).
+    // Fetched only when the server left at least one of plot / genre / cast /
+    // director blank after provider-info settled; server values always win,
+    // TMDB only fills the holes. Fully-described libraries never hit TMDB.
+    var tmdbDetails by remember(movie?.id) { mutableStateOf<TmdbDetails?>(null) }
+    LaunchedEffect(movie?.id, info, state.movieProviderInfoLoading) {
+        val m = movie ?: return@LaunchedEffect
+        val infoSettled = m.id == null || state.movieProviderInfo.containsKey(m.id) ||
+            !state.movieProviderInfoLoading.contains(m.id)
+        val missingMeta = (info?.effectivePlot ?: m.plot).isNullOrBlank() ||
+            (info?.effectiveGenre ?: m.genre).isNullOrBlank() ||
+            info?.effectiveCast.isNullOrBlank() ||
+            info?.effectiveDirector.isNullOrBlank()
+        if (missingMeta && tmdbDetails == null && infoSettled) {
+            tmdbDetails = viewModel.resolveTmdbDetails(
+                tmdbId = info?.tmdbId ?: m.tmdbId,
+                title = m.displayName,
+                isMovie = true,
+            )
+        }
+    }
     BackHandler(enabled = true) { onBack() }
     val isTv = rememberLiveTvFormFactor().isTv
 
@@ -146,6 +169,7 @@ fun MovieDetailScreen(
                         movie = movie,
                         info = info,
                         tmdbPosterUrl = tmdbPosterUrl,
+                        tmdbDetails = tmdbDetails,
                         hasResume = hasResume,
                         isTv = isTv,
                         onPlay = { onPlay(movie) },
@@ -155,6 +179,7 @@ fun MovieDetailScreen(
                     InfoSection(
                         movie = movie,
                         info = info,
+                        tmdbDetails = tmdbDetails,
                         isTv = isTv,
                         onOpenUrl = { url ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -182,16 +207,20 @@ private fun HeroSection(
     movie: DispatcharrVODMovie,
     info: DispatcharrVODProviderInfo?,
     tmdbPosterUrl: String?,
+    tmdbDetails: TmdbDetails?,
     hasResume: Boolean,
     isTv: Boolean,
     onPlay: () -> Unit,
 ) {
     val heroUrl = info?.backdropUrl ?: movie.logo?.url ?: tmdbPosterUrl
     val posterUrl = movie.logo?.url ?: info?.posterUrl ?: tmdbPosterUrl
-    val displayYear = info?.year?.toString() ?: movie.year?.toString()
+    // TMDB sits last in each chain: it only backfills fields the server
+    // (provider-info AND the list row) left empty.
+    val displayYear = info?.year?.toString() ?: movie.year?.toString() ?: tmdbDetails?.year
     val displayRating = (info?.rating?.takeIf { it.isNotBlank() } ?: movie.rating)
         ?.let { runCatching { String.format("%.1f", it.toDouble()) }.getOrDefault(it) }
         ?.takeIf { it.isNotBlank() && it != "0.0" }
+        ?: tmdbDetails?.voteAverage
     val durationSecs = info?.durationSecs?.takeIf { it > 0 } ?: movie.durationSecs?.takeIf { it > 0 }
 
     // On TV land focus on Play the moment the screen opens; without this the
@@ -409,13 +438,17 @@ private fun PlayCta(
 private fun InfoSection(
     movie: DispatcharrVODMovie,
     info: DispatcharrVODProviderInfo?,
+    tmdbDetails: TmdbDetails?,
     isTv: Boolean,
     onOpenUrl: (String) -> Unit,
 ) {
+    // Server-provided values always win; TMDB backfills only the holes.
     val plot = info?.effectivePlot?.takeIf { it.isNotBlank() } ?: movie.plot?.takeIf { it.isNotBlank() }
+        ?: tmdbDetails?.overview
     val genre = info?.effectiveGenre?.takeIf { it.isNotBlank() } ?: movie.genre?.takeIf { it.isNotBlank() }
-    val cast = info?.effectiveCast?.takeIf { it.isNotBlank() }
-    val director = info?.effectiveDirector?.takeIf { it.isNotBlank() }
+        ?: tmdbDetails?.genres
+    val cast = info?.effectiveCast?.takeIf { it.isNotBlank() } ?: tmdbDetails?.castTop
+    val director = info?.effectiveDirector?.takeIf { it.isNotBlank() } ?: tmdbDetails?.director
     val country = info?.effectiveCountry?.takeIf { it.isNotBlank() }
     val trailerUrl = info?.effectiveTrailer?.let { youtubeUrl(it) }
     val tmdbUrl = (info?.tmdbId ?: movie.tmdbId)?.takeIf { it.isNotBlank() }?.let {

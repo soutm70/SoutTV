@@ -244,17 +244,21 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // GH #1: on Android TV the leanback IME is an overlay; letting the window
-        // RESIZE per IME-animation frame feeds a recompose + bring-into-view loop
-        // in the verticalScroll onboarding form, so the fields visibly jiggle.
-        // ADJUST_NOTHING keeps the window completely still: the earlier PAN mode
-        // slid the whole screen up and exposed black behind the keyboard (user
-        // report). The keyboard simply overlays the bottom, and the
-        // keyboard-on-OK gate means it only opens over a field the user
-        // deliberately clicked. Phones keep the default adjustResize (a real
-        // keyboard must lift the focused field).
+        // TV soft-input mode history (GH #1 and two user reports):
+        //  - RESIZE originally fed a per-frame recompose + bring-into-view
+        //    loop (the onboarding jiggle) -> switched to PAN.
+        //  - PAN slid the whole window up and exposed black behind the
+        //    keyboard -> switched to ADJUST_NOTHING.
+        //  - ADJUST_NOTHING left the keyboard COVERING lower form fields
+        //    (no insets, so nothing scrolls them clear).
+        // RESIZE is correct again now that both root causes are fixed at the
+        // source: TvImeNoJitterBringIntoViewSpec deadbands the 1px scroll
+        // oscillation, and the keyboard-on-OK gate means the IME only opens
+        // on a deliberate click, so the focused field is scrolled above the
+        // keyboard by ordinary inset handling and is never covered.
         if (isTelevisionDevice()) {
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            @Suppress("DEPRECATION")
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
         // Keep the window's PiP params in sync with player video state so the
         // system auto-enters Picture-in-Picture when the user leaves the app while

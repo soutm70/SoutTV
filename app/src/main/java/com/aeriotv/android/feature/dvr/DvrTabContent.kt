@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Delete
@@ -61,6 +60,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.settings.settingsRowCard
 import androidx.compose.ui.graphics.Color
@@ -786,13 +787,6 @@ private fun DestinationBadge(source: DvrViewModel.Source) {
  *  - Unknown status: bare Delete so the user can clean up rows the
  *    server hasn't classified yet
  */
-private data class RecordingAction(
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val destructive: Boolean = false,
-    val onClick: () -> Unit,
-)
-
 @Composable
 private fun RecordingActionMenu(
     rec: DvrViewModel.Recording,
@@ -818,71 +812,34 @@ private fun RecordingActionMenu(
     // modal idiom on TV is the centered panel).
     val actions = buildList {
         if (isCompleted && isServer) {
-            add(RecordingAction("Save to Device", Icons.Outlined.Download) { onSaveToDevice() })
-            add(RecordingAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
+            add(TvMenuAction("Save to Device", Icons.Outlined.Download) { onSaveToDevice() })
+            add(TvMenuAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
         }
         if (isInProgress && isServer) {
             if (rec.dispatcharrChannelId != null) {
-                add(RecordingAction("Watch Live", Icons.Outlined.PlayArrow) { onWatchLive() })
+                add(TvMenuAction("Watch Live", Icons.Outlined.PlayArrow) { onWatchLive() })
             }
-            add(RecordingAction("Stop Recording", Icons.Outlined.Stop) { onStopRecording() })
+            add(TvMenuAction("Stop Recording", Icons.Outlined.Stop) { onStopRecording() })
         }
         if (isScheduled && isServer) {
-            add(RecordingAction("Edit", Icons.Outlined.Edit) { onEdit() })
+            add(TvMenuAction("Edit", Icons.Outlined.Edit) { onEdit() })
         }
         val deleteLabel = when {
             isServer && isScheduled -> "Cancel"
             isServer -> "Delete from Server"
             else -> "Delete"
         }
-        add(RecordingAction(deleteLabel, Icons.Outlined.Delete, destructive = true) { onDelete() })
+        add(TvMenuAction(deleteLabel, Icons.Outlined.Delete, destructive = true) { onDelete() })
     }
 
     if (rememberIsTvDevice()) {
-        if (!expanded) return
-        androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-            androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.background,
-            ) {
-                Column(modifier = Modifier.padding(vertical = 10.dp)) {
-                    Text(
-                        text = rec.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
-                    actions.forEach { action ->
-                        val tint = if (action.destructive) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary
-                        var rowFocused by remember { mutableStateOf(false) }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onFocusChanged { rowFocused = it.isFocused }
-                                .background(
-                                    if (rowFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                    else Color.Transparent,
-                                )
-                                .clickable(onClick = tvGuard.wrap { onDismiss(); action.onClick() })
-                                .padding(horizontal = 24.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Icon(action.icon, contentDescription = null, tint = tint)
-                            Text(
-                                text = action.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (action.destructive) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onBackground,
-                            )
-                        }
-                    }
-                }
-            }
+        if (expanded) {
+            TvActionMenuDialog(
+                title = rec.title,
+                actions = actions,
+                guard = tvGuard,
+                onDismiss = onDismiss,
+            )
         }
         return
     }
@@ -902,7 +859,9 @@ private fun RecordingActionMenu(
                         else androidx.compose.ui.graphics.Color.Unspecified,
                     )
                 },
-                leadingIcon = { Icon(action.icon, contentDescription = null, tint = tint) },
+                leadingIcon = action.icon?.let { icon ->
+                    { Icon(icon, contentDescription = null, tint = tint) }
+                },
                 onClick = { onDismiss(); action.onClick() },
             )
         }
