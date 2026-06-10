@@ -29,12 +29,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.aeriotv.android.ui.tv.dpadFocusEscape
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -177,7 +173,7 @@ fun AppearanceSettingsScreen(
                 // its own footer, the palette grid is browse-and-tweak.
                 settingsCard(
                     header = "Category Colors",
-                    footer = "Tint EPG cells and channel cards by programme category. Long-press a swatch below to override its hex.",
+                    footer = "Tint EPG cells and channel cards by programme category. Select a category below to override its hex.",
                 ) {
                     ToggleRow(
                         title = "Color Programs by Category",
@@ -213,7 +209,8 @@ fun AppearanceSettingsScreen(
                             CategoryPaletteRow(
                                 bucket = bucket,
                                 hex = palette.hexFor(bucket),
-                                onClick = { if (palette.masterEnabled) pickerTarget = bucket },
+                                enabled = palette.masterEnabled,
+                                onClick = { pickerTarget = bucket },
                             )
                         }
                     }
@@ -222,13 +219,15 @@ fun AppearanceSettingsScreen(
                         AddMoreCategoriesRow(
                             extraOn = ProgramCategory.additionalBuckets.count { palette.isBucketEnabled(it) },
                             customCount = palette.custom.size,
-                            onClick = { if (palette.masterEnabled) onOpenAddMoreCategories() },
+                            enabled = palette.masterEnabled,
+                            onClick = onOpenAddMoreCategories,
                         )
                     }
                     DividerRow()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .dpadFocusWash()
                             .clickable(enabled = palette.masterEnabled) { viewModel.resetCategoryPalette() }
                             .alpha(if (palette.masterEnabled) 1f else 0.4f)
                             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -345,6 +344,7 @@ private fun ThemeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .dpadFocusWash()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -415,9 +415,17 @@ private fun CustomAccentRow(
 ) {
     val swatch = if (enabled && hex.length == 6) parseHex(hex)
     else MaterialTheme.colorScheme.primary
+    // Whole row is the toggle target (visible focus stop on TV); the swatch
+    // stays a second focusable that opens the picker.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .dpadFocusWash()
+            .clickable {
+                val next = !enabled
+                onToggle(next)
+                if (next && hex.isBlank()) onPick()
+            }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -446,19 +454,12 @@ private fun CustomAccentRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         shape = RoundedCornerShape(50),
                     )
+                    .dpadFocusRing(RoundedCornerShape(50))
                     .clickable(onClick = onPick),
             )
             Spacer(Modifier.size(8.dp))
         }
-        Box(
-            modifier = Modifier.clickable {
-                val next = !enabled
-                onToggle(next)
-                if (next && hex.isBlank()) onPick()
-            },
-        ) {
-            OnOffIndicator(on = enabled)
-        }
+        OnOffIndicator(on = enabled)
     }
 }
 
@@ -612,6 +613,10 @@ private fun ScaleSliderRow(
                         if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                         else Color.Transparent,
                     )
+                    .dpadFocusRing(
+                        shape = RoundedCornerShape(8.dp),
+                        washTint = MaterialTheme.colorScheme.primary,
+                    )
                     .clickable { onValueChange(segValue) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
@@ -631,13 +636,15 @@ private fun ScaleSliderRow(
 private fun CategoryPaletteRow(
     bucket: ProgramCategory,
     hex: String,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val swatch = parseHex(hex)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .dpadFocusWash()
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -672,6 +679,7 @@ private fun CategoryPaletteRow(
 private fun AddMoreCategoriesRow(
     extraOn: Int,
     customCount: Int,
+    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val subtitle = when {
@@ -681,7 +689,8 @@ private fun AddMoreCategoriesRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .dpadFocusWash()
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -722,15 +731,16 @@ private fun AccentPickerDialog(
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(
+            SettingsDialogTextButton(
+                label = "Save",
                 onClick = { if (isValid) onSave(sanitized) },
                 enabled = isValid,
-            ) { Text("Save") }
+            )
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onReset) { Text("Reset") }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                SettingsDialogTextButton(label = "Reset", onClick = onReset)
+                SettingsDialogTextButton(label = "Cancel", onClick = onDismiss)
             }
         },
         title = { Text("Custom Accent") },

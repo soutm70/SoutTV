@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,9 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -59,8 +58,8 @@ import java.util.UUID
  * Sub-screen reached from Appearance > Add more categories. Two sections:
  *
  *   1. Additional buckets (Documentary, Drama, Comedy, Reality, Educational,
- *      Sci-Fi / Fantasy, Music) — toggle on/off + tap to pick a hex.
- *   2. Custom categories — user-defined `match` substring + hex, persisted as
+ *      Sci-Fi / Fantasy, Music): toggle on/off + select to pick a hex.
+ *   2. Custom categories: user-defined `match` substring + hex, persisted as
  *      a JSON array.
  *
  * Custom entries take precedence over built-in buckets at resolve time so a
@@ -132,7 +131,7 @@ fun AddMoreCategoriesScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Toggle a bucket on to colour matching programmes. Tap the swatch to override its hex.",
+                    text = "Toggle a bucket on to colour matching programmes. Select the swatch to override its hex.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -163,7 +162,13 @@ fun AddMoreCategoriesScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { addCustomOpen = true }) {
+                    IconButton(
+                        onClick = { addCustomOpen = true },
+                        modifier = Modifier.dpadFocusRing(
+                            CircleShape,
+                            washTint = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.Add,
                             contentDescription = "Add custom category",
@@ -175,7 +180,7 @@ fun AddMoreCategoriesScreen(
             if (palette.custom.isEmpty()) {
                 item {
                     Text(
-                        text = "No custom categories yet. Tap + above to add one.",
+                        text = "No custom categories yet. Select + above to add one.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -255,6 +260,8 @@ private fun AdditionalBucketRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
+            .dpadFocusWash()
+            .clickable { onToggle(!enabled) }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -281,10 +288,11 @@ private fun AdditionalBucketRow(
                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     RoundedCornerShape(50),
                 )
+                .dpadFocusRing(RoundedCornerShape(50))
                 .clickable(onClick = onPick),
         )
         Spacer(Modifier.width(10.dp))
-        Switch(checked = enabled, onCheckedChange = onToggle)
+        OnOffIndicator(on = enabled)
     }
 }
 
@@ -299,6 +307,7 @@ private fun CustomEntryRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
+            .dpadFocusWash()
             .clickable(onClick = onEdit)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -327,7 +336,13 @@ private fun CustomEntryRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(onClick = onDelete) {
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier.dpadFocusRing(
+                CircleShape,
+                washTint = MaterialTheme.colorScheme.error,
+            ),
+        ) {
             Icon(
                 imageVector = Icons.Filled.Delete,
                 contentDescription = "Delete",
@@ -396,13 +411,14 @@ private fun CustomEntryDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            SettingsDialogTextButton(
+                label = "Save",
                 onClick = { if (canSave) onSave(match.trim(), sanitizedHex) },
                 enabled = canSave,
-            ) { Text("Save") }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            SettingsDialogTextButton(label = "Cancel", onClick = onDismiss)
         },
         containerColor = MaterialTheme.colorScheme.surface,
         titleContentColor = MaterialTheme.colorScheme.onBackground,

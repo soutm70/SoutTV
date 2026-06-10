@@ -46,7 +46,7 @@ import kotlinx.coroutines.withContext
  * In-app log viewer for Settings -> Developer -> View Log File. Mirrors iOS
  * `LogViewerView` (Aerio/Features/Settings/DeveloperSettingsView.swift line
  * 662+): tail the last ~5,000 lines of `aerio_debug_logs.txt`, render
- * monospace, refreshable. Doesn't try to live-stream — the user opens this
+ * monospace, refreshable. Doesn't try to live-stream; the user opens this
  * to inspect a captured artifact, not to watch a running stream; tapping
  * Refresh re-reads the file end. Cheap enough on a 10 MB cap to read fully.
  *
@@ -97,12 +97,18 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 }
             },
             actions = {
-                IconButton(onClick = { refreshTick++ }) {
-                    Icon(
-                        imageVector = Icons.Filled.Refresh,
-                        contentDescription = "Refresh",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                if (rememberIsTvDevice()) {
+                    // Edge IconButton has no visible D-pad focus; pill insets
+                    // to the 48dp overscan margin and rings under focus.
+                    SettingsHeaderTextButton(label = "Refresh", onClick = { refreshTick++ })
+                } else {
+                    IconButton(onClick = { refreshTick++ }) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Refresh",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(

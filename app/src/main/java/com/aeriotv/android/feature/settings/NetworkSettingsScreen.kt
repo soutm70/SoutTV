@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -167,6 +168,7 @@ private fun ConnectionSection(
             IconButton(
                 onClick = { if (maxRetries > 0) onMaxRetriesChange(maxRetries - 1) },
                 enabled = maxRetries > 0,
+                modifier = Modifier.dpadFocusRing(CircleShape),
             ) {
                 Icon(Icons.Filled.Remove, contentDescription = "Decrease")
             }
@@ -179,6 +181,7 @@ private fun ConnectionSection(
             IconButton(
                 onClick = { if (maxRetries < 10) onMaxRetriesChange(maxRetries + 1) },
                 enabled = maxRetries < 10,
+                modifier = Modifier.dpadFocusRing(CircleShape),
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Increase")
             }
@@ -279,9 +282,13 @@ private fun BackgroundRefreshSection(
     onToggle: (Boolean) -> Unit,
     onSelectInterval: (Int) -> Unit,
 ) {
+    // "Pull to refresh" is a touch gesture; on TV point at the menu action instead.
+    val isTv = rememberIsTvDevice()
     SettingsSection(
         header = "Background Refresh",
-        footer = "Refresh channels + the EPG in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. Off here means data refreshes only when you launch AerioTV or pull to refresh.",
+        footer = "Refresh channels + the EPG in the background on Wi-Fi while the battery isn't low, so the guide is current the moment you open the app. " +
+            if (isTv) "Off here means data refreshes only when you launch AerioTV or refresh from the playlist menu."
+            else "Off here means data refreshes only when you launch AerioTV or pull to refresh.",
     ) {
         SettingsToggleRow(
             title = "Refresh in the background",
@@ -405,17 +412,23 @@ private fun HomeWifiSection(
                     )
                 }
                 if (!permissionGranted) {
-                    androidx.compose.material3.TextButton(onClick = {
-                        com.aeriotv.android.core.wifi.WifiSsidProbe.requiredPermission()?.let {
-                            hasRequestedPermissionOnce = true
-                            permissionLauncher.launch(it)
-                        }
-                    }) { Text("Grant", color = MaterialTheme.colorScheme.primary) }
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            com.aeriotv.android.core.wifi.WifiSsidProbe.requiredPermission()?.let {
+                                hasRequestedPermissionOnce = true
+                                permissionLauncher.launch(it)
+                            }
+                        },
+                        modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+                    ) { Text("Grant", color = MaterialTheme.colorScheme.primary) }
                 }
-                androidx.compose.material3.TextButton(onClick = {
-                    permissionGranted = com.aeriotv.android.core.wifi.WifiSsidProbe.hasPermission(context)
-                    detectedSsid = com.aeriotv.android.core.wifi.WifiSsidProbe.currentSsid(context)
-                }) { Text("Refresh", color = MaterialTheme.colorScheme.primary) }
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        permissionGranted = com.aeriotv.android.core.wifi.WifiSsidProbe.hasPermission(context)
+                        detectedSsid = com.aeriotv.android.core.wifi.WifiSsidProbe.currentSsid(context)
+                    },
+                    modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+                ) { Text("Refresh", color = MaterialTheme.colorScheme.primary) }
             }
 
             // Permission denied + already-asked path: deep-link to app's
@@ -430,22 +443,26 @@ private fun HomeWifiSection(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                androidx.compose.material3.TextButton(onClick = {
-                    val intent = android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.fromParts("package", context.packageName, null),
-                    ).apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
-                    runCatching { context.startActivity(intent) }
-                }) {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", context.packageName, null),
+                        ).apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
+                        runCatching { context.startActivity(intent) }
+                    },
+                    modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+                ) {
                     Text("Open App Settings", color = MaterialTheme.colorScheme.primary)
                 }
             }
 
             if (detectedSsid != null && detectedSsid !in homeSsids) {
                 Spacer(Modifier.size(8.dp))
-                androidx.compose.material3.TextButton(onClick = {
-                    onUpdateSsids(homeSsids + detectedSsid!!)
-                }) {
+                androidx.compose.material3.TextButton(
+                    onClick = { onUpdateSsids(homeSsids + detectedSsid!!) },
+                    modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+                ) {
                     Text(
                         text = "Mark \"$detectedSsid\" as home",
                         color = MaterialTheme.colorScheme.primary,
@@ -481,9 +498,13 @@ private fun HomeWifiSection(
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.weight(1f),
                         )
-                        androidx.compose.material3.TextButton(onClick = {
-                            onUpdateSsids(homeSsids - ssid)
-                        }) {
+                        androidx.compose.material3.TextButton(
+                            onClick = { onUpdateSsids(homeSsids - ssid) },
+                            modifier = Modifier.dpadFocusRing(
+                                RoundedCornerShape(50),
+                                washTint = MaterialTheme.colorScheme.error,
+                            ),
+                        ) {
                             Text("Remove", color = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -491,7 +512,10 @@ private fun HomeWifiSection(
             }
 
             Spacer(Modifier.size(6.dp))
-            androidx.compose.material3.TextButton(onClick = { adding = true }) {
+            androidx.compose.material3.TextButton(
+                onClick = { adding = true },
+                modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+            ) {
                 Text("Add network manually", color = MaterialTheme.colorScheme.primary)
             }
         }
@@ -512,18 +536,24 @@ private fun HomeWifiSection(
                 )
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    val name = manualSsid.trim()
-                    if (name.isNotEmpty()) onUpdateSsids(homeSsids + name)
-                    manualSsid = ""
-                    adding = false
-                }) { Text("Add") }
+                SettingsDialogTextButton(
+                    label = "Add",
+                    onClick = {
+                        val name = manualSsid.trim()
+                        if (name.isNotEmpty()) onUpdateSsids(homeSsids + name)
+                        manualSsid = ""
+                        adding = false
+                    },
+                )
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    manualSsid = ""
-                    adding = false
-                }) { Text("Cancel") }
+                SettingsDialogTextButton(
+                    label = "Cancel",
+                    onClick = {
+                        manualSsid = ""
+                        adding = false
+                    },
+                )
             },
         )
     }

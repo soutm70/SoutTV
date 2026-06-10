@@ -228,7 +228,10 @@ fun DvrSettingsScreen(
                         )
                         Spacer(Modifier.height(10.dp))
                         Row {
-                            TextButton(onClick = { folderPicker.launch(null) }) {
+                            TextButton(
+                                onClick = { folderPicker.launch(null) },
+                                modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
+                            ) {
                                 Text(
                                     text = "Choose Folder",
                                     color = MaterialTheme.colorScheme.primary,
@@ -236,17 +239,23 @@ fun DvrSettingsScreen(
                             }
                             if (customFolderUri.isNotBlank()) {
                                 Spacer(Modifier.size(8.dp))
-                                TextButton(onClick = {
-                                    val toRelease = customFolderUri
-                                    runCatching {
-                                        context.contentResolver.releasePersistableUriPermission(
-                                            Uri.parse(toRelease),
-                                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                                        )
-                                    }
-                                    settingsVm.setDvrCustomFolderUri("")
-                                }) {
+                                TextButton(
+                                    onClick = {
+                                        val toRelease = customFolderUri
+                                        runCatching {
+                                            context.contentResolver.releasePersistableUriPermission(
+                                                Uri.parse(toRelease),
+                                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                                            )
+                                        }
+                                        settingsVm.setDvrCustomFolderUri("")
+                                    },
+                                    modifier = Modifier.dpadFocusRing(
+                                        RoundedCornerShape(50),
+                                        washTint = MaterialTheme.colorScheme.error,
+                                    ),
+                                ) {
                                     Text(
                                         text = "Reset to Default",
                                         color = MaterialTheme.colorScheme.error,
@@ -311,6 +320,7 @@ private fun BufferRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .dpadFocusWash()
                 .clickable { menuOpen = true }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,

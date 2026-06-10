@@ -2,7 +2,6 @@ package com.aeriotv.android.feature.settings
 
 import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +39,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -170,13 +168,16 @@ fun DeveloperSettingsScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingEnable = false
-                    settingsVm.setDebugLoggingEnabled(true)
-                }) { Text("Enable Logging") }
+                SettingsDialogTextButton(
+                    label = "Enable Logging",
+                    onClick = {
+                        pendingEnable = false
+                        settingsVm.setDebugLoggingEnabled(true)
+                    },
+                )
             },
             dismissButton = {
-                TextButton(onClick = { pendingEnable = false }) { Text("Cancel") }
+                SettingsDialogTextButton(label = "Cancel", onClick = { pendingEnable = false })
             },
         )
     }
@@ -189,13 +190,17 @@ fun DeveloperSettingsScreen(
                 Text("The existing log file will be kept. You can share or clear it at any time.")
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingDisable = false
-                    settingsVm.setDebugLoggingEnabled(false)
-                }) { Text("Disable", color = MaterialTheme.colorScheme.error) }
+                SettingsDialogTextButton(
+                    label = "Disable",
+                    onClick = {
+                        pendingDisable = false
+                        settingsVm.setDebugLoggingEnabled(false)
+                    },
+                    destructive = true,
+                )
             },
             dismissButton = {
-                TextButton(onClick = { pendingDisable = false }) { Text("Keep Logging") }
+                SettingsDialogTextButton(label = "Keep Logging", onClick = { pendingDisable = false })
             },
         )
     }
@@ -208,13 +213,17 @@ fun DeveloperSettingsScreen(
                 Text("This permanently deletes the current aerio_debug_logs.txt. This cannot be undone.")
             },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingClear = false
-                    debugLogger.clearLogs()
-                }) { Text("Clear Logs", color = MaterialTheme.colorScheme.error) }
+                SettingsDialogTextButton(
+                    label = "Clear Logs",
+                    onClick = {
+                        pendingClear = false
+                        debugLogger.clearLogs()
+                    },
+                    destructive = true,
+                )
             },
             dismissButton = {
-                TextButton(onClick = { pendingClear = false }) { Text("Cancel") }
+                SettingsDialogTextButton(label = "Cancel", onClick = { pendingClear = false })
             },
         )
     }
@@ -428,47 +437,6 @@ private fun InfoRow(icon: ImageVector?, label: String, value: String) {
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Medium,
         )
-    }
-}
-
-@Composable
-private fun ActionRow(
-    icon: ImageVector,
-    label: String,
-    subtitle: String?,
-    onClick: () -> Unit,
-    destructive: Boolean = false,
-) {
-    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = accent,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.size(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = accent,
-                fontWeight = FontWeight.Medium,
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
     }
 }
 

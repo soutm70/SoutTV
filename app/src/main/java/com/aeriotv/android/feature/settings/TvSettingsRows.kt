@@ -470,3 +470,105 @@ fun SettingsHeaderTextButton(
         }
     }
 }
+
+/**
+ * Self-contained D-pad focus wash for an interactive row that lives INSIDE a
+ * shared grouped card (Theme presets, palette rows, profile pickers...).
+ * Tracks its own focus state; paints a tinted fill only while focused, so the
+ * resting look on every form factor is unchanged. Place AFTER any clip and
+ * BEFORE clickable/padding.
+ */
+@Composable
+fun Modifier.dpadFocusWash(tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .background(
+            if (focused) tint.copy(alpha = 0.16f)
+            else androidx.compose.ui.graphics.Color.Transparent,
+        )
+}
+
+/**
+ * Self-contained D-pad focus ring (the app-wide white 2dp convention) plus a
+ * subtle tinted wash, for pills / segments / swatches / cards that keep their
+ * own selection styling. The border is transparent (not absent) at rest so
+ * the element's measured size never changes on focus. Place AFTER
+ * clip/background, BEFORE clickable.
+ */
+@Composable
+fun Modifier.dpadFocusRing(
+    shape: androidx.compose.ui.graphics.Shape,
+    washTint: androidx.compose.ui.graphics.Color? = null,
+): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .then(
+            if (washTint != null) {
+                Modifier.background(
+                    if (focused) washTint.copy(alpha = 0.16f)
+                    else androidx.compose.ui.graphics.Color.Transparent,
+                    shape,
+                )
+            } else {
+                Modifier
+            },
+        )
+        .border(
+            width = 2.dp,
+            color = if (focused) androidx.compose.ui.graphics.Color.White
+            else androidx.compose.ui.graphics.Color.Transparent,
+            shape = shape,
+        )
+}
+
+/**
+ * Drop-in replacement for the bare TextButton in AlertDialog
+ * confirmButton/dismissButton slots. Material's TextButton focus state is a
+ * faint overlay, invisible at couch distance; this keeps the text-button look
+ * at rest and adds the white 2dp focus ring + tinted fill under D-pad focus.
+ * Safe on phones (the chrome only appears with focus, which touch never has).
+ */
+@Composable
+fun SettingsDialogTextButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+) {
+    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .heightIn(min = 36.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (focused) accent.copy(alpha = 0.18f)
+                else androidx.compose.ui.graphics.Color.Transparent,
+            )
+            .border(
+                width = 2.dp,
+                color = if (focused) androidx.compose.ui.graphics.Color.White
+                else androidx.compose.ui.graphics.Color.Transparent,
+                shape = RoundedCornerShape(50),
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) accent
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}

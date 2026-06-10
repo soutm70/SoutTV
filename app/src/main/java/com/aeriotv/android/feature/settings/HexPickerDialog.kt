@@ -16,7 +16,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +33,7 @@ import com.aeriotv.android.core.category.parseHex
 /**
  * Hex-string colour picker dialog for a category palette row. The iOS app
  * uses SwiftUI's `ColorPicker`; we use a 6-char hex text field + live swatch
- * preview + Reset/Save actions. Lightweight and accessible — no third-party
+ * preview + Reset/Save actions. Lightweight and accessible; no third-party
  * HSV wheel dep required for v1 parity.
  *
  * Input validation: 6-char hex (case-insensitive, with or without leading '#').
@@ -56,15 +55,16 @@ fun HexPickerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(
+            SettingsDialogTextButton(
+                label = "Save",
                 onClick = { if (isValid) onSave(sanitized) },
                 enabled = isValid && sanitized != currentHex.uppercase(),
-            ) { Text("Save") }
+            )
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onReset) { Text("Reset") }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                SettingsDialogTextButton(label = "Reset", onClick = onReset)
+                SettingsDialogTextButton(label = "Cancel", onClick = onDismiss)
             }
         },
         title = { Text("${bucket.displayName} Color") },

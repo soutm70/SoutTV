@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -376,9 +377,16 @@ fun EditPlaylistScreen(
                         header = "On Demand",
                         footer = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand.",
                     ) {
+                        // Whole row is the focus/toggle target so D-pad focus is
+                        // visible; the Switch is display-only.
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .dpadFocusWash()
+                                .toggleable(
+                                    value = vodEnabled,
+                                    onValueChange = { vodEnabled = it },
+                                )
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -392,7 +400,7 @@ fun EditPlaylistScreen(
                             Spacer(Modifier.size(12.dp))
                             androidx.compose.material3.Switch(
                                 checked = vodEnabled,
-                                onCheckedChange = { vodEnabled = it },
+                                onCheckedChange = null,
                                 colors = androidx.compose.material3.SwitchDefaults.colors(
                                     checkedThumbColor = MaterialTheme.colorScheme.primary,
                                     checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
@@ -501,6 +509,7 @@ private fun ProfileRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .dpadFocusWash()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -605,6 +614,7 @@ private fun SegmentChip(
                 if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
                 else androidx.compose.ui.graphics.Color.Transparent,
             )
+            .dpadFocusRing(shape = RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp, horizontal = 12.dp),
         horizontalArrangement = Arrangement.Center,

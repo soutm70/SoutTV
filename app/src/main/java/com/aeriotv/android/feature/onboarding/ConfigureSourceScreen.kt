@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -55,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -65,6 +69,8 @@ import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.onboarding.components.InfoBanner
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import com.aeriotv.android.feature.settings.dpadFocusRing
+import com.aeriotv.android.feature.settings.dpadFocusWash
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 
 /**
@@ -233,7 +239,8 @@ fun ConfigureSourceScreen(
                 enabled = !state.isLoading && validation == null,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
+                    .height(54.dp)
+                    .dpadFocusRing(RoundedCornerShape(50)),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -526,7 +533,10 @@ private fun PasswordField(
             enabled = enabled,
             visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
             trailing = {
-                IconButton(onClick = { visible = !visible }) {
+                IconButton(
+                    onClick = { visible = !visible },
+                    modifier = Modifier.dpadFocusRing(CircleShape),
+                ) {
                     Icon(
                         imageVector = if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                         contentDescription = if (visible) "Hide password" else "Show password",
@@ -590,6 +600,7 @@ private fun SegmentItem(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(bg)
+            .dpadFocusRing(RoundedCornerShape(18.dp), washTint = MaterialTheme.colorScheme.primary)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center,
@@ -658,7 +669,21 @@ private fun VodEnabledRow(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Whole-row toggle target: on TV the bare Switch's focus state is
+        // invisible, so the row carries the D-pad focus wash instead.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .dpadFocusWash()
+                .toggleable(
+                    value = checked,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Switch,
+                    onValueChange = onCheckedChange,
+                ),
+        ) {
             Text(
                 text = "Fetch On Demand from this playlist",
                 style = MaterialTheme.typography.bodyLarge,
@@ -669,7 +694,7 @@ private fun VodEnabledRow(
             Spacer(Modifier.size(12.dp))
             Switch(
                 checked = checked,
-                onCheckedChange = onCheckedChange,
+                onCheckedChange = null,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = MaterialTheme.colorScheme.primary,
                     checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),

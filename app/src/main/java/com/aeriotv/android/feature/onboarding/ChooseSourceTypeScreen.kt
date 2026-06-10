@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.feature.onboarding.components.SourceTypeCard
+import com.aeriotv.android.feature.settings.dpadFocusRing
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.ui.adaptive.rememberViewport
 
@@ -134,7 +135,10 @@ fun ChooseSourceTypeScreen(
     }
 }
 
+@Composable
 private fun Modifier.tappable(onClick: () -> Unit): Modifier =
     // Clip to the SourceTypeCard rounded shape BEFORE the clickable so the D-pad
     // focus indication follows the rounded corners, not a squared rectangle.
-    this.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick)
+    this.clip(RoundedCornerShape(16.dp))
+        .dpadFocusRing(RoundedCornerShape(16.dp), washTint = MaterialTheme.colorScheme.primary)
+        .clickable(onClick = onClick)

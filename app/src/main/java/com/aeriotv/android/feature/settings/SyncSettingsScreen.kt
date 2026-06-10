@@ -38,9 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -316,9 +314,10 @@ fun SyncSettingsScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { notConfiguredDialogOpen = false }) {
-                    Text("Got it")
-                }
+                SettingsDialogTextButton(
+                    label = "Got it",
+                    onClick = { notConfiguredDialogOpen = false },
+                )
             },
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onBackground,
@@ -360,7 +359,7 @@ private fun SignedOutWelcomeBanner() {
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "Tap Sign in with Google below to connect your account. AerioTV will " +
+                text = "Select Sign in with Google below to connect your account. AerioTV will " +
                     "then keep your playlists, watch progress, reminders, and preferences in " +
                     "sync across every device signed into the same Google account.",
                 style = MaterialTheme.typography.labelSmall,
@@ -453,6 +452,7 @@ private fun SignOutButton(enabled: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
             .border(0.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(50))
+            .dpadFocusRing(RoundedCornerShape(50), washTint = MaterialTheme.colorScheme.error)
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -496,6 +496,8 @@ private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(50))
             .background(bg)
             .border(1.dp, stroke, RoundedCornerShape(50))
+            // Brand pill stays untouched at rest; the white ring only draws under D-pad focus.
+            .dpadFocusRing(RoundedCornerShape(50))
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -523,68 +525,6 @@ private fun SignInWithGoogleButton(enabled: Boolean, onClick: () -> Unit) {
 
 // Phase 61b: removed the inline GoogleGMark approximation — the button now
 // renders the official four-color brand mark from res/drawable/ic_google_g.xml.
-
-@Composable
-private fun Section(
-    header: String,
-    footer: String?,
-    content: @Composable () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = header.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
-        ) { content() }
-        if (footer != null) {
-            Text(
-                text = footer,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.size(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
 
 private fun formatTimestamp(value: Long): String {
     if (value <= 0L) return "never"

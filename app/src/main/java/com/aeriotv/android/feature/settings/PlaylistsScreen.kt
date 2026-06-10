@@ -23,13 +23,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -41,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.filled.Menu
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -50,12 +56,15 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 
 /**
  * Multi-playlist switcher reachable from Settings root. Lists every saved
- * playlist with an Active checkmark on the current one; tap to switch, long-
- * press for delete confirm. Plus button in the top bar routes to the same
+ * playlist with an Active checkmark on the current one; select to switch,
+ * long-press for delete confirm (on TV the long-press opens a Move Up /
+ * Move Down / Delete menu, since drag reorder is touch-only). The top-bar
+ * add action routes to the same
  * Choose-Source-Type onboarding screen used for first-run setup, except after
  * the new playlist persists the user pops back here instead of being thrown
  * into the player.
@@ -76,8 +85,12 @@ fun PlaylistsScreen(
         .collectAsStateWithLifecycle(initialValue = emptyList<PlaylistEntity>())
     val state by viewModel.state.collectAsStateWithLifecycle()
     val activeId = state.playlist?.id
+    val isTv = rememberIsTvDevice()
 
     var pendingDelete by remember { mutableStateOf<PlaylistEntity?>(null) }
+    // TV-only long-press menu target (Move Up / Move Down / Delete / Cancel).
+    var menuFor by remember { mutableStateOf<PlaylistEntity?>(null) }
+    val tvGuard = rememberTvMenuGuard()
 
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -90,7 +103,7 @@ fun PlaylistsScreen(
             },
             navigationIcon = {
                 // No back arrow on Android TV -- the remote BACK pops it.
-                if (!rememberIsTvDevice()) {
+                if (!isTv) {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -101,12 +114,18 @@ fun PlaylistsScreen(
                 }
             },
             actions = {
-                IconButton(onClick = onAddPlaylist) {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = "Add playlist",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                if (isTv) {
+                    // Focusable pill inset to the overscan margin; a bare
+                    // IconButton has no visible D-pad focus state.
+                    SettingsHeaderTextButton(label = "Add", onClick = onAddPlaylist)
+                } else {
+                    IconButton(onClick = onAddPlaylist) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = "Add playlist",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -121,7 +140,8 @@ fun PlaylistsScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "No saved playlists. Tap + to add one.",
+                    text = if (isTv) "No saved playlists. Select Add above to add one."
+                    else "No saved playlists. Tap + to add one.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -165,30 +185,96 @@ fun PlaylistsScreen(
                         playlist = pl,
                         isActive = pl.id == activeId,
                         isDragging = isDragging,
-                        onTap = {
+                        // Guarded so the OK-release after a TV long-press can't
+                        // also register as a tap on the row (see TvMenuGuard).
+                        onTap = tvGuard.wrap {
                             if (pl.id == activeId) {
                                 onOpenPlaylistDetail()
                             } else {
                                 viewModel.switchToPlaylist(pl.id)
                             }
                         },
-                        onLongPress = { pendingDelete = pl },
+                        onLongPress = {
+                            if (isTv) {
+                                menuFor = pl
+                                tvGuard.arm()
+                            } else {
+                                pendingDelete = pl
+                            }
+                        },
                         onSwipedToDelete = { pendingDelete = pl },
-                        dragHandle = {
-                            Icon(
-                                imageVector = Icons.Filled.Menu,
-                                contentDescription = "Drag to reorder",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .draggableHandle(
-                                        onDragStopped = {
-                                            viewModel.applyPlaylistOrder(workingOrder.map { it.id })
-                                        },
-                                    )
-                                    .size(24.dp),
-                            )
+                        // Touch-only affordance; D-pad reorder lives in the
+                        // long-press menu instead.
+                        dragHandle = if (isTv) {
+                            null
+                        } else {
+                            {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = "Drag to reorder",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .draggableHandle(
+                                            onDragStopped = {
+                                                viewModel.applyPlaylistOrder(workingOrder.map { it.id })
+                                            },
+                                        )
+                                        .size(24.dp),
+                                )
+                            }
                         },
                     )
+                }
+            }
+        }
+
+        menuFor?.let { pl ->
+            val index = workingOrder.indexOfFirst { it.id == pl.id }
+            fun moveTo(target: Int) {
+                menuFor = null
+                val swapped = workingOrder.toMutableList().apply { add(target, removeAt(index)) }
+                workingOrder = swapped
+                viewModel.applyPlaylistOrder(swapped.map { it.id })
+            }
+            Dialog(onDismissRequest = { menuFor = null }) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                        Text(
+                            text = pl.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                        )
+                        if (index > 0) {
+                            TvPlaylistMenuRow(
+                                label = "Move Up",
+                                icon = Icons.Filled.KeyboardArrowUp,
+                                onClick = tvGuard.wrap { moveTo(index - 1) },
+                            )
+                        }
+                        if (index in 0 until workingOrder.lastIndex) {
+                            TvPlaylistMenuRow(
+                                label = "Move Down",
+                                icon = Icons.Filled.KeyboardArrowDown,
+                                onClick = tvGuard.wrap { moveTo(index + 1) },
+                            )
+                        }
+                        TvPlaylistMenuRow(
+                            label = "Delete",
+                            icon = Icons.Filled.Delete,
+                            destructive = true,
+                            onClick = tvGuard.wrap { menuFor = null; pendingDelete = pl },
+                        )
+                        TvPlaylistMenuRow(
+                            label = "Cancel",
+                            icon = Icons.Filled.Close,
+                            onClick = tvGuard.wrap { menuFor = null },
+                        )
+                    }
                 }
             }
         }
@@ -206,16 +292,18 @@ fun PlaylistsScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val id = pl.id
-                    pendingDelete = null
-                    viewModel.deletePlaylist(id)
-                }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
+                SettingsDialogTextButton(
+                    label = "Delete",
+                    destructive = true,
+                    onClick = {
+                        val id = pl.id
+                        pendingDelete = null
+                        viewModel.deletePlaylist(id)
+                    },
+                )
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                SettingsDialogTextButton(label = "Cancel", onClick = { pendingDelete = null })
             },
         )
     }
@@ -241,6 +329,7 @@ private fun PlaylistRow(
                 if (isDragging) MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
             )
+            .dpadFocusRing(RoundedCornerShape(12.dp), washTint = MaterialTheme.colorScheme.primary)
             .combinedClickable(
                 onClick = onTap,
                 onLongClick = onLongPress,
@@ -301,7 +390,7 @@ private fun SwipeablePlaylistRow(
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipedToDelete: () -> Unit,
-    dragHandle: @Composable () -> Unit,
+    dragHandle: @Composable (() -> Unit)?,
 ) {
     val dismissState = androidx.compose.material3.rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -309,7 +398,7 @@ private fun SwipeablePlaylistRow(
                 value == androidx.compose.material3.SwipeToDismissBoxValue.EndToStart
             ) {
                 onSwipedToDelete()
-                // Don't actually dismiss the row here — the confirmation dialog
+                // Don't actually dismiss the row here - the confirmation dialog
                 // owns the delete. Returning false snaps the row back to settled.
                 false
             } else {
@@ -346,6 +435,37 @@ private fun SwipeablePlaylistRow(
             dragHandle = dragHandle,
             onTap = onTap,
             onLongPress = onLongPress,
+        )
+    }
+}
+
+/**
+ * Focusable action row for the TV long-press menu (mirrors SettingsScreen's
+ * PlaylistMenuRow chrome): tinted wash under D-pad focus via dpadFocusWash.
+ */
+@Composable
+private fun TvPlaylistMenuRow(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .dpadFocusWash()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint)
+        Spacer(Modifier.size(12.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (destructive) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onBackground,
         )
     }
 }

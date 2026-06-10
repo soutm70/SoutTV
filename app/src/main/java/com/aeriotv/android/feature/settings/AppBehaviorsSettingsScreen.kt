@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -158,7 +159,10 @@ fun AppBehaviorsSettingsScreen(
                         visualTransformation = if (keyVisible) VisualTransformation.None
                         else PasswordVisualTransformation(),
                         trailingIcon = {
-                            IconButton(onClick = { keyVisible = !keyVisible }) {
+                            IconButton(
+                                onClick = { keyVisible = !keyVisible },
+                                modifier = Modifier.dpadFocusRing(CircleShape),
+                            ) {
                                 Icon(
                                     imageVector = if (keyVisible) Icons.Filled.VisibilityOff
                                     else Icons.Filled.Visibility,
@@ -181,10 +185,12 @@ fun AppBehaviorsSettingsScreen(
                             onClick = { viewModel.testTmdbKey(keyDraft) },
                             enabled = keyDraft.isNotBlank() &&
                                 tmdbKeyState != SettingsViewModel.TmdbKeyTestState.Testing,
+                            modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
                         ) { Text("Test") }
                         TextButton(
                             onClick = { viewModel.saveTmdbKey(keyDraft) },
                             enabled = keyDraft.isNotBlank() || savedTmdbKey.isNotBlank(),
+                            modifier = Modifier.dpadFocusRing(RoundedCornerShape(50)),
                         ) { Text("Save") }
                         Spacer(Modifier.weight(1f))
                         val (statusText, statusColor) = when (tmdbKeyState) {
