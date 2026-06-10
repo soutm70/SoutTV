@@ -291,6 +291,10 @@ fun MainScaffold(
         // Compose handed focus to the leftmost pill; selecting there would
         // yank the user to Live TV). Fallbacks are never preceded by UP.
         val lastUpKeyMs = remember { longArrayOf(0L) }
+        // One FocusRequester per pill, shared between the bar (which binds
+        // them) and the content's exit redirect below (which targets the
+        // SELECTED pill directly, not the bar, so no entry heuristics apply).
+        val pillRequesters = remember(tabs) { tabs.associateWith { FocusRequester() } }
         CompositionLocalProvider(LocalTvTopNavFocusRequester provides topNavRequester) {
             Box(modifier = Modifier.fillMaxSize()) {
             Column(
@@ -310,6 +314,7 @@ fun MainScaffold(
                     onSelect = { selectedTab = it; initialTabApplied = true },
                     focusRequester = topNavRequester,
                     lastUpKeyMs = lastUpKeyMs,
+                    pillRequesters = pillRequesters,
                 )
                 // tvOS layout reference: when the mini-player is active the
                 // group filter pills + guide grid drop DOWN so the
@@ -337,7 +342,22 @@ fun MainScaffold(
                     onWatchLive = onWatchLive,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        // UP leaving the tab content must land on the SELECTED
+                        // tab's pill. Geometric 2D search used to hit whichever
+                        // pill sat above the focused column (On Demand over the
+                        // centered Settings form) and selection-follows-focus
+                        // switched tabs (user report). The bar's own onEnter
+                        // does not intercept a direct child hit, so the
+                        // redirect lives on the content group's exit instead.
+                        .focusGroup()
+                        .focusProperties {
+                            onExit = {
+                                if (requestedFocusDirection == androidx.compose.ui.focus.FocusDirection.Up) {
+                                    pillRequesters[selectedTab]?.requestFocus()
+                                }
+                            }
+                        },
                 )
             }
             // iOS "Syncing" pill, top-left. The centered nav pills + right-edge
@@ -508,6 +528,7 @@ private fun TvTopTabBar(
     onSelect: (AppTab) -> Unit,
     focusRequester: FocusRequester,
     lastUpKeyMs: LongArray = longArrayOf(0L),
+    pillRequesters: Map<AppTab, FocusRequester> = emptyMap(),
 ) {
     // Selection-follows-focus, but committed ONLY for focus moves BETWEEN pills
     // (real D-pad traversal of the bar), never for focus ENTERING the bar from
@@ -552,8 +573,6 @@ private fun TvTopTabBar(
     // (user report). The per-pill requesters + the group's entry redirect
     // replace focusRestorer: with selection following focus, the selected
     // pill IS the last-focused pill in every normal flow.
-    val pillRequesters = remember(tabs) { tabs.associateWith { FocusRequester() } }
-
     // tvOS-style floating nav: the tabs are grouped into one centered, rounded
     // "segmented" capsule over the app background (no full-width surface toolbar
     // strip), so the bar reads as a polished pill group rather than a heavy bar.
@@ -590,7 +609,7 @@ private fun TvTopTabBar(
                     tab = tab,
                     selected = tab == selected,
                     onFocused = { focusedTab = tab },
-                    modifier = Modifier.focusRequester(pillRequesters.getValue(tab)),
+                    modifier = pillRequesters[tab]?.let { Modifier.focusRequester(it) } ?: Modifier,
                 )
             }
         }
