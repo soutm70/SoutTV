@@ -12,18 +12,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -35,8 +36,12 @@ import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 /**
  * Settings > App Updates (github flavor only; the row that opens this screen
  * is hidden when the updater is disabled). Manual check + the full
- * download/install state, mirroring the launch prompt's actions. Manual
- * checks bypass the 12h auto-check throttle and ignore a skipped version.
+ * download/install state, mirroring the launch prompt's actions.
+ *
+ * Every actionable element is a [SettingsActionRow] (the SettingsRowContainer
+ * family), NOT a Material button: those rows are the screen's D-pad focus
+ * unit, with the card highlight TV users can see. A plain OutlinedButton here
+ * was unreachable/invisible to D-pad focus on the Streamer.
  */
 @Composable
 fun AppUpdatesScreen(
@@ -63,43 +68,30 @@ fun AppUpdatesScreen(
                         "recordings; AerioTV closes during the install and you reopen " +
                         "it from your home screen.",
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "AerioTV ${BuildConfig.VERSION_NAME}",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            Text(
-                                text = "Channel: GitHub releases",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.manualCheck() },
-                            enabled = state !is UpdateState.Downloading &&
-                                state !is UpdateState.Installing,
-                        ) { Text("Check for updates") }
-                    }
+                    SettingsInfoRow(label = "Version", value = BuildConfig.VERSION_NAME)
+                    SettingsInfoRow(label = "Channel", value = "GitHub releases")
+                    SettingsActionRow(
+                        label = "Check for updates",
+                        leadingIcon = Icons.Filled.Refresh,
+                        onClick = { viewModel.manualCheck() },
+                    )
                 }
 
                 when (val s = state) {
-                    is UpdateState.UpToDate -> StatusCard("You're on the latest version.")
-                    is UpdateState.Available -> ActionCard(
-                        title = "AerioTV ${s.info.versionName} is available",
-                        body = s.info.notes.ifBlank { "A new release is ready to download." },
-                        actionLabel = "Download (${s.info.apkSizeBytes / (1024 * 1024)} MB)",
-                        onAction = { viewModel.download() },
-                    )
+                    is UpdateState.UpToDate -> StatusText("You're on the latest version.")
+                    is UpdateState.Available -> SettingsSection(
+                        header = "Update available",
+                        footer = s.info.notes.ifBlank { null },
+                    ) {
+                        SettingsActionRow(
+                            label = "Download AerioTV ${s.info.versionName}",
+                            subtitle = "${s.info.apkSizeBytes / (1024 * 1024)} MB from GitHub",
+                            leadingIcon = Icons.Filled.Download,
+                            onClick = { viewModel.download() },
+                        )
+                    }
                     is UpdateState.Downloading -> Column {
-                        StatusCard("Downloading AerioTV ${s.info.versionName}...")
+                        StatusText("Downloading AerioTV ${s.info.versionName}... ${s.progressPercent}%")
                         Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             progress = { s.progressPercent / 100f },
@@ -109,40 +101,51 @@ fun AppUpdatesScreen(
                     is UpdateState.Verifying -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.width(22.dp).height(22.dp))
                         Spacer(Modifier.width(10.dp))
-                        Text(
-                            "Verifying download...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        StatusText("Verifying download...")
+                    }
+                    is UpdateState.ReadyToInstall -> SettingsSection(
+                        header = "Ready to install",
+                        footer = "Your data is kept. AerioTV will close to install; reopen " +
+                            "it from your home screen.",
+                    ) {
+                        SettingsActionRow(
+                            label = "Install AerioTV ${s.info.versionName}",
+                            leadingIcon = Icons.Filled.SystemUpdate,
+                            onClick = { viewModel.install() },
                         )
                     }
-                    is UpdateState.ReadyToInstall -> ActionCard(
-                        title = "AerioTV ${s.info.versionName} is ready to install",
-                        body = "Your data is kept. AerioTV will close to install; reopen " +
-                            "it from your home screen.",
-                        actionLabel = "Install",
-                        onAction = { viewModel.install() },
-                    )
-                    is UpdateState.AwaitingInstallPermission -> ActionCard(
-                        title = "One-time permission needed",
-                        body = "Allow AerioTV to install updates in the Settings screen " +
-                            "that opens, then come back and tap Install.",
-                        actionLabel = "Open Settings",
-                        onAction = { viewModel.install() },
-                    )
-                    is UpdateState.Installing -> StatusCard(
+                    is UpdateState.AwaitingInstallPermission -> SettingsSection(
+                        header = "One-time permission needed",
+                        footer = "Allow AerioTV to install updates in the Settings screen " +
+                            "that opens, then come back and install.",
+                    ) {
+                        SettingsActionRow(
+                            label = "Open Settings",
+                            leadingIcon = Icons.Filled.SystemUpdate,
+                            onClick = { viewModel.install() },
+                        )
+                    }
+                    is UpdateState.Installing -> StatusText(
                         "Confirm the update in the Android dialog. AerioTV will close to " +
                             "install.",
                     )
-                    is UpdateState.Error -> ActionCard(
-                        title = "Update problem",
-                        body = s.message,
-                        actionLabel = if (s.info != null) "Try again" else "Check again",
-                        onAction = {
-                            if (s.info != null) viewModel.download() else viewModel.manualCheck()
-                        },
-                        secondaryLabel = "Dismiss",
-                        onSecondary = { viewModel.dismissError() },
-                    )
+                    is UpdateState.Error -> SettingsSection(
+                        header = "Update problem",
+                        footer = s.message,
+                    ) {
+                        SettingsActionRow(
+                            label = if (s.info != null) "Try again" else "Check again",
+                            leadingIcon = Icons.Filled.Refresh,
+                            onClick = {
+                                if (s.info != null) viewModel.download() else viewModel.manualCheck()
+                            },
+                        )
+                        SettingsActionRow(
+                            label = "Dismiss",
+                            leadingIcon = Icons.Filled.Close,
+                            onClick = { viewModel.dismissError() },
+                        )
+                    }
                     UpdateState.Idle -> Unit
                 }
             }
@@ -151,50 +154,11 @@ fun AppUpdatesScreen(
 }
 
 @Composable
-private fun StatusCard(text: String) {
+private fun StatusText(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 4.dp),
     )
-}
-
-@Composable
-private fun ActionCard(
-    title: String,
-    body: String,
-    actionLabel: String,
-    onAction: () -> Unit,
-    secondaryLabel: String? = null,
-    onSecondary: (() -> Unit)? = null,
-) {
-    SettingsSection(header = "Update") {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = body,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (secondaryLabel != null && onSecondary != null) {
-                    TextButton(onClick = onSecondary) { Text(secondaryLabel) }
-                    Spacer(Modifier.width(8.dp))
-                }
-                Button(onClick = onAction) { Text(actionLabel) }
-            }
-        }
-    }
 }
