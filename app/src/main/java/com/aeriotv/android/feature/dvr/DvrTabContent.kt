@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.dvr
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +57,12 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
+import com.aeriotv.android.feature.settings.settingsRowCard
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,6 +106,25 @@ fun DvrTabContent(
     var pendingDelete by remember { mutableStateOf<DvrViewModel.Recording?>(null) }
     var pendingEdit by remember { mutableStateOf<DvrViewModel.Recording?>(null) }
     var pendingClearAll by remember { mutableStateOf(false) }
+    val isTv = rememberIsTvDevice()
+    // 10-foot rule: keep content out of the ~5% overscan band. 48dp on the
+    // 960dp TV canvas = 5%; phones keep the tighter phone insets.
+    val edgeInset = if (isTv) 48.dp else 16.dp
+
+    // Land the user on their content, not an empty filter: if Scheduled is
+    // empty but another filter has recordings, auto-select the first
+    // non-empty one. Applies once per entry, never fights a manual pick.
+    var autoFilterApplied by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isLoading) {
+        if (autoFilterApplied || state.isLoading) return@LaunchedEffect
+        autoFilterApplied = true
+        if (state.filter == DvrViewModel.Filter.Scheduled && state.scheduledCount == 0) {
+            when {
+                state.recordingCount > 0 -> viewModel.setFilter(DvrViewModel.Filter.Recording)
+                state.completedCount > 0 -> viewModel.setFilter(DvrViewModel.Filter.Completed)
+            }
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -126,7 +152,7 @@ fun DvrTabContent(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = edgeInset, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LazyRow(
@@ -188,24 +214,34 @@ fun DvrTabContent(
             return@Column
         }
         if (state.visible.isEmpty()) {
-            EmptyState(
-                title = "No recordings",
-                body = "Schedule a recording from the TV guide to get started.",
-            )
+            // Filter-specific copy so the headline never contradicts a visible
+            // non-zero count on a sibling chip.
+            val (emptyTitle, emptyBody) = when (state.filter) {
+                DvrViewModel.Filter.Scheduled ->
+                    "No scheduled recordings" to
+                        "Schedule a recording from the TV guide to get started."
+                DvrViewModel.Filter.Recording ->
+                    "Nothing recording right now" to
+                        "Recordings in progress will show up here."
+                DvrViewModel.Filter.Completed ->
+                    "No completed recordings" to
+                        "Finished recordings will show up here, ready to play."
+            }
+            EmptyState(title = emptyTitle, body = emptyBody)
             return@Column
         }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            // 104dp bottom clears the MainScaffold NavigationBar so the
-            // last recording row stays tappable (otherwise the bottom card
-            // sits underneath the Live TV / DVR / On Demand / Settings nav
-            // when the user has more than 4-5 recordings).
+            // Phone: 104dp bottom clears the MainScaffold NavigationBar so the
+            // last recording row stays tappable. TV has a TOP tab bar, so the
+            // big bottom inset would just be a dead gap; 32dp keeps the last
+            // card above the overscan band instead.
             contentPadding = PaddingValues(
-                start = 12.dp,
-                end = 12.dp,
+                start = edgeInset,
+                end = edgeInset,
                 top = 8.dp,
-                bottom = 104.dp,
+                bottom = if (isTv) 32.dp else 104.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -304,14 +340,6 @@ fun DvrTabContent(
                         }
                     },
                 )
-            }
-            if (state.visible.isEmpty()) {
-                item {
-                    EmptyState(
-                        title = "Nothing here yet",
-                        body = "Schedule a recording from the TV guide or hit Record from Now in the player.",
-                    )
-                }
             }
         }
     }
@@ -443,15 +471,59 @@ private fun FilterPill(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = MaterialTheme.colorScheme.primary,
-            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-        ),
-    )
+    if (rememberIsTvDevice()) {
+        // TV: the guide-pill treatment instead of a stock FilterChip. The
+        // stock chip's focus state is a faint Material overlay that is
+        // indistinguishable from the selected state at couch distance; this
+        // gives D-pad focus the same 2dp white ring program cells and guide
+        // pills use, so focused vs selected is unambiguous.
+        val interaction = remember { MutableInteractionSource() }
+        var focused by remember { mutableStateOf(false) }
+        Box(
+            modifier = Modifier
+                .height(36.dp)
+                .onFocusChanged { focused = it.isFocused }
+                .clip(CircleShape)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                )
+                .then(
+                    if (focused) Modifier.background(Color.White.copy(alpha = 0.12f))
+                    else Modifier,
+                )
+                .then(
+                    if (focused) {
+                        Modifier.border(2.dp, Color.White, CircleShape)
+                    } else Modifier,
+                )
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    } else {
+        FilterChip(
+            selected = selected,
+            onClick = onClick,
+            label = { Text(label) },
+            colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+        )
+    }
 }
 
 @Composable
@@ -522,13 +594,18 @@ private fun RecordingRow(
             "${timeFmt.format(Date(rec.startMillis))} – ${timeFmt.format(Date(rec.endMillis))}"
 
     var menuOpen by remember { mutableStateOf(false) }
+    val isTv = rememberIsTvDevice()
+    var focused by remember { mutableStateOf(false) }
 
     Box {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                .onFocusChanged { focused = it.isFocused }
+                // Shared TV row chrome: visible focused card (accent fill +
+                // 2dp border + 1.02 scale); at rest it paints the same
+                // surface-0.55 card this row used before.
+                .settingsRowCard(focused)
                 .combinedClickable(
                     // Single tap plays a finalized recording (Completed /
                     // Stopped carry a playbackUrl); non-playable rows no-op on
@@ -557,7 +634,10 @@ private fun RecordingRow(
                 )
                 Text(
                     text = dateLabel,
-                    style = MaterialTheme.typography.bodySmall,
+                    // bodySmall lands at ~10.8sp effective under the 0.9 TV
+                    // type scale, below couch readability; bodyMedium on TV.
+                    style = if (isTv) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (rec.description.isNotBlank()) {
@@ -572,12 +652,24 @@ private fun RecordingRow(
                 DestinationBadge(source = rec.source)
             }
             Spacer(Modifier.size(8.dp))
-            Text(
-                text = statusLabel.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = statusColor,
-                fontWeight = FontWeight.Bold,
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = statusLabel.uppercase(),
+                    style = if (isTv) MaterialTheme.typography.labelMedium
+                    else MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                    fontWeight = FontWeight.Bold,
+                )
+                // The long-press affordance is invisible on a remote; surface
+                // it on the focused row only, where the eye already is.
+                if (isTv && focused) {
+                    Text(
+                        text = "Hold OK for options",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    )
+                }
+            }
         }
         RecordingActionMenu(
             rec = rec,
@@ -614,6 +706,7 @@ private fun DestinationBadge(source: DvrViewModel.Source) {
     // rows pull the active theme accent so the badge stays brand-coherent
     // when a custom accent is set in Appearance.
     val tint = if (isLocal) Color(0xFF34C759) else MaterialTheme.colorScheme.primary
+    val isTv = rememberIsTvDevice()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -623,11 +716,12 @@ private fun DestinationBadge(source: DvrViewModel.Source) {
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(12.dp),
+            modifier = Modifier.size(if (isTv) 15.dp else 12.dp),
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
+            style = if (isTv) MaterialTheme.typography.labelMedium
+            else MaterialTheme.typography.labelSmall,
             color = tint,
             fontWeight = FontWeight.Medium,
         )
@@ -646,6 +740,13 @@ private fun DestinationBadge(source: DvrViewModel.Source) {
  *  - Unknown status: bare Delete so the user can clean up rows the
  *    server hasn't classified yet
  */
+private data class RecordingAction(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val destructive: Boolean = false,
+    val onClick: () -> Unit,
+)
+
 @Composable
 private fun RecordingActionMenu(
     rec: DvrViewModel.Recording,
@@ -664,64 +765,99 @@ private fun RecordingActionMenu(
     val isInProgress = rec.status == DvrViewModel.Recording.Status.Recording
     val isScheduled = rec.status == DvrViewModel.Recording.Status.Scheduled
 
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-    ) {
-        // Play is now a single tap on the row (see combinedClickable above), so
-        // the long-press menu carries only the secondary actions. A completed
-        // server recording can be saved locally or comskip'd; a completed local
-        // recording has neither, so it drops straight to Delete below.
+    // One source of truth for the per-status actions; rendered as an anchored
+    // DropdownMenu on phone (a thumb-distance idiom) and as a centered Dialog
+    // on TV (anchored popups float oddly mid-screen at 10 feet, and the app's
+    // modal idiom on TV is the centered panel).
+    val actions = buildList {
         if (isCompleted && isServer) {
-            DropdownMenuItem(
-                text = { Text("Save to Device") },
-                leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = { onDismiss(); onSaveToDevice() },
-            )
-            DropdownMenuItem(
-                text = { Text("Remove Commercials") },
-                leadingIcon = { Icon(Icons.Outlined.ContentCut, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = { onDismiss(); onRemoveCommercials() },
-            )
+            add(RecordingAction("Save to Device", Icons.Outlined.Download) { onSaveToDevice() })
+            add(RecordingAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
         }
-
         if (isInProgress && isServer) {
-            // Audit task #50 watch-live. Only offered on server-side
-            // in-progress recordings that carry a Dispatcharr channel id
-            // (every API-sourced recording does). Local recordings can't
-            // surface this because LocalRecordingEntity doesn't persist
-            // the source channel id.
             if (rec.dispatcharrChannelId != null) {
-                DropdownMenuItem(
-                    text = { Text("Watch Live") },
-                    leadingIcon = { Icon(Icons.Outlined.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    onClick = { onDismiss(); onWatchLive() },
-                )
+                add(RecordingAction("Watch Live", Icons.Outlined.PlayArrow) { onWatchLive() })
             }
-            DropdownMenuItem(
-                text = { Text("Stop Recording") },
-                leadingIcon = { Icon(Icons.Outlined.Stop, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = { onDismiss(); onStopRecording() },
-            )
+            add(RecordingAction("Stop Recording", Icons.Outlined.Stop) { onStopRecording() })
         }
-
         if (isScheduled && isServer) {
-            DropdownMenuItem(
-                text = { Text("Edit") },
-                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = { onDismiss(); onEdit() },
-            )
+            add(RecordingAction("Edit", Icons.Outlined.Edit) { onEdit() })
         }
-
         val deleteLabel = when {
             isServer && isScheduled -> "Cancel"
             isServer -> "Delete from Server"
             else -> "Delete"
         }
-        DropdownMenuItem(
-            text = { Text(deleteLabel, color = MaterialTheme.colorScheme.error) },
-            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            onClick = { onDismiss(); onDelete() },
-        )
+        add(RecordingAction(deleteLabel, Icons.Outlined.Delete, destructive = true) { onDelete() })
+    }
+
+    if (rememberIsTvDevice()) {
+        if (!expanded) return
+        androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                    Text(
+                        text = rec.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                    )
+                    actions.forEach { action ->
+                        val tint = if (action.destructive) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary
+                        var rowFocused by remember { mutableStateOf(false) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { rowFocused = it.isFocused }
+                                .background(
+                                    if (rowFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                    else Color.Transparent,
+                                )
+                                .clickable { onDismiss(); action.onClick() }
+                                .padding(horizontal = 24.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(action.icon, contentDescription = null, tint = tint)
+                            Text(
+                                text = action.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (action.destructive) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+    ) {
+        actions.forEach { action ->
+            val tint = if (action.destructive) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.primary
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        action.label,
+                        color = if (action.destructive) MaterialTheme.colorScheme.error
+                        else androidx.compose.ui.graphics.Color.Unspecified,
+                    )
+                },
+                leadingIcon = { Icon(action.icon, contentDescription = null, tint = tint) },
+                onClick = { onDismiss(); action.onClick() },
+            )
+        }
     }
 }
