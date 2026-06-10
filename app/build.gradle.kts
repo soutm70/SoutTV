@@ -177,6 +177,9 @@ dependencies {
     ksp(libs.androidx.hilt.compiler)
     implementation(libs.sh.calvin.reorderable)
     implementation(libs.androidx.media)
+    // QR encoding for the TV log-share dialog (zxing CORE only: the
+    // android-embedded wrapper drags in camera/legacy deps we don't need).
+    implementation(libs.zxing.core)
 
     // ProfileInstaller: hooks into androidx.startup to AOT-compile the methods
     // listed in src/main/baseline-prof.txt at install time. Without this the

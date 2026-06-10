@@ -2,6 +2,7 @@ package com.aeriotv.android.feature.multiview
 
 import android.content.res.Configuration
 import android.util.Log
+import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -26,8 +27,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,10 +65,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.aeriotv.android.R
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
+import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -151,10 +160,21 @@ fun MultiviewScreen(
     // wire it explicitly with the same cascade the X uses (cancel relocate ->
     // exit fullscreen -> leave multiview) so a sub-mode is backed out of
     // first instead of dumping the user straight to the guide.
-    BackHandler {
+    // TV BACK opens a "Leave Multiview?" choice instead of exiting outright:
+    // the @Singleton MultiviewStore survives the pop, so "Back to TV Guide"
+    // resumes later via the guide's staged banner while "Exit Multiview"
+    // clears the staged set. `enabled = !exitDialogOpen` hands BACK to the
+    // Dialog window while it is up (same pattern as the guide exit dialog).
+    var exitDialogOpen by remember { mutableStateOf(false) }
+    val exitGuard = rememberTvMenuGuard()
+    BackHandler(enabled = !exitDialogOpen) {
         when {
             relocatingIndex != null -> relocatingIndex = null
             fullscreenIndex != null -> fullscreenIndex = null
+            isTvDevice && selected.isNotEmpty() -> {
+                exitDialogOpen = true
+                exitGuard.arm()
+            }
             else -> onClose()
         }
     }
@@ -274,6 +294,32 @@ fun MultiviewScreen(
                     .padding(end = 18.dp, top = 18.dp),
             )
         }
+    }
+
+    if (exitDialogOpen) {
+        TvActionMenuDialog(
+            title = "Leave Multiview?",
+            actions = listOf(
+                TvMenuAction(
+                    label = "Back to TV Guide",
+                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                    onClick = { onClose() },
+                ),
+                TvMenuAction(
+                    label = "Exit Multiview",
+                    icon = Icons.Outlined.Close,
+                    destructive = true,
+                    // onClose() BEFORE clear() so the recompose never lands
+                    // on the "No tiles selected." placeholder for a frame.
+                    onClick = {
+                        onClose()
+                        storeHandle.clear()
+                    },
+                ),
+            ),
+            guard = exitGuard,
+            onDismiss = { exitDialogOpen = false },
+        )
     }
 
     LaunchedEffect(chromeVisible, lastInteractionAt) {
@@ -595,6 +641,7 @@ private fun Tile(
             url = channel.url,
             channelName = channel.name,
             httpHeaders = httpHeaders,
+            cachingMs = cachingMs,
             isAudioFocused = isAudioFocused,
             paused = paused,
         )
@@ -668,6 +715,7 @@ private fun ExoTile(
     url: String,
     channelName: String,
     httpHeaders: Map<String, String>,
+    cachingMs: Int,
     isAudioFocused: Boolean,
     paused: Boolean,
 ) {
@@ -676,11 +724,13 @@ private fun ExoTile(
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
-            // Live-stream tuning. Tighter than the VOD profile because
-            // a 9-tile grid wants every tile to start ASAP, even at
-            // the cost of an occasional rebuffer.
+            // Live-stream tuning. minBuffer honors the Settings stream-buffer
+            // choice with a 5s floor; the old 500ms resume threshold made a
+            // tile that dipped stall again immediately once N tiles shared
+            // bandwidth (periodic brief freezes).
+            val minBufferMs = maxOf(5_000, cachingMs)
             val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(2_500, 5_000, 500, 2_000)
+                .setBufferDurationsMs(minBufferMs, maxOf(15_000, minBufferMs), 1_000, 3_000)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
             val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -708,6 +758,10 @@ private fun ExoTile(
                 .setRenderersFactory(renderersFactory)
                 .setLoadControl(loadControl)
                 .setHandleAudioBecomingNoisy(false) // tile is muted-by-default; don't react
+                // Event-driven playback loop instead of the fixed 10ms
+                // doSomeWork cadence; up to 9 busy-scheduling loops are
+                // measurable on a TV SoC. Tiles only, not the main holder.
+                .experimentalSetDynamicSchedulingEnabled(true)
                 .build()
                 .apply {
                     // CRITICAL multiview audio-budget gate. Each tile is a
@@ -733,6 +787,36 @@ private fun ExoTile(
                 }
             playerRef.value = player
 
+            // Bounded re-prepare on fatal error, copying the cooldown shape
+            // of AerioExoPlayerHolder.forceReload (5s cooldown, 3 attempts,
+            // counter reset on recovery). Without it a tile hitting an HTTP
+            // error or MediaCodec INSUFFICIENT_RESOURCE freezes silently for
+            // the rest of the session.
+            player.addListener(object : Player.Listener {
+                private var lastRetryAtMs = 0L
+                private var consecutiveRetries = 0
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY) consecutiveRetries = 0
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    val retryUrl = currentUrlRef.value
+                    if (retryUrl.isBlank()) return
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastRetryAtMs < 5_000L) return
+                    if (consecutiveRetries >= 3) {
+                        Log.w(TAG, "Tile giving up after $consecutiveRetries retries: $channelName (${error.errorCodeName})")
+                        return
+                    }
+                    lastRetryAtMs = now
+                    consecutiveRetries++
+                    Log.w(TAG, "Tile re-prepare on error: $channelName ${error.errorCodeName} attempt=$consecutiveRetries")
+                    player.setMediaSource(buildTileMediaSource(retryUrl, dataSourceFactory))
+                    player.prepare()
+                }
+            })
+
             Log.i(TAG, "Tile ExoPlayer loading: $channelName")
             if (url.isNotBlank()) {
                 player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
@@ -740,7 +824,13 @@ private fun ExoTile(
                 currentUrlRef.value = url
             }
 
-            PlayerView(ctx).apply {
+            // Inflated (not PlayerView(ctx)) because surface_type is a
+            // constructor-time XML attr; the layout pins it to texture_view
+            // so N tiles share the app window layer instead of N
+            // punch-through SurfaceViews (TV HWC overlay-budget stutter).
+            val playerView = LayoutInflater.from(ctx)
+                .inflate(R.layout.multiview_tile_player, null) as PlayerView
+            playerView.apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,

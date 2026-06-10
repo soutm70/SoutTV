@@ -1432,4 +1432,34 @@ data class DispatcharrProgramDetail(
     val title: String? = null,
     val description: String? = null,
     val categories: List<String> = emptyList(),
+    /** XMLTV `<programme><icon>`; the bulk grid strips it, only this detail
+     *  endpoint carries it. */
+    val icon: String? = null,
+    /** XMLTV `<image>` list; first non-blank url is the candidate. */
+    val images: List<DispatcharrProgramImage> = emptyList(),
+    /** Absolute Schedules-Direct poster proxy URL (SD sources only). */
+    @SerialName("poster_url")
+    val posterUrl: String? = null,
+    // tmdb_id arrives as Int or String depending on the source (iOS decodes
+    // both, StreamingAPIs.swift:3085); accept any primitive shape.
+    @SerialName("tmdb_id")
+    val tmdbIdRaw: JsonElement? = null,
+) {
+    val tmdbId: String?
+        get() = (tmdbIdRaw as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+    /** Best server-provided artwork, iOS precedence (StreamingAPIs.swift:3098):
+     *  poster_url > first images[].url > icon. Null when the programme carries
+     *  none (the TMDB-by-title fallback then applies, if enabled). */
+    val bestPosterString: String?
+        get() {
+            posterUrl?.takeIf { it.isNotBlank() }?.let { return it }
+            images.firstNotNullOfOrNull { it.url?.takeIf(String::isNotBlank) }?.let { return it }
+            return icon?.takeIf { it.isNotBlank() }
+        }
+}
+
+@Serializable
+data class DispatcharrProgramImage(
+    val url: String? = null,
 )

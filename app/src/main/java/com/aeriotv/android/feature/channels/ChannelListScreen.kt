@@ -33,7 +33,10 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FiberManualRecord
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
@@ -81,7 +84,10 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.livetv.LiveTVViewMode
 import com.aeriotv.android.ui.tv.tvFocusScale
 import com.aeriotv.android.feature.livetv.ManageGroupsSheet
@@ -478,6 +484,23 @@ internal fun ChannelRow(
     var menuOpen by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
     val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
+    val isTv = rememberIsTvDevice()
+    // Shared by the phone menu item and the TV dialog action: record the
+    // now-airing programme, or a 1-hour ad-hoc block when EPG is missing.
+    val recordFromMenu = {
+        val now = System.currentTimeMillis()
+        val target = nowProgramme?.toInfoTarget(channel.name, channel.dispatcharrChannelId)
+            ?: ProgramInfoTarget(
+                channelName = channel.name,
+                title = "${channel.name} live recording",
+                startMillis = now,
+                endMillis = now + 3_600_000L,
+                description = "",
+                category = "",
+                channelDispatcharrId = channel.dispatcharrChannelId,
+            )
+        onShowRecord(target)
+    }
 
     // Category gradient runs cyan-of-card → category-tint when a now-playing
     // programme has a recognised category and the user has Category Colors on.
@@ -526,7 +549,10 @@ internal fun ChannelRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .combinedClickable(
-                        onClick = onPlay,
+                        // menuGuard.wrap: the spurious OK-release after a TV
+                        // long-press can land back on this row and would
+                        // otherwise start playback.
+                        onClick = menuGuard.wrap(onPlay),
                         onLongClick = { menuOpen = true; menuGuard.arm() },
                     )
                     .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -655,6 +681,9 @@ internal fun ChannelRow(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
+                            // No menuGuard.arm(): this is a plain click, so
+                            // there is no held OK key whose release could
+                            // auto-pick the first menu item.
                             onClick = { menuOpen = true },
                             modifier = Modifier.size(28.dp),
                         ) {
@@ -681,11 +710,43 @@ internal fun ChannelRow(
                 }
             }
 
-            // Channel long-press menu — iOS canon (ChannelListView.swift:1873).
-            // Add/Remove from Favorites is a UI stub: the FavoritesStore lands
-            // with the conditional-tab work. Record from Now opens the sheet
-            // shell whose action toasts until Phase 9 DVR lands.
-            DropdownMenu(
+            // Channel long-press menu, iOS canon (ChannelListView.swift:1873).
+            // Rendered as the shared centered TvActionMenuDialog on TV (this
+            // row is reachable with a remote via the Favorites tab) and as
+            // the anchored DropdownMenu on phone. Same actions either way.
+            if (isTv) {
+                if (menuOpen) {
+                    val canRecordToServer = LocalCanRecordToServer.current
+                    TvActionMenuDialog(
+                        title = channel.name,
+                        actions = buildList {
+                            add(
+                                TvMenuAction(
+                                    if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                                    if (isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
+                                ) { onToggleFavorite() },
+                            )
+                            if (nowProgramme != null) {
+                                add(
+                                    TvMenuAction("Program Info", Icons.Outlined.Info) {
+                                        onShowProgramInfo(nowProgramme.toInfoTarget(channel.name, channel.dispatcharrChannelId))
+                                    },
+                                )
+                            }
+                            if (channel.url.isNotBlank() && channel.dispatcharrChannelId != null && canRecordToServer) {
+                                add(
+                                    TvMenuAction(
+                                        if (nowProgramme != null) "Record from Now" else "Record",
+                                        Icons.Outlined.FiberManualRecord,
+                                    ) { recordFromMenu() },
+                                )
+                            }
+                        },
+                        guard = menuGuard,
+                        onDismiss = { menuOpen = false },
+                    )
+                }
+            } else DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -737,18 +798,7 @@ internal fun ChannelRow(
                         text = { Text(recordLabel) },
                         onClick = menuGuard.wrap {
                             menuOpen = false
-                            val now = System.currentTimeMillis()
-                            val target = nowProgramme?.toInfoTarget(channel.name, channel.dispatcharrChannelId)
-                                ?: ProgramInfoTarget(
-                                    channelName = channel.name,
-                                    title = "${channel.name} live recording",
-                                    startMillis = now,
-                                    endMillis = now + 3_600_000L,
-                                    description = "",
-                                    category = "",
-                                    channelDispatcharrId = channel.dispatcharrChannelId,
-                                )
-                            onShowRecord(target)
+                            recordFromMenu()
                         },
                     )
                 }
@@ -835,6 +885,7 @@ private fun UpcomingProgrammeRow(
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
     val menuGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
+    val isTv = rememberIsTvDevice()
     val key = remember(programme, channelName) {
         reminderKey(channelName, programme.title, programme.startMillis)
     }
@@ -846,7 +897,10 @@ private fun UpcomingProgrammeRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .combinedClickable(
-                    onClick = onTap,
+                    // menuGuard.wrap: the spurious OK-release after a TV
+                    // long-press can land back on this row and would
+                    // otherwise open the info sheet.
+                    onClick = menuGuard.wrap(onTap),
                     onLongClick = { menuOpen = true; menuGuard.arm() },
                 )
                 .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -878,24 +932,16 @@ private fun UpcomingProgrammeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-        ) {
-            DropdownMenuItem(
-                text = { Text("Program Info") },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
-                    onTap()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(if (isReminderSet) "Cancel Reminder" else "Set Reminder")
-                },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
+        // One source of truth for the long-press actions; rendered as an
+        // anchored DropdownMenu on phone and as the shared centered
+        // TvActionMenuDialog on TV (reachable via the Favorites tab).
+        val menuActions = buildList {
+            add(TvMenuAction("Program Info", Icons.Outlined.Info) { onTap() })
+            add(
+                TvMenuAction(
+                    if (isReminderSet) "Cancel Reminder" else "Set Reminder",
+                    Icons.Outlined.Notifications,
+                ) {
                     if (isReminderSet) {
                         remindersVm.cancelReminder(key)
                         Toast.makeText(context, "Reminder cancelled.", Toast.LENGTH_SHORT).show()
@@ -911,13 +957,35 @@ private fun UpcomingProgrammeRow(
                     }
                 },
             )
-            DropdownMenuItem(
-                text = { Text("Record") },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
-                    onShowRecord()
-                },
-            )
+            add(TvMenuAction("Record", Icons.Outlined.FiberManualRecord) { onShowRecord() })
+        }
+        if (isTv) {
+            if (menuOpen) {
+                TvActionMenuDialog(
+                    title = programme.title.ifBlank { channelName },
+                    actions = menuActions,
+                    guard = menuGuard,
+                    onDismiss = { menuOpen = false },
+                )
+            }
+        } else {
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
+                // Phone menu stays text-only, exactly as it was before the
+                // actions list was hoisted; the icons are TV-dialog chrome.
+                menuActions.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.label) },
+                        onClick = menuGuard.wrap {
+                            menuOpen = false
+                            action.onClick()
+                        },
+                    )
+                }
+            }
         }
     }
 }

@@ -23,8 +23,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,6 +37,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +51,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import java.text.DateFormat
@@ -68,6 +75,22 @@ fun PlaylistDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playlist = state.playlist
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // LAN/WAN route is a point-in-time probe (no NetworkCallback flow in the
+    // app); re-check on entry and ON_RESUME, mirroring NetworkSettingsScreen's
+    // HomeWifiSection. Action statuses reset when the screen goes away.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(playlist?.id) { viewModel.refreshActiveRoute() }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshActiveRoute()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.clearDetailActionStatuses()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -169,6 +192,23 @@ fun PlaylistDetailScreen(
                     ) {
                         DetailRow("Type", playlist.sourceType)
                         DetailRow("Remote URL", playlist.urlString)
+                        playlist.lanUrlString?.takeIf { it.isNotBlank() }?.let { lan ->
+                            DetailRow("LAN URL", lan)
+                            // Which URL is actually in effect right now, per
+                            // PlaylistRepository.effectiveBaseUrl's decision.
+                            state.activeRoute?.let { route ->
+                                DetailRow(
+                                    label = "Connection",
+                                    value = if (route.isLan) "LAN (${route.url})" else "WAN (${route.url})",
+                                    valueColor = if (route.isLan) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onBackground
+                                    },
+                                    icon = if (route.isLan) Icons.Outlined.Home else Icons.Outlined.Public,
+                                )
+                            }
+                        }
                         DetailRow(
                             label = "Status",
                             value = "Verified",
@@ -204,12 +244,16 @@ fun PlaylistDetailScreen(
                         icon = Icons.Outlined.Public,
                         label = "Test Connection",
                         onClick = { viewModel.testConnection() },
+                        running = state.testStatus is PlaylistViewModel.ActionStatus.Running,
+                        status = state.testStatus,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                     ActionRow(
                         icon = Icons.Filled.Refresh,
                         label = "Refresh Playlist",
                         onClick = { viewModel.refreshPlaylist() },
+                        running = state.playlistRefreshStatus is PlaylistViewModel.ActionStatus.Running,
+                        status = state.playlistRefreshStatus,
                     )
                 }
             }
@@ -223,6 +267,8 @@ fun PlaylistDetailScreen(
                         icon = Icons.Filled.Refresh,
                         label = "Refresh EPG Data",
                         onClick = { viewModel.refreshEpg() },
+                        running = state.epgRefreshStatus is PlaylistViewModel.ActionStatus.Running,
+                        status = state.epgRefreshStatus,
                     )
                     playlist.lastEpgRefreshedAt?.let { ts ->
                         Text(
@@ -358,6 +404,8 @@ private fun ActionRow(
     label: String,
     onClick: () -> Unit,
     destructive: Boolean = false,
+    running: Boolean = false,
+    status: PlaylistViewModel.ActionStatus = PlaylistViewModel.ActionStatus.Idle,
 ) {
     // The whole row is the click/focus target. The old shape (label inside a
     // TextButton) gave D-pad focus a tiny pill around the text only, which
@@ -375,7 +423,10 @@ private fun ActionRow(
                     Color.Transparent
                 },
             )
-            .clickable(onClick = onClick)
+            // Guarded instead of clickable(enabled = !running) so the row
+            // keeps its D-pad focus stop while a run is in flight; a disabled
+            // clickable drops out of focus traversal entirely.
+            .clickable(onClick = { if (!running) onClick() })
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -385,11 +436,39 @@ private fun ActionRow(
             tint = accent,
         )
         Spacer(Modifier.size(12.dp))
-        Text(
-            text = label,
-            color = accent,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = accent,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+            )
+            when (status) {
+                is PlaylistViewModel.ActionStatus.Success -> Text(
+                    text = status.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                is PlaylistViewModel.ActionStatus.Failure -> Text(
+                    text = status.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                else -> Unit
+            }
+        }
+        if (running) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+            )
+        } else if (status is PlaylistViewModel.ActionStatus.Success) {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }

@@ -636,6 +636,7 @@ private fun RecordingRow(
 
     var menuOpen by remember { mutableStateOf(false) }
     val isTv = rememberIsTvDevice()
+    val tvGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
     var focused by remember { mutableStateOf(false) }
 
     Box {
@@ -652,8 +653,11 @@ private fun RecordingRow(
                     // Stopped carry a playbackUrl); non-playable rows no-op on
                     // tap and use the long-press menu. Mirrors iOS tvOS
                     // playIfCompleted (MyRecordingsView.swift line 469).
-                    onClick = { if (!rec.playbackUrl.isNullOrBlank()) onPlay() },
-                    onLongClick = { menuOpen = true },
+                    // tvGuard: the OK RELEASE after a TV long-press is
+                    // delivered as a click (to this row or to the menu's
+                    // first item); arm/wrap swallows it.
+                    onClick = tvGuard.wrap { if (!rec.playbackUrl.isNullOrBlank()) onPlay() },
+                    onLongClick = { menuOpen = true; tvGuard.arm() },
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -715,6 +719,7 @@ private fun RecordingRow(
         RecordingActionMenu(
             rec = rec,
             expanded = menuOpen,
+            tvGuard = tvGuard,
             onDismiss = { menuOpen = false },
             onEdit = onEdit,
             onDelete = onDelete,
@@ -792,6 +797,7 @@ private data class RecordingAction(
 private fun RecordingActionMenu(
     rec: DvrViewModel.Recording,
     expanded: Boolean,
+    tvGuard: com.aeriotv.android.core.tv.TvMenuGuard,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -861,7 +867,7 @@ private fun RecordingActionMenu(
                                     if (rowFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                                     else Color.Transparent,
                                 )
-                                .clickable { onDismiss(); action.onClick() }
+                                .clickable(onClick = tvGuard.wrap { onDismiss(); action.onClick() })
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),

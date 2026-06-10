@@ -140,6 +140,9 @@ class SettingsViewModel @Inject constructor(
     fun saveTmdbKey(draft: String) {
         viewModelScope.launch {
             prefs.setTmdbApiKey(draft)
+            // Misses cached under the previous key must not survive a key
+            // change; positives re-resolve cheaply on next lookup.
+            tmdb.clearCache()
             _tmdbKeyTestState.value = TmdbKeyTestState.Saved
         }
     }

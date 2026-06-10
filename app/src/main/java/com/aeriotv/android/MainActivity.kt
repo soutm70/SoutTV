@@ -231,10 +231,14 @@ class MainActivity : ComponentActivity() {
         // GH #1: on Android TV the leanback IME is an overlay; letting the window
         // RESIZE per IME-animation frame feeds a recompose + bring-into-view loop
         // in the verticalScroll onboarding form, so the fields visibly jiggle.
-        // Pan instead, keeping the window height constant. Phones keep the default
-        // adjustResize (they need the focused field lifted above a real keyboard).
+        // ADJUST_NOTHING keeps the window completely still: the earlier PAN mode
+        // slid the whole screen up and exposed black behind the keyboard (user
+        // report). The keyboard simply overlays the bottom, and the
+        // keyboard-on-OK gate means it only opens over a field the user
+        // deliberately clicked. Phones keep the default adjustResize (a real
+        // keyboard must lift the focused field).
         if (isTelevisionDevice()) {
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         }
         // Keep the window's PiP params in sync with player video state so the
         // system auto-enters Picture-in-Picture when the user leaves the app while

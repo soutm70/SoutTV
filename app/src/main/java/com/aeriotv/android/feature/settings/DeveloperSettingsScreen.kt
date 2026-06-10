@@ -98,9 +98,11 @@ fun DeveloperSettingsScreen(
     }
     val loggingEnabled by settingsVm.debugLoggingEnabled.collectAsStateWithLifecycle(initialValue = false)
 
+    val isTv = rememberIsTvDevice()
     var pendingEnable by remember { mutableStateOf(false) }
     var pendingDisable by remember { mutableStateOf(false) }
     var pendingClear by remember { mutableStateOf(false) }
+    var showQrShare by remember { mutableStateOf(false) }
 
     // Poll the file size while we're on this screen so the displayed value
     // tracks live writes. 1 Hz is plenty for a multi-MB file; iOS does the
@@ -141,8 +143,12 @@ fun DeveloperSettingsScreen(
                 item("log-file") {
                     LogFileSection(
                         sizeBytes = sizeBytes,
+                        isTv = isTv,
                         onView = onOpenLogViewer,
-                        onShare = { shareLogFile(context, debugLogger) },
+                        // ACTION_SEND has no useful targets on Google TV, so
+                        // TV serves the file over LAN behind a QR code (the
+                        // tvOS LogShareServer port). Phones keep the chooser.
+                        onShare = { if (isTv) showQrShare = true else shareLogFile(context, debugLogger) },
                         onClear = { pendingClear = true },
                     )
                 }
@@ -227,6 +233,13 @@ fun DeveloperSettingsScreen(
             },
         )
     }
+
+    if (showQrShare) {
+        TvLogShareDialog(
+            file = debugLogger.logFile(),
+            onDismiss = { showQrShare = false },
+        )
+    }
 }
 
 @Composable
@@ -256,6 +269,7 @@ private fun LoggingSection(
 @Composable
 private fun LogFileSection(
     sizeBytes: Long,
+    isTv: Boolean,
     onView: () -> Unit,
     onShare: () -> Unit,
     onClear: () -> Unit,
@@ -278,7 +292,7 @@ private fun LogFileSection(
         )
         SettingsActionRow(
             label = "Share Log File",
-            subtitle = "Email, Messages, Drive, etc.",
+            subtitle = if (isTv) "Scan a QR code with your phone" else "Email, Messages, Drive, etc.",
             leadingIcon = Icons.Filled.Share,
             onClick = onShare,
         )

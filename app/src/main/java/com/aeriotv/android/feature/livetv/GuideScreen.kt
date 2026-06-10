@@ -39,6 +39,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.outlined.FiberManualRecord
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -108,7 +113,10 @@ import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.db.entity.reminderKey
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
+import com.aeriotv.android.feature.settings.dpadFocusRing
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
 import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
@@ -197,12 +205,18 @@ fun GuideScreen(
     // on the FIRST add, not every subsequent one.
     val multiviewBannerFocus = remember { FocusRequester() }
     val isTvDevice = rememberIsTvDevice()
+    // Guards the banner's launch clicks: armed by the focus pull below (the
+    // Streamer's spurious OK-release lands on the newly-focused banner and
+    // would launch Multiview instantly) and re-armed on each real launch so
+    // an impatient double OK cannot navigate twice.
+    val bannerGuard = com.aeriotv.android.core.tv.rememberTvMenuGuard()
     // Keyed on the staged COUNT (not just empty<->non-empty) so focus returns to
     // the banner after EVERY add -- you stage several channels (each add bounces
     // focus back to Play), then press OK to launch. Without this, only the first
     // add reached the banner and a multi-tile Multiview was impossible to launch.
     LaunchedEffect(stagedMultiview.size) {
         if (isTvDevice && stagedMultiview.isNotEmpty()) {
+            bannerGuard.arm()
             // The banner composes the same frame the staged set flips non-empty;
             // retry briefly so the requester is attached before we focus it.
             repeat(10) {
@@ -461,6 +475,13 @@ fun GuideScreen(
         if (stagedMultiview.isNotEmpty()) {
             val labelCount = stagedMultiview.size
             val label = "$labelCount Multiview channel${if (labelCount == 1) "" else "s"} staged"
+            // Guarded launch: swallow the spurious OK-release after the focus
+            // pull, and re-arm on a real launch so a second OK during tile
+            // spin-up is swallowed too (launchSingleTop is the backstop).
+            val launchMultiviewGuarded = bannerGuard.wrap {
+                bannerGuard.arm()
+                onLaunchMultiview()
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -468,7 +489,11 @@ fun GuideScreen(
                     .focusRequester(multiviewBannerFocus)
                     .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                    .clickable(onClick = onLaunchMultiview)
+                    .dpadFocusRing(
+                        shape = RoundedCornerShape(14.dp),
+                        washTint = MaterialTheme.colorScheme.primary,
+                    )
+                    .clickable(onClick = launchMultiviewGuarded)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -486,7 +511,13 @@ fun GuideScreen(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = onLaunchMultiview) {
+                TextButton(
+                    onClick = launchMultiviewGuarded,
+                    modifier = Modifier.dpadFocusRing(
+                        shape = RoundedCornerShape(50),
+                        washTint = MaterialTheme.colorScheme.primary,
+                    ),
+                ) {
                     Text(
                         text = "Play Multiview",
                         color = MaterialTheme.colorScheme.primary,
@@ -1774,7 +1805,9 @@ private fun ProgrammeCell(
             .combinedClickable(
                 // Single tap/click plays the channel; the program-info sheet +
                 // actions live behind a long press (the menu below). iOS parity.
-                onClick = onPlay,
+                // menuGuard.wrap: the spurious OK-release after a TV long-press
+                // can land back on this cell and would otherwise start playback.
+                onClick = menuGuard.wrap(onPlay),
                 onLongClick = { menuOpen = true; menuGuard.arm() },
             )
             // tvOS programCell uses .padding(.horizontal, 8) / .padding(.vertical, 6)
@@ -1786,24 +1819,17 @@ private fun ProgrammeCell(
             ),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-        ) {
-            DropdownMenuItem(
-                text = { Text("Program Info") },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
-                    onShowInfo()
-                },
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(if (isReminderSet) "Cancel Reminder" else "Set Reminder")
-                },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
+        // One source of truth for the long-press actions; rendered as an
+        // anchored DropdownMenu on phone (a thumb-distance idiom) and as the
+        // shared centered TvActionMenuDialog on TV.
+        val canRecordToServer = LocalCanRecordToServer.current
+        val menuActions = buildList {
+            add(TvMenuAction("Program Info", Icons.Outlined.Info) { onShowInfo() })
+            add(
+                TvMenuAction(
+                    if (isReminderSet) "Cancel Reminder" else "Set Reminder",
+                    Icons.Outlined.Notifications,
+                ) {
                     if (isReminderSet) {
                         remindersVm.cancelReminder(key)
                         Toast.makeText(context, "Reminder cancelled.", Toast.LENGTH_SHORT).show()
@@ -1819,35 +1845,55 @@ private fun ProgrammeCell(
                     }
                 },
             )
-            DropdownMenuItem(
-                text = {
-                    Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites")
-                },
-                onClick = menuGuard.wrap {
-                    menuOpen = false
-                    onToggleFavorite()
-                },
+            add(
+                TvMenuAction(
+                    if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                    Icons.Outlined.Star,
+                ) { onToggleFavorite() },
             )
             if (canAddToMultiview) {
-                DropdownMenuItem(
-                    text = {
-                        Text(if (inMultiview) "Remove from Multiview" else "Add to Multiview")
-                    },
-                    onClick = menuGuard.wrap {
-                        menuOpen = false
-                        onToggleMultiview()
-                    },
+                add(
+                    TvMenuAction(
+                        if (inMultiview) "Remove from Multiview" else "Add to Multiview",
+                        Icons.Outlined.GridView,
+                    ) { onToggleMultiview() },
                 )
             }
-            if (programme.endMillis > System.currentTimeMillis() && LocalCanRecordToServer.current) {
-                val recordLabel = if (isLive) "Record from Now" else "Record"
-                DropdownMenuItem(
-                    text = { Text(recordLabel) },
-                    onClick = menuGuard.wrap {
-                        menuOpen = false
-                        onRecord()
-                    },
+            if (programme.endMillis > System.currentTimeMillis() && canRecordToServer) {
+                add(
+                    TvMenuAction(
+                        if (isLive) "Record from Now" else "Record",
+                        Icons.Outlined.FiberManualRecord,
+                    ) { onRecord() },
                 )
+            }
+        }
+        if (isTv) {
+            if (menuOpen) {
+                TvActionMenuDialog(
+                    title = programme.title.ifBlank { channelName },
+                    actions = menuActions,
+                    guard = menuGuard,
+                    onDismiss = { menuOpen = false },
+                )
+            }
+        } else {
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+            ) {
+                // Phone menu stays text-only, exactly as it was before the
+                // actions list was hoisted; the icons are TV-dialog chrome.
+                menuActions.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.label) },
+                        onClick = menuGuard.wrap {
+                            menuOpen = false
+                            action.onClick()
+                        },
+                    )
+                }
             }
         }
         // The text block is wrapped in one column carrying [contentSticky] so the

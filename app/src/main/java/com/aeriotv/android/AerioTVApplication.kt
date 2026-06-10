@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -135,7 +136,10 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         // crash hits we have a recent timeline of memory + thermal pressure.
         resourceTelemetry.start()
         appScope.launch {
-            appPreferences.debugLoggingEnabled.collectLatest { enabled ->
+            // distinctUntilChanged: DataStore re-emits on EVERY write to ANY
+            // key in the store, and setEnabled(true) appends an "ENABLED"
+            // anchor line each time it runs. Only react to actual flips.
+            appPreferences.debugLoggingEnabled.distinctUntilChanged().collectLatest { enabled ->
                 debugLogger.setEnabled(enabled)
             }
         }

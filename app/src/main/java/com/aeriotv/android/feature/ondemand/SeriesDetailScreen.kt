@@ -107,7 +107,7 @@ fun SeriesDetailScreen(
 
     // TMDB poster fallback (opt-in): only when the server gave no artwork.
     var tmdbPosterUrl by remember(seriesId) { mutableStateOf<String?>(null) }
-    LaunchedEffect(seriesId, info) {
+    LaunchedEffect(seriesId, info, state.seriesProviderInfoLoading) {
         val s = series ?: return@LaunchedEffect
         val hasServerArt = !s.posterUrl.isNullOrBlank() ||
             !info?.posterUrl.isNullOrBlank() || !info?.backdropUrl.isNullOrBlank()

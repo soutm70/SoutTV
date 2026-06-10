@@ -65,6 +65,13 @@ class TMDBService @Inject constructor() {
      */
     private val cache = ConcurrentHashMap<String, String>()
 
+    /** Drop every cached lookup, including misses recorded under an old key.
+     *  Called when the user saves a new key so prior 401-era state can't
+     *  outlive the credential that produced it. */
+    fun clearCache() {
+        cache.clear()
+    }
+
     /** v4 read-access token = a JWT: starts with "eyJ" and has exactly 2 dots. */
     private fun isBearerToken(key: String): Boolean =
         key.startsWith("eyJ") && key.count { it == '.' } == 2
@@ -118,7 +125,9 @@ class TMDBService @Inject constructor() {
             key,
         )
         val path = body?.let { parseSearchPosterPath(it) }
-        cache[cacheKey] = path ?: ""
+        // Cache only parsed 200 responses; a failed request (offline, bad key)
+        // must stay retryable rather than being poisoned as a confirmed miss.
+        if (body != null) cache[cacheKey] = path ?: ""
         Log.d(TAG, "search '$title' -> ${path ?: "no match"}")
         return path?.let { imageUrl(it, size) }
     }
@@ -132,7 +141,8 @@ class TMDBService @Inject constructor() {
         cache[cacheKey]?.let { return if (it.isEmpty()) null else imageUrl(it, size) }
         val body = getJsonOrNull("/${if (isMovie) "movie" else "tv"}/$id", "", key)
         val path = body?.let { runCatching { json.parseToJsonElement(it).jsonObject["poster_path"]?.jsonPrimitive?.contentOrNull }.getOrNull() }
-        cache[cacheKey] = path ?: ""
+        // Same rule as posterUrlForTitle: never cache a failed request.
+        if (body != null) cache[cacheKey] = path ?: ""
         Log.d(TAG, "id $id (${if (isMovie) "movie" else "tv"}) -> ${path ?: "no match"}")
         return path?.let { imageUrl(it, size) }
     }

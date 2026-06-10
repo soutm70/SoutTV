@@ -106,7 +106,7 @@ fun MovieDetailScreen(
     // artwork (no logo, no provider poster/backdrop) and provider-info has
     // settled, so it never overrides a real poster or hits TMDB needlessly.
     var tmdbPosterUrl by remember(movie?.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(movie?.id, info) {
+    LaunchedEffect(movie?.id, info, state.movieProviderInfoLoading) {
         val m = movie ?: return@LaunchedEffect
         val hasServerArt = !m.logo?.url.isNullOrBlank() ||
             !info?.posterUrl.isNullOrBlank() || !info?.backdropUrl.isNullOrBlank()

@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,27 +36,34 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import coil3.compose.AsyncImage
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
+import com.aeriotv.android.core.network.TMDBService
+import com.aeriotv.android.core.preferences.AppPreferences
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
@@ -84,30 +93,60 @@ fun ProgramInfoSheet(
     // with a richer list.
     var effectiveCategory by remember(target.id) { mutableStateOf(target.category) }
 
+    // Program poster: server detail artwork first (SD proxy / XMLTV image /
+    // icon), then TMDB-by-title when that opt-in is enabled and a key is
+    // stored. Null = no poster, render nothing. Mirrors iOS ProgramInfoView
+    // (posterURL state at ProgramInfoView.swift:96).
+    var posterUrl by remember(target.id) { mutableStateOf<String?>(null) }
+
     LaunchedEffect(target.id) {
-        if (effectiveCategory.isNotBlank()) return@LaunchedEffect
-        val programId = target.dispatcharrProgramId ?: return@LaunchedEffect
-        val playlist = playlistState.playlist ?: return@LaunchedEffect
-        val isDispatcharr = playlist.sourceType == SourceType.DispatcharrApiKey.name ||
-            playlist.sourceType == SourceType.DispatcharrUserPass.name
-        if (!isDispatcharr) return@LaunchedEffect
-        val baseUrl = playlist.urlString
-        val playlistId = playlist.id
         val entry = EntryPointAccessors.fromApplication(
             context.applicationContext,
             ProgramInfoEntryPoint::class.java,
         )
-        val broker = entry.dispatcharrAuth()
-        val client = entry.dispatcharrClient()
-        runCatching {
-            withContext(Dispatchers.IO) {
-                broker.withApiKeyRetry(playlistId) { key ->
-                    client.getProgramDetail(baseUrl, key, programId)
+        // Server detail fetch fires when EITHER the categories or the poster
+        // are still missing; one request carries both (iOS fetches the same
+        // way, ProgramInfoView.swift:304).
+        val categoryNeeded = effectiveCategory.isBlank()
+        val programId = target.dispatcharrProgramId
+        val playlist = playlistState.playlist
+        val isDispatcharr = playlist != null && (
+            playlist.sourceType == SourceType.DispatcharrApiKey.name ||
+                playlist.sourceType == SourceType.DispatcharrUserPass.name
+            )
+        if (programId != null && playlist != null && isDispatcharr &&
+            (categoryNeeded || posterUrl == null)
+        ) {
+            val baseUrl = playlist.urlString
+            val playlistId = playlist.id
+            val broker = entry.dispatcharrAuth()
+            val client = entry.dispatcharrClient()
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    broker.withApiKeyRetry(playlistId) { key ->
+                        client.getProgramDetail(baseUrl, key, programId)
+                    }
+                }
+            }.onSuccess { detail ->
+                val joined = detail.categories.filter { it.isNotBlank() }.joinToString(",")
+                if (categoryNeeded && joined.isNotBlank()) effectiveCategory = joined
+                detail.bestPosterString?.let { raw ->
+                    // Server-relative icon paths (protected /media/ etc.) need
+                    // the playlist origin prefixed before Coil can load them.
+                    posterUrl = if (raw.startsWith("/")) baseUrl.trimEnd('/') + raw else raw
                 }
             }
-        }.onSuccess { detail ->
-            val joined = detail.categories.filter { it.isNotBlank() }.joinToString(",")
-            if (joined.isNotBlank()) effectiveCategory = joined
+        }
+        // TMDB-by-title fallback for ANY source: opt-in pref + the user's own
+        // key only (iOS loadTMDBPosterIfNeeded, ProgramInfoView.swift:369).
+        if (posterUrl == null && target.title.isNotBlank()) {
+            val prefs = entry.appPreferences()
+            if (prefs.programPostersTmdbEnabled.first()) {
+                val key = prefs.tmdbApiKey.first()
+                if (key.isNotBlank()) {
+                    posterUrl = entry.tmdbService().posterUrlForTitle(target.title, key)
+                }
+            }
         }
     }
 
@@ -143,7 +182,12 @@ fun ProgramInfoSheet(
                         .focusable()
                         .padding(horizontal = 32.dp, vertical = 28.dp),
                 ) {
-                    ProgramInfoBody(target = target, effectiveCategory = effectiveCategory)
+                    ProgramInfoBody(
+                        target = target,
+                        effectiveCategory = effectiveCategory,
+                        posterUrl = posterUrl,
+                        posterWidth = 140.dp,
+                    )
                 }
             }
         }
@@ -159,7 +203,12 @@ fun ProgramInfoSheet(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 4.dp),
             ) {
-                ProgramInfoBody(target = target, effectiveCategory = effectiveCategory)
+                ProgramInfoBody(
+                    target = target,
+                    effectiveCategory = effectiveCategory,
+                    posterUrl = posterUrl,
+                    posterWidth = 100.dp,
+                )
                 Spacer(Modifier.height(24.dp))
             }
         }
@@ -168,30 +217,54 @@ fun ProgramInfoSheet(
 
 /**
  * Shared program-detail body used by both the phone bottom-sheet and the
- * TV centered-dialog presentations. Channel eyebrow, title + LIVE badge,
- * the info-columns block, description, and the metadata / category pills.
+ * TV centered-dialog presentations. Program poster (when resolved) beside
+ * the channel eyebrow + title + LIVE badge block, then the info-columns
+ * block, description, and the metadata / category pills.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ProgramInfoBody(target: ProgramInfoTarget, effectiveCategory: String) {
-    Text(
-        text = target.channelName.uppercase(Locale.getDefault()),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        letterSpacing = 1.5.sp,
-    )
-    Spacer(Modifier.height(6.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = target.title.ifBlank { "Untitled" },
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
-        )
-        if (target.isLiveNow()) {
-            Spacer(Modifier.size(10.dp))
-            LiveBadge()
+private fun ProgramInfoBody(
+    target: ProgramInfoTarget,
+    effectiveCategory: String,
+    posterUrl: String?,
+    posterWidth: Dp,
+) {
+    Row(verticalAlignment = Alignment.Top) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = target.channelName.uppercase(Locale.getDefault()),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                letterSpacing = 1.5.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = target.title.ifBlank { "Untitled" },
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                if (target.isLiveNow()) {
+                    Spacer(Modifier.size(10.dp))
+                    LiveBadge()
+                }
+            }
+        }
+        if (posterUrl != null) {
+            Spacer(Modifier.width(16.dp))
+            // Decoration only: deliberately NOT focusable, or it would insert
+            // itself into the TV dialog's D-pad scroll order.
+            AsyncImage(
+                model = posterUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(posterWidth)
+                    .aspectRatio(2f / 3f)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
         }
     }
 
@@ -358,6 +431,8 @@ private fun String.categoryTokens(): List<String> =
 interface ProgramInfoEntryPoint {
     fun dispatcharrClient(): DispatcharrClient
     fun dispatcharrAuth(): DispatcharrAuthBroker
+    fun tmdbService(): TMDBService
+    fun appPreferences(): AppPreferences
 }
 
 private fun formatDuration(millis: Long): String {

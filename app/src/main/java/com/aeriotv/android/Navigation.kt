@@ -429,7 +429,13 @@ fun AerioTVNavHost(
                         navController.navigate(Routes.recordingPlayer(playbackUrl, title))
                     },
                     onLaunchMultiview = {
-                        navController.navigate(Routes.MULTIVIEW)
+                        // Tile spin-up takes seconds on real hardware, inviting
+                        // a second OK press; singleTop keeps a double-activation
+                        // from stacking two MULTIVIEW entries (first BACK would
+                        // then pop the duplicate and "do nothing").
+                        navController.navigate(Routes.MULTIVIEW) {
+                            launchSingleTop = true
+                        }
                     },
                     onWatchLive = { dispatcharrChannelId ->
                         // Audit task #50 watch-live: the DVR tab only fires
@@ -500,6 +506,7 @@ fun AerioTVNavHost(
                         // route to return to. Back from multiview lands on MAIN.
                         navController.navigate(Routes.MULTIVIEW) {
                             popUpTo(Routes.PLAYER) { inclusive = true }
+                            launchSingleTop = true
                         }
                     },
                 )
@@ -632,6 +639,23 @@ fun AerioTVNavHost(
                             "Authorization" to "ApiKey $key",
                         )
                     } else emptyMap()
+                }
+                // Guide-banner entry skips PlayerScreen's launch teardown
+                // (PlayerScreen.kt onLaunch), leaving the persistent mini
+                // window + its decoder running on top of the tile grid.
+                // Dismiss the mini here with the same teardown order.
+                val mvMiniPlayerVm: MiniPlayerViewModel = hiltViewModel()
+                val mvContext = androidx.compose.ui.platform.LocalContext.current
+                LaunchedEffect(Unit) {
+                    val mvEntry = dagger.hilt.android.EntryPointAccessors.fromApplication(
+                        mvContext.applicationContext,
+                        MainScaffoldEntryPoint::class.java,
+                    )
+                    mvMiniPlayerVm.dismiss()
+                    mvEntry.exoWindowState().hide()
+                    mvEntry.exoPlayerHolder().stop()
+                    com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                        .stop(mvContext.applicationContext)
                 }
                 MultiviewScreen(
                     onClose = { navController.popBackStack() },

@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -49,6 +50,11 @@ class DebugLogger @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queue = Channel<String>(capacity = Channel.UNLIMITED)
     private var logcatJob: Job? = null
+
+    // The logcat child process for the current capture session. Held so
+    // stopLogcatCapture() can destroy it: Job.cancel() alone can't interrupt
+    // the blocking readLine() on its pipe.
+    @Volatile private var logcatProc: Process? = null
 
     init {
         scope.launch {
@@ -137,16 +143,27 @@ class DebugLogger @Inject constructor(
      */
     private fun startLogcatCapture() {
         if (logcatJob?.isActive == true) return
+        // Reap any stale child a failed teardown left behind before spawning
+        // a new one, so two logcat processes never feed the file at once.
+        runCatching { logcatProc?.destroy() }
+        logcatProc = null
         logcatJob = scope.launch {
             runCatching {
                 val pid = android.os.Process.myPid()
+                // -T 1 starts the stream at "now" instead of first re-dumping
+                // the whole per-pid ring buffer the file already holds from a
+                // previous capture session.
                 val proc = Runtime.getRuntime().exec(
-                    arrayOf("logcat", "-v", "time", "--pid=$pid"),
+                    arrayOf("logcat", "-T", "1", "-v", "time", "--pid=$pid"),
                 )
+                logcatProc = proc
                 logcatActive.set(true)
                 proc.inputStream.bufferedReader().useLines { lines ->
                     for (line in lines) {
-                        if (!enabled.get()) break
+                        // Also gate on this session's own job: a cancelled
+                        // reader must never resurrect when the flag flips
+                        // back on (it would duplicate every line).
+                        if (!enabled.get() || !isActive) break
                         writeLine(LogSanitizer.redact(line))
                     }
                 }
@@ -164,6 +181,11 @@ class DebugLogger @Inject constructor(
         logcatActive.set(false)
         logcatJob?.cancel()
         logcatJob = null
+        // Destroying the child closes the pipe, so the blocked readLine()
+        // returns EOF (or throws, caught by runCatching) and the reader
+        // exits now instead of "on the next logcat line".
+        runCatching { logcatProc?.destroy() }
+        logcatProc = null
     }
 
     /**

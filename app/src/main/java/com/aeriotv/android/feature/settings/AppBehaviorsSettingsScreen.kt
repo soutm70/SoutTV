@@ -141,7 +141,7 @@ fun AppBehaviorsSettingsScreen(
 
             SettingsSection(
                 header = "Program Posters",
-                footer = "Fill missing movie / show / channel artwork from TMDB using your own free API key (themoviedb.org). Off by default. The key syncs across your devices via Google Drive (kept in your private app data).",
+                footer = "Show posters in the Program Info panel and fill in missing artwork on On Demand detail screens, looked up on TMDB with your own free API key (themoviedb.org). Off by default. The key syncs across your devices via Google Drive (kept in your private app data).",
             ) {
                 SettingsToggleRow(
                     title = "TMDB poster fallback",

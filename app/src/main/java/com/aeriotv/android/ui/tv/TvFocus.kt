@@ -234,6 +234,12 @@ fun Modifier.tvFormFieldInput(): Modifier {
     val gate = LocalTvKeyboardGate.current ?: return this.dpadFocusEscape()
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    // Only an OK whose DOWN-press was also seen by THIS field may arm the
+    // gate. The OK that opened the screen (pressed on the navigating row,
+    // released after focus pulled into the first field) otherwise delivers
+    // its KeyUp here and pops the keyboard on entry, the same spurious
+    // release-click TvMenuGuard exists for.
+    val sawOkDown = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     return this.onPreviewKeyEvent { event ->
         val isOk = event.key == Key.DirectionCenter || event.key == Key.Enter ||
             event.key == Key.NumPadEnter
@@ -248,10 +254,16 @@ fun Modifier.tvFormFieldInput(): Modifier {
             }
             // Swallow the down-press so the field's own key handling never
             // sees a half-click; act on the release.
-            event.type == KeyEventType.KeyDown && isOk -> true
+            event.type == KeyEventType.KeyDown && isOk -> {
+                sawOkDown.value = true
+                true
+            }
             event.type == KeyEventType.KeyUp && isOk -> {
-                gate.armed = true
-                keyboard?.show()
+                if (sawOkDown.value) {
+                    gate.armed = true
+                    keyboard?.show()
+                }
+                sawOkDown.value = false
                 true
             }
             else -> false
