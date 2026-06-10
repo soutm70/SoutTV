@@ -68,6 +68,8 @@ import com.aeriotv.android.core.network.DispatcharrVODEpisode
 import com.aeriotv.android.core.network.DispatcharrVODProviderInfo
 import com.aeriotv.android.core.network.DispatcharrVODSeries
 import com.aeriotv.android.core.network.TmdbDetails
+import com.aeriotv.android.core.tv.TvQrLink
+import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import com.aeriotv.android.feature.watchprogress.UpNextEntry
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
@@ -84,7 +86,7 @@ import java.util.TimeZone
  * for series: hero with backdrop + bottom-leading poster + title block, no Play
  * button (the user picks an episode instead), Trailer + TMDB chip row, meta
  * rows, then per-season episode list with thumbnail / duration / air-date /
- * rating / plot per row — matching TVEpisodeRowButton on iOS (line 827-979).
+ * rating / plot per row - matching TVEpisodeRowButton on iOS (line 827-979).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -217,6 +219,9 @@ fun SeriesDetailScreen(
     val isTv = rememberLiveTvFormFactor().isTv
     val edgeInset = if (isTv) 48.dp else 16.dp
 
+    // TV: external links surface as a QR dialog (no browser on Android TV).
+    var qrLink by remember { mutableStateOf<TvQrLink?>(null) }
+
     // On TV land focus on the first actionable control (Resume when the
     // series has one, otherwise the first episode row) once the episode list
     // arrives; without this the screen had no focused control at all and the
@@ -270,10 +275,21 @@ fun SeriesDetailScreen(
                         info = info,
                         tmdbDetails = tmdbDetails,
                         isTv = isTv,
-                        onOpenUrl = { url ->
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            runCatching { context.startActivity(intent) }
+                        onOpenUrl = { label, url ->
+                            if (isTv) {
+                                qrLink = TvQrLink(
+                                    title = label,
+                                    caption = when (label) {
+                                        "Trailer" -> "Scan with your phone to watch the trailer on YouTube."
+                                        else -> "Scan with your phone to view this title on TMDB."
+                                    },
+                                    url = url,
+                                )
+                            } else {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                runCatching { context.startActivity(intent) }
+                            }
                         },
                     )
                 }
@@ -355,6 +371,15 @@ fun SeriesDetailScreen(
         // pill would otherwise be an invisible D-pad focus stop.
         if (!isTv) {
             FloatingBackButton(onClick = onBack)
+        }
+
+        qrLink?.let { link ->
+            TvQrLinkDialog(
+                title = link.title,
+                caption = link.caption,
+                url = link.url,
+                onDismiss = { qrLink = null },
+            )
         }
     }
 }
@@ -499,7 +524,7 @@ private fun SeriesInfoSection(
     info: DispatcharrVODProviderInfo?,
     tmdbDetails: TmdbDetails?,
     isTv: Boolean,
-    onOpenUrl: (String) -> Unit,
+    onOpenUrl: (label: String, url: String) -> Unit,
 ) {
     // Server-provided values always win; TMDB backfills only the holes.
     val plot = info?.effectivePlot?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() }
@@ -533,10 +558,14 @@ private fun SeriesInfoSection(
         if (trailerUrl != null || tmdbUrl != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (trailerUrl != null) {
-                    PillButton(icon = Icons.Outlined.PlayCircle, text = "Trailer") { onOpenUrl(trailerUrl) }
+                    PillButton(icon = Icons.Outlined.PlayCircle, text = "Trailer") {
+                        onOpenUrl("Trailer", trailerUrl)
+                    }
                 }
                 if (tmdbUrl != null) {
-                    PillButton(icon = Icons.Outlined.Info, text = "View on TMDB") { onOpenUrl(tmdbUrl) }
+                    PillButton(icon = Icons.Outlined.Info, text = "View on TMDB") {
+                        onOpenUrl("View on TMDB", tmdbUrl)
+                    }
                 }
             }
         }
@@ -645,7 +674,7 @@ private fun SeasonPicker(
 }
 
 /**
- * Episode row — 16:9 still thumbnail on the left, title with episode number,
+ * Episode row - 16:9 still thumbnail on the left, title with episode number,
  * duration · air date · rating metadata strip, plot, and a play icon on the
  * right. Mirrors iOS TVEpisodeRowButton (VODDetailView lines 842-957).
  */
@@ -882,7 +911,7 @@ private fun formatEpisodeDuration(secs: Int): String {
 
 /**
  * Dispatcharr emits air_date as `yyyy-MM-dd` (POSIX, UTC). Format to the
- * user's locale short style — iOS does the same conversion in
+ * user's locale short style - iOS does the same conversion in
  * VODEpisode.displayAirDate (VODModels.swift lines 469-484).
  */
 private fun formatAirDate(raw: String): String {

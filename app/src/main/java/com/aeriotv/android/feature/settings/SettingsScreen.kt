@@ -56,6 +56,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.ui.adaptive.adaptiveFormWidth
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.tv.TvQrLink
+import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.core.data.db.entity.sourceTypeDisplayLabel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import java.text.DateFormat
@@ -65,21 +67,21 @@ import java.util.Date
  * Settings root. Mirrors iOS SettingsView.swift section ordering + grouped-card
  * presentation (lines 150-496):
  *
- *  1. Playlists  — inline list of every saved playlist with tap-to-activate
+ *  1. Playlists  - inline list of every saved playlist with tap-to-activate
  *                  (tap the active row again for details, edit, delete) and an
  *                  Add Playlist row. Footer surfaces the matching hints.
- *  2. App Settings — Appearance / App Behaviors / Multiview / Network rows
+ *  2. App Settings - Appearance / App Behaviors / Multiview / Network rows
  *                  inside a single grouped card.
- *  3. Sync       — current cut routes through to the full SyncSettingsScreen.
+ *  3. Sync       - current cut routes through to the full SyncSettingsScreen.
  *                  iOS surfaces the toggle inline here; that follow-up lands
  *                  alongside the Google Drive Sync rewrite that mirrors the
  *                  iCloud Sync toggle / Sync Now / Clear Data set.
- *  4. DVR        — single nav row.
- *  5. Developer  — single nav row.
- *  6. About      — Device / System / App Version / First Installed /
+ *  4. DVR        - single nav row.
+ *  5. Developer  - single nav row.
+ *  6. About      - Device / System / App Version / First Installed /
  *                  Last Updated + Copy / Developer Website / Report an Issue.
  *
- * Each section is a [SettingsSectionGroup] — uppercase header in primary
+ * Each section is a [SettingsSectionGroup] - uppercase header in primary
  * tint, rounded card containing the rows separated by hairline dividers,
  * optional footer text in muted-tint below. Mirrors iOS .insetGrouped list
  * style + sectionHeaderStyle().
@@ -114,6 +116,11 @@ fun SettingsScreen(
     val installedAt = packageInfo?.firstInstallTime ?: 0L
     val updatedAt = packageInfo?.lastUpdateTime ?: 0L
     val versionName = packageInfo?.versionName ?: "0.1.0"
+
+    // TV: external links surface as a QR dialog (no browser on Android TV);
+    // phones keep the ACTION_VIEW intent in openUrl.
+    val isTv = rememberIsTvDevice()
+    var qrLink by remember { mutableStateOf<TvQrLink?>(null) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -231,14 +238,44 @@ fun SettingsScreen(
                             android.widget.Toast.LENGTH_SHORT,
                         ).show()
                     },
-                    onOpenWebsite = { openUrl(context, "https://github.com/jonzey231/AerioTV-Android") },
-                    onReportIssue = { openUrl(context, "https://github.com/jonzey231/AerioTV-Android/issues/new") },
+                    onOpenWebsite = {
+                        val url = "https://github.com/jonzey231/AerioTV-Android"
+                        if (isTv) {
+                            qrLink = TvQrLink(
+                                title = "Developer Website",
+                                caption = "Scan with your phone to open this page.",
+                                url = url,
+                            )
+                        } else {
+                            openUrl(context, url)
+                        }
+                    },
+                    onReportIssue = {
+                        val url = "https://github.com/jonzey231/AerioTV-Android/issues/new"
+                        if (isTv) {
+                            qrLink = TvQrLink(
+                                title = "Report an Issue",
+                                caption = "Scan with your phone to open this page.",
+                                url = url,
+                            )
+                        } else {
+                            openUrl(context, url)
+                        }
+                    },
                 )
             }
         }
         }
     }
 
+    qrLink?.let { link ->
+        TvQrLinkDialog(
+            title = link.title,
+            caption = link.caption,
+            url = link.url,
+            onDismiss = { qrLink = null },
+        )
+    }
 }
 
 // MARK: - Playlists section
@@ -284,7 +321,7 @@ private fun PlaylistsSection(
                 }
                 RowDivider()
             }
-            // Add Playlist row — iOS calls this out with a cyan plus glyph
+            // Add Playlist row - iOS calls this out with a cyan plus glyph
             // (SettingsView line 206-220).
             var addFocused by remember { mutableStateOf(false) }
             Row(
@@ -374,7 +411,7 @@ private fun PlaylistRow(
                 .padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Radio-button active marker — filled cyan dot inside a ring on
+            // Radio-button active marker - filled cyan dot inside a ring on
             // the active row, empty ring on the rest. Matches the iOS
             // SettingsView footer hint "Tap ○ to set the active playlist".
             Icon(

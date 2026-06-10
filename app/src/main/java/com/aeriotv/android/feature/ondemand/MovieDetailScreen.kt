@@ -58,6 +58,8 @@ import coil3.compose.AsyncImage
 import com.aeriotv.android.core.network.DispatcharrVODMovie
 import com.aeriotv.android.core.network.DispatcharrVODProviderInfo
 import com.aeriotv.android.core.network.TmdbDetails
+import com.aeriotv.android.core.tv.TvQrLink
+import com.aeriotv.android.core.tv.TvQrLinkDialog
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
 import com.aeriotv.android.ui.tv.tvFocusScale
@@ -146,6 +148,9 @@ fun MovieDetailScreen(
     BackHandler(enabled = true) { onBack() }
     val isTv = rememberLiveTvFormFactor().isTv
 
+    // TV: external links surface as a QR dialog (no browser on Android TV).
+    var qrLink by remember { mutableStateOf<TvQrLink?>(null) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (movie == null) {
             Box(
@@ -181,14 +186,34 @@ fun MovieDetailScreen(
                         info = info,
                         tmdbDetails = tmdbDetails,
                         isTv = isTv,
-                        onOpenUrl = { url ->
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            runCatching { context.startActivity(intent) }
+                        onOpenUrl = { label, url ->
+                            if (isTv) {
+                                qrLink = TvQrLink(
+                                    title = label,
+                                    caption = when (label) {
+                                        "Trailer" -> "Scan with your phone to watch the trailer on YouTube."
+                                        else -> "Scan with your phone to view this title on TMDB."
+                                    },
+                                    url = url,
+                                )
+                            } else {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                runCatching { context.startActivity(intent) }
+                            }
                         },
                     )
                 }
             }
+        }
+
+        qrLink?.let { link ->
+            TvQrLinkDialog(
+                title = link.title,
+                caption = link.caption,
+                url = link.url,
+                onDismiss = { qrLink = null },
+            )
         }
 
         // Floating back button overlaid on the hero. Mirrors iOS's small
@@ -305,7 +330,7 @@ private fun HeroSection(
                 // iOS VODDetailView line 312 sets the title directly to
                 // `item.name` without appending the year; the year already
                 // shows on the meta strip below. Dispatcharr often serves
-                // titles that already embed "(YYYY)" — appending the
+                // titles that already embed "(YYYY)" - appending the
                 // resolved year on top of that gives "'Til Death (2006) (2006)".
                 Text(
                     text = movie.displayName,
@@ -334,7 +359,7 @@ private fun HeroSection(
 }
 
 /**
- * Year · ★ rating · 1h 19m · MOVIE pill. Each piece independently optional —
+ * Year · ★ rating · 1h 19m · MOVIE pill. Each piece independently optional -
  * a sparse movie row (e.g. only year known) shouldn't show a dangling " · ".
  * Mirrors iOS VODDetailView lines 317-353.
  */
@@ -440,7 +465,7 @@ private fun InfoSection(
     info: DispatcharrVODProviderInfo?,
     tmdbDetails: TmdbDetails?,
     isTv: Boolean,
-    onOpenUrl: (String) -> Unit,
+    onOpenUrl: (label: String, url: String) -> Unit,
 ) {
     // Server-provided values always win; TMDB backfills only the holes.
     val plot = info?.effectivePlot?.takeIf { it.isNotBlank() } ?: movie.plot?.takeIf { it.isNotBlank() }
@@ -477,14 +502,14 @@ private fun InfoSection(
                     PillButton(
                         icon = Icons.Outlined.PlayCircle,
                         text = "Trailer",
-                        onClick = { onOpenUrl(trailerUrl) },
+                        onClick = { onOpenUrl("Trailer", trailerUrl) },
                     )
                 }
                 if (tmdbUrl != null) {
                     PillButton(
                         icon = Icons.Outlined.Info,
                         text = "View on TMDB",
-                        onClick = { onOpenUrl(tmdbUrl) },
+                        onClick = { onOpenUrl("View on TMDB", tmdbUrl) },
                     )
                 }
             }

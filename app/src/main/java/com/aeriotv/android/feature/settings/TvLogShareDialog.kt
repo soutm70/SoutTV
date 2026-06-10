@@ -1,6 +1,5 @@
 package com.aeriotv.android.feature.settings
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -36,10 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aeriotv.android.core.debug.LogShareServer
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.aeriotv.android.core.tv.qrCodeBitmap
 import java.io.File
 
 /**
@@ -111,7 +107,7 @@ fun TvLogShareDialog(
 
                 val shareUrl = url
                 if (shareUrl != null) {
-                    val qr = remember(shareUrl) { qrBitmap(shareUrl) }
+                    val qr = remember(shareUrl) { qrCodeBitmap(shareUrl) }
                     if (qr != null) {
                         // White box = quiet zone; FilterQuality.None keeps the
                         // modules crisp (the iOS .interpolation(.none) analog).
@@ -164,25 +160,3 @@ fun TvLogShareDialog(
         }
     }
 }
-
-/**
- * Encode the share URL as a QR bitmap. Error correction H matches the iOS
- * choice (phone camera at an angle through living-room lighting); 512 px
- * keeps the modules sharp after TV upscaling.
- */
-private fun qrBitmap(url: String): Bitmap? = runCatching {
-    val matrix = QRCodeWriter().encode(
-        url,
-        BarcodeFormat.QR_CODE,
-        512,
-        512,
-        mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
-            EncodeHintType.MARGIN to 2,
-        ),
-    )
-    val px = IntArray(matrix.width * matrix.height) { i ->
-        if (matrix[i % matrix.width, i / matrix.width]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
-    }
-    Bitmap.createBitmap(px, matrix.width, matrix.height, Bitmap.Config.RGB_565)
-}.getOrNull()
