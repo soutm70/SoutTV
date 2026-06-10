@@ -56,7 +56,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -810,12 +809,7 @@ private fun SleepTimerSheet(
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    com.aeriotv.android.ui.FormFactorModal(onDismiss = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             Text(
                 text = "Sleep Timer",
@@ -864,12 +858,7 @@ fun StreamInfoSheet(
     snapshot: StreamInfoSnapshot,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    com.aeriotv.android.ui.FormFactorModal(onDismiss = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             Text(
                 text = "Stream Info",
@@ -923,12 +912,7 @@ fun SubtitlesSheet(
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    com.aeriotv.android.ui.FormFactorModal(onDismiss = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             Text(
                 text = "Subtitles",
@@ -977,12 +961,7 @@ fun AudioTracksSheet(
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    com.aeriotv.android.ui.FormFactorModal(onDismiss = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             Text(
                 text = "Audio Track",
@@ -1035,12 +1014,7 @@ fun PlaybackSpeedSheet(
     onSelect: (Float) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
-    ) {
+    com.aeriotv.android.ui.FormFactorModal(onDismiss = onDismiss) {
         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
             Text(
                 text = "Playback Speed",

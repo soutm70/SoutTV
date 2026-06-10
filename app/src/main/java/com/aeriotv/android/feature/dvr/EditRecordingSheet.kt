@@ -20,7 +20,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -53,7 +52,6 @@ fun EditRecordingSheet(
     onDismiss: () -> Unit,
     onSave: (startMillis: Long, endMillis: Long, title: String, description: String) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var title by remember(recording.id) { mutableStateOf(recording.title) }
     var description by remember(recording.id) { mutableStateOf(recording.description) }
     // Pre/post-roll are stored as deltas in minutes from the existing window.
@@ -66,10 +64,10 @@ fun EditRecordingSheet(
     val canSave = newEnd > newStart && title.trim().isNotEmpty()
     val timeFmt = DateFormat.getTimeInstance(DateFormat.SHORT)
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+    com.aeriotv.android.ui.FormFactorModal(
+        onDismiss = onDismiss,
+        tvWidthFraction = 0.7f,
+        tvMaxHeight = 620.dp,
     ) {
         Column(
             modifier = Modifier

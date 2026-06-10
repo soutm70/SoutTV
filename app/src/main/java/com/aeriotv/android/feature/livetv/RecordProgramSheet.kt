@@ -30,7 +30,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +72,6 @@ fun RecordProgramSheet(
     settingsViewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     val isLive = remember(target) {
@@ -93,10 +91,10 @@ fun RecordProgramSheet(
     var removeCommercials by remember { mutableStateOf(false) }
     var submitting by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.background,
+    com.aeriotv.android.ui.FormFactorModal(
+        onDismiss = onDismiss,
+        tvWidthFraction = 0.7f,
+        tvMaxHeight = 620.dp,
     ) {
         Column(
             modifier = Modifier

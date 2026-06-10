@@ -26,7 +26,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,13 +62,12 @@ fun ManageGroupsSheet(
     onSave: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var working by remember(hiddenGroups) { mutableStateOf(hiddenGroups.toMutableSet()) }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+    com.aeriotv.android.ui.FormFactorModal(
+        onDismiss = onDismiss,
+        tvWidthFraction = 0.6f,
+        tvMaxHeight = 620.dp,
     ) {
         Column(
             modifier = Modifier
