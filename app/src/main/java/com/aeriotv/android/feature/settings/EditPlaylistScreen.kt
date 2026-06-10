@@ -106,6 +106,42 @@ fun EditPlaylistScreen(
     }
 
     val canSave = url.trim().isNotEmpty() && name.trim().isNotEmpty() && !state.isLoading
+    val isTv = rememberIsTvDevice()
+    val performSave = {
+        viewModel.saveEdits(
+            name = name,
+            url = url,
+            lanUrl = lanUrl,
+            // Persist EPG URL for both M3uUrl and XtreamCodes:
+            // M3U uses it as the only EPG source; XtreamCodes
+            // treats it as an OVERRIDE of the server's
+            // xmltv.php (audit #19, for richer category tags
+            // from third-party XMLTV providers). Dispatcharr
+            // sources own their EPG via the API, so this
+            // field doesn't apply there.
+            epgUrl = when (sourceType) {
+                SourceType.M3uUrl, SourceType.XtreamCodes -> epgUrl
+                else -> null
+            },
+            apiKey = when {
+                sourceType == SourceType.DispatcharrApiKey -> apiKey
+                sourceType == SourceType.DispatcharrUserPass &&
+                    dispatcharrMode == DispatcharrMode.ApiKey -> apiKey
+                else -> null
+            },
+            username = when (sourceType) {
+                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> username
+                else -> null
+            },
+            password = when (sourceType) {
+                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> password
+                else -> null
+            },
+            dispatcharrProfileId = if (isDispatcharr) selectedProfileId else null,
+            vodEnabled = vodEnabled,
+        )
+        onBack()
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         CenterAlignedTopAppBar(
@@ -119,52 +155,22 @@ fun EditPlaylistScreen(
             navigationIcon = {
                 // No Cancel/back affordance on Android TV -- the remote BACK
                 // discards and pops the screen. Phones/tablets keep Cancel.
-                if (!rememberIsTvDevice()) {
+                if (!isTv) {
                     TextButton(onClick = onBack) {
                         Text("Cancel", color = MaterialTheme.colorScheme.primary)
                     }
                 }
             },
             actions = {
-                SettingsHeaderTextButton(
-                    label = "Save",
-                    enabled = canSave,
-                    onClick = {
-                        viewModel.saveEdits(
-                            name = name,
-                            url = url,
-                            lanUrl = lanUrl,
-                            // Persist EPG URL for both M3uUrl and XtreamCodes:
-                            // M3U uses it as the only EPG source; XtreamCodes
-                            // treats it as an OVERRIDE of the server's
-                            // xmltv.php (audit #19, for richer category tags
-                            // from third-party XMLTV providers). Dispatcharr
-                            // sources own their EPG via the API, so this
-                            // field doesn't apply there.
-                            epgUrl = when (sourceType) {
-                                SourceType.M3uUrl, SourceType.XtreamCodes -> epgUrl
-                                else -> null
-                            },
-                            apiKey = when {
-                                sourceType == SourceType.DispatcharrApiKey -> apiKey
-                                sourceType == SourceType.DispatcharrUserPass &&
-                                    dispatcharrMode == DispatcharrMode.ApiKey -> apiKey
-                                else -> null
-                            },
-                            username = when (sourceType) {
-                                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> username
-                                else -> null
-                            },
-                            password = when (sourceType) {
-                                SourceType.DispatcharrUserPass, SourceType.XtreamCodes -> password
-                                else -> null
-                            },
-                            dispatcharrProfileId = if (isDispatcharr) selectedProfileId else null,
-                            vodEnabled = vodEnabled,
-                        )
-                        onBack()
-                    },
-                )
+                // TV gets a Save row at the END of the form instead (a corner
+                // action is off the natural D-pad path through the fields).
+                if (!isTv) {
+                    SettingsHeaderTextButton(
+                        label = "Save",
+                        enabled = canSave,
+                        onClick = performSave,
+                    )
+                }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
@@ -483,6 +489,20 @@ fun EditPlaylistScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // TV: Save lives at the end of the form, where the D-pad lands
+            // after the last field. Phones keep the iOS-style header Save.
+            if (isTv) {
+                item {
+                    SettingsActionRow(
+                        label = "Save Changes",
+                        leadingIcon = Icons.Filled.Check,
+                        onClick = performSave,
+                        enabled = canSave,
+                        subtitle = if (canSave) null else "Name and Server URL are required",
+                    )
                 }
             }
         }

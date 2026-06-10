@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -88,11 +89,15 @@ fun PlaylistDetailScreen(
                 }
             },
             actions = {
-                SettingsHeaderTextButton(
-                    label = "Edit",
-                    enabled = playlist != null,
-                    onClick = onEdit,
-                )
+                // TV gets an Edit Playlist row in the ACTIONS section instead;
+                // a corner action sits off the natural D-pad path.
+                if (!rememberIsTvDevice()) {
+                    SettingsHeaderTextButton(
+                        label = "Edit",
+                        enabled = playlist != null,
+                        onClick = onEdit,
+                    )
+                }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
@@ -184,6 +189,14 @@ fun PlaylistDetailScreen(
 
             item {
                 Section(header = "Actions", footer = null) {
+                    if (isTv) {
+                        ActionRow(
+                            icon = Icons.Outlined.Edit,
+                            label = "Edit Playlist",
+                            onClick = onEdit,
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    }
                     ActionRow(
                         icon = Icons.Outlined.Public,
                         label = "Test Connection",

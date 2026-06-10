@@ -276,9 +276,14 @@ fun SettingsActionRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     destructive: Boolean = false,
+    enabled: Boolean = true,
 ) {
-    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    SettingsRowContainer(onClick = onClick, modifier = modifier) {
+    val accent = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        destructive -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+    SettingsRowContainer(onClick = onClick, modifier = modifier, enabled = enabled) {
         Icon(
             imageVector = leadingIcon,
             contentDescription = null,
