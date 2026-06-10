@@ -2,6 +2,8 @@ package com.aeriotv.android.feature.ondemand
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayCircle
@@ -33,6 +36,8 @@ import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -56,6 +61,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,23 +103,28 @@ fun OnDemandTabContent(
     val settingsVm: SettingsViewModel = hiltViewModel()
     val scale by settingsVm.displayScaleMovies.collectAsStateWithLifecycle(initialValue = 1.0f)
 
+    val tabIsTv = rememberLiveTvFormFactor().isTv
     WithDisplayScale(scale = scale) {
     Column(modifier = modifier.fillMaxSize()) {
-        // Match the Live TV tab header style (Phase 50): centered title in
-        // titleLarge + bold so every tab top reads as a consistent surface.
-        CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "On Demand",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+        // Phone: centered title bar matching the other tabs. TV: no title --
+        // the selected nav pill already says where you are, the Live TV tab
+        // has no title either, and at 10 feet the 64dp bar was the top slice
+        // of a chrome stack that consumed half the screen before any poster.
+        if (!tabIsTv) {
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = "On Demand",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
+            )
+        }
 
         SegmentPills(
             current = section,
@@ -153,7 +164,7 @@ private fun SegmentPills(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = if (isTv) 4.dp else 8.dp),
         horizontalArrangement = if (isTv) Arrangement.Center else Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -188,10 +199,18 @@ private fun SegmentPill(
     else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
     val fg = if (selected) MaterialTheme.colorScheme.onPrimary
     else MaterialTheme.colorScheme.onSurfaceVariant
+    // D-pad focus ring (same 2dp white ring as guide pills / program cells)
+    // so the focused pill is distinguishable from the selected one at 10 feet.
+    var pillFocused by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
+            .onFocusChanged { pillFocused = it.isFocused }
             .clip(RoundedCornerShape(50))
             .background(bg)
+            .then(
+                if (pillFocused) Modifier.border(2.dp, Color.White, RoundedCornerShape(50))
+                else Modifier,
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -277,6 +296,10 @@ private fun MoviesSubScreen(
             },
             hiddenCount = hiddenMovieGroups.size,
             onManageGroups = { showManageGroups = true },
+            isTv = isTv,
+            countLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
+                "${visibleFiltered.size} / $total"
+            },
         )
 
         if (continueWatching.isNotEmpty() && state.searchQuery.isBlank()) {
@@ -291,7 +314,7 @@ private fun MoviesSubScreen(
         val countLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
             "${visibleFiltered.size} / $total"
         }
-        if (countLabel != null) {
+        if (countLabel != null && !isTv) {
             Text(
                 text = countLabel,
                 style = MaterialTheme.typography.labelSmall,
@@ -326,7 +349,7 @@ private fun MoviesSubScreen(
                 },
                 body = when {
                     state.searchQuery.isNotBlank() -> "Try a different search term."
-                    hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Tap the filter icon to show some again."
+                    hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Use the filter button to show some again."
                     else -> "Dispatcharr returned an empty Movies library. Confirm VOD is enabled on the server."
                 },
             )
@@ -431,6 +454,10 @@ private fun SeriesSubScreen(
             },
             hiddenCount = hiddenSeriesGroups.size,
             onManageGroups = { showManageGroups = true },
+            isTv = isTv,
+            countLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
+                "${visibleSeriesFiltered.size} / $total"
+            },
         )
 
         if (continueWatchingEpisodes.isNotEmpty() && state.seriesSearchQuery.isBlank()) {
@@ -444,7 +471,7 @@ private fun SeriesSubScreen(
         val countLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
             "${visibleSeriesFiltered.size} / $total"
         }
-        if (countLabel != null) {
+        if (countLabel != null && !isTv) {
             Text(
                 text = countLabel,
                 style = MaterialTheme.typography.labelSmall,
@@ -479,7 +506,7 @@ private fun SeriesSubScreen(
                 },
                 body = when {
                     state.seriesSearchQuery.isNotBlank() -> "Try a different search term."
-                    hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Tap the filter icon to show some again."
+                    hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Use the filter button to show some again."
                     else -> "Dispatcharr returned an empty Series library. Confirm VOD is enabled on the server."
                 },
             )
@@ -535,30 +562,87 @@ private fun VodHeaderRow(
     searchField: @Composable RowScope.() -> Unit,
     hiddenCount: Int,
     onManageGroups: () -> Unit,
+    isTv: Boolean = false,
+    countLabel: String? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            // TV: 48dp = the 5% overscan-safe margin the poster grid already
+            // uses, and the library count joins this row instead of spending
+            // its own line of vertical space.
+            .padding(horizontal = if (isTv) 48.dp else 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (isTv && countLabel != null) {
+            Text(
+                text = countLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Box(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) { searchField() }
         }
-        IconButton(
-            onClick = onManageGroups,
-            modifier = Modifier.size(40.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.FilterList,
+        if (isTv) {
+            TvHeaderIconButton(
+                icon = Icons.Filled.FilterList,
                 contentDescription = "Filter groups",
-                tint = if (hiddenCount == 0)
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                else
-                    MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
+                tint = if (hiddenCount == 0) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.primary,
+                onClick = onManageGroups,
             )
+        } else {
+            IconButton(
+                onClick = onManageGroups,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.FilterList,
+                    contentDescription = "Filter groups",
+                    tint = if (hiddenCount == 0)
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    else
+                        MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
+    }
+}
+
+/**
+ * Guide-chrome circle button for TV header controls: bare glyph at rest, the
+ * shared 2dp white focus ring + soft fill when D-pad focused.
+ */
+@Composable
+private fun TvHeaderIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    FilledTonalIconButton(
+        onClick = onClick,
+        interactionSource = interaction,
+        modifier = Modifier
+            .size(30.dp)
+            .then(
+                if (focused) Modifier.border(2.dp, Color.White, CircleShape)
+                else Modifier,
+            ),
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = if (focused) Color.White.copy(alpha = 0.15f) else Color.Transparent,
+        ),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -620,7 +704,8 @@ private fun SeriesPoster(
         Spacer(Modifier.height(6.dp))
         Text(
             text = series.displayName.ifBlank { "Untitled" },
-            style = MaterialTheme.typography.labelMedium,
+            style = if (isTv) MaterialTheme.typography.labelLarge
+            else MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Medium,
             maxLines = 2,
@@ -634,7 +719,8 @@ private fun SeriesPoster(
             ).joinToString("  ·  ")
             Text(
                 text = meta,
-                style = MaterialTheme.typography.labelSmall,
+                style = if (isTv) MaterialTheme.typography.labelMedium
+                else MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
@@ -653,11 +739,16 @@ private fun ContinueWatchingRail(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
+                vertical = 8.dp,
+            ),
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp),
+            contentPadding = PaddingValues(
+                horizontal = if (rememberLiveTvFormFactor().isTv) 44.dp else 12.dp,
+            ),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(items = items, key = { it.videoId }) { row ->
@@ -675,10 +766,21 @@ private fun ContinueWatchingCard(
     val progress = if (row.durationMs > 0L) {
         (row.positionMs.toFloat() / row.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
+    var cardFocused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .width(140.dp)
+            .onFocusChanged { cardFocused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
+            // Same D-pad focus ring as the poster grid; without it the rail
+            // is reachable but invisible to focus at 10 feet.
+            .then(
+                if (cardFocused) Modifier.border(
+                    3.dp,
+                    MaterialTheme.colorScheme.primary,
+                    RoundedCornerShape(10.dp),
+                ) else Modifier,
+            )
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -755,11 +857,16 @@ private fun SeriesContinueWatchingRail(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
+                vertical = 8.dp,
+            ),
         )
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp),
+            contentPadding = PaddingValues(
+                horizontal = if (rememberLiveTvFormFactor().isTv) 44.dp else 12.dp,
+            ),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(items = items, key = { it.videoId }) { row ->
@@ -790,10 +897,21 @@ private fun SeriesContinueWatchingCard(
         row.episodeNumber.takeIf { it > 0 }?.let { "E$it" },
     ).joinToString(":")
     val subtitle = listOf(tag, row.title).filter { it.isNotBlank() }.joinToString(" · ")
+    var cardFocused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .width(140.dp)
+            .onFocusChanged { cardFocused = it.isFocused }
             .clip(RoundedCornerShape(10.dp))
+            // Same D-pad focus ring as the poster grid; without it the rail
+            // is reachable but invisible to focus at 10 feet.
+            .then(
+                if (cardFocused) Modifier.border(
+                    3.dp,
+                    MaterialTheme.colorScheme.primary,
+                    RoundedCornerShape(10.dp),
+                ) else Modifier,
+            )
             .clickable(onClick = onClick),
     ) {
         Box(
@@ -906,7 +1024,10 @@ private fun MoviePoster(
         Spacer(Modifier.height(6.dp))
         Text(
             text = movie.displayName.ifBlank { "Untitled" },
-            style = MaterialTheme.typography.labelMedium,
+            // labelMedium is ~10.8sp effective at the 0.9 TV type scale,
+            // below couch readability; labelLarge on TV.
+            style = if (isTv) MaterialTheme.typography.labelLarge
+            else MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Medium,
             maxLines = 2,
@@ -920,7 +1041,8 @@ private fun MoviePoster(
             ).joinToString("  ·  ")
             Text(
                 text = meta,
-                style = MaterialTheme.typography.labelSmall,
+                style = if (isTv) MaterialTheme.typography.labelMedium
+                else MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 2.dp),
             )
@@ -1028,13 +1150,12 @@ private fun VodSearchField(
                 .padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.End,
         ) {
-            IconButton(onClick = { expanded = true }) {
-                Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = "Search",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            TvHeaderIconButton(
+                icon = Icons.Outlined.Search,
+                contentDescription = "Search",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = { expanded = true },
+            )
         }
         return
     }
