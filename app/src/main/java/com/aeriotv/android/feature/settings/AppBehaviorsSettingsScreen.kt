@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.main.AppTab
+import com.aeriotv.android.ui.tv.dpadFocusEscape
 
 /**
  * App Behaviors sub-screen. Mirrors iOS AppBehaviorsSettingsView.swift:
@@ -172,7 +173,8 @@ fun AppBehaviorsSettingsScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp),
+                            .padding(top = 8.dp)
+                            .dpadFocusEscape(),
                     )
                     Row(
                         modifier = Modifier

@@ -531,7 +531,7 @@ private fun HomeWifiSection(
                     onValueChange = { manualSsid = it },
                     label = { Text("SSID name") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().dpadFocusEscape(),
                     keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(),
                 )
             },

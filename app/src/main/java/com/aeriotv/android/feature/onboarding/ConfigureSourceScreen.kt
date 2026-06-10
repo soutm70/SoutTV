@@ -72,6 +72,7 @@ import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.settings.dpadFocusRing
 import com.aeriotv.android.feature.settings.dpadFocusWash
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
+import com.aeriotv.android.ui.tv.dpadFocusEscape
 
 /**
  * Configure-source form. Mirrors iOS App Store screenshots IMG_1078 (Dispatcharr
@@ -496,7 +497,7 @@ private fun IconTextField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().dpadFocusEscape(),
         singleLine = true,
         placeholder = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingIcon = {
