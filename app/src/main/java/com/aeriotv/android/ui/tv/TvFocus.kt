@@ -16,6 +16,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * tvOS-style focus grow.
@@ -188,16 +190,22 @@ fun TvKeyboardOnOkHost(content: @Composable () -> Unit) {
         return
     }
     val gate = androidx.compose.runtime.remember { TvKeyboardGateState() }
-    val armed = gate.armed
     androidx.compose.ui.platform.InterceptPlatformTextInput(
-        // remember(armed): a NEW interceptor instance per armed flip, which
-        // restarts any active input session under the new policy. That is
-        // what actually shows (armed) or suppresses (disarmed) the IME.
-        interceptor = androidx.compose.runtime.remember(armed) {
+        // ONE stable interceptor that reads gate.armed live via snapshotFlow.
+        // A recomposition-keyed interceptor raced D-pad moves: the next
+        // field's session started under the stale armed=true instance before
+        // the swap landed, popping the keyboard mid-walk. collectLatest
+        // starts the IME when the gate arms and cancels it (hiding the IME)
+        // the moment the gate disarms, with no recomposition in the loop.
+        interceptor = androidx.compose.runtime.remember(gate) {
             androidx.compose.ui.platform.PlatformTextInputInterceptor { request, nextHandler ->
-                if (armed) {
-                    nextHandler.startInputMethod(request)
-                } else {
+                kotlinx.coroutines.coroutineScope {
+                    launch {
+                        androidx.compose.runtime.snapshotFlow { gate.armed }
+                            .collectLatest { armed ->
+                                if (armed) nextHandler.startInputMethod(request)
+                            }
+                    }
                     kotlinx.coroutines.awaitCancellation()
                 }
             }
