@@ -27,6 +27,7 @@ class MultiviewStoreHandleVm @Inject constructor(
     fun setAudioFocus(index: Int) = store.setAudioFocus(index)
     fun swap(from: Int, to: Int) = store.swap(from, to)
     fun move(from: Int, to: Int) = store.move(from, to)
+    fun removeAt(index: Int) = store.removeAt(index)
     fun clear() = store.clear()
     fun seedCurrent(channel: M3UChannel) = store.seedCurrent(channel)
     fun restore(snapshot: List<M3UChannel>, audioFocus: Int) = store.restore(snapshot, audioFocus)
@@ -45,6 +46,7 @@ class MultiviewStoreHandle(
     val setAudioFocus: (Int) -> Unit,
     val swap: (Int, Int) -> Unit,
     val move: (Int, Int) -> Unit,
+    val removeAt: (Int) -> Unit,
     val clear: () -> Unit,
     val seedCurrent: (M3UChannel) -> Unit,
     val restore: (List<M3UChannel>, Int) -> Unit,
@@ -62,6 +64,7 @@ fun rememberMultiviewStoreHandle(
         setAudioFocus = vm::setAudioFocus,
         swap = vm::swap,
         move = vm::move,
+        removeAt = vm::removeAt,
         clear = vm::clear,
         seedCurrent = vm::seedCurrent,
         restore = vm::restore,

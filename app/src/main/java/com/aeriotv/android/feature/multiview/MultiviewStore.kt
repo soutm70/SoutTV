@@ -52,6 +52,30 @@ class MultiviewStore @Inject constructor() {
     }
 
     /**
+     * Remove the tile at [index]. iOS parity (MultiviewStore.remove(id:),
+     * MultiviewStore.swift 625-651): if the removed tile owned audio, audio
+     * auto-promotes to the NEWEST remaining tile (`tiles.last`); otherwise
+     * focus follows the originally-focused channel to its shifted slot.
+     * The positional Tile composables stay mounted; tiles after the removed
+     * index see a new url and do an in-place re-prepare (same cost profile
+     * as [move]).
+     */
+    fun removeAt(index: Int) {
+        val current = _selected.value
+        if (index !in current.indices) return
+        val removedHadAudio = index == _audioFocusedIndex.value
+        val focusedChannelId = current.getOrNull(_audioFocusedIndex.value)?.id
+        val mutable = current.toMutableList()
+        mutable.removeAt(index)
+        _selected.value = mutable
+        _audioFocusedIndex.value = when {
+            mutable.isEmpty() -> 0
+            removedHadAudio -> mutable.lastIndex
+            else -> mutable.indexOfFirst { it.id == focusedChannelId }.coerceAtLeast(0)
+        }
+    }
+
+    /**
      * Player-flow seed: ensure [channel] is present at index 0 (the
      * audio-focused tile) WITHOUT discarding any already-staged tiles.
      * Used when the user opens "Add to Multiview" while watching a single

@@ -28,7 +28,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.ViewSidebar
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
@@ -41,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +67,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -87,6 +94,14 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.TsExtractor
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.aeriotv.android.feature.player.AudioTracksSheet
+import com.aeriotv.android.feature.player.SubtitlesSheet
+import com.aeriotv.android.feature.player.readAudioTracks
+import com.aeriotv.android.feature.player.readCurrentAid
+import com.aeriotv.android.feature.player.readCurrentSid
+import com.aeriotv.android.feature.player.readSubtitleTracks
+import com.aeriotv.android.feature.player.selectAudioTrack
+import com.aeriotv.android.feature.player.selectSubtitleTrack
 import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.bufferMillisFor
 
@@ -141,6 +156,26 @@ fun MultiviewScreen(
     // architecture spec section F: "Full-screen mode hides all but
     // fullscreenTileID."
     var fullscreenIndex by remember { mutableStateOf<Int?>(null) }
+    // Spotlight (tvOS MultiviewStore.spotlightTileID): the spotlit tile takes
+    // the left 2/3 of the viewport at full height; the others stack in the
+    // right 1/3 column in list order, all still PLAYING (no pause). Keyed by
+    // channel id (iOS keys by tile id) so swaps/moves never re-aim it; the
+    // index is derived below with a contains-guard, mirroring iOS.
+    var spotlightId by remember { mutableStateOf<String?>(null) }
+    // Long-OK on a tile (TV) opens the tile context menu, the Android port of
+    // tvOS MultiviewTileView.tileContextMenu. Gated to N > 1 like tvOS
+    // (no actions at all on a single tile).
+    var tileMenuIndex by remember { mutableStateOf<Int?>(null) }
+    val tileMenuGuard = rememberTvMenuGuard()
+    // Per-tile track sheets (indices into `selected`). Set from the tile menu;
+    // the sheet reads/writes THAT tile's hoisted ExoPlayer.
+    var subtitleTileIndex by remember { mutableStateOf<Int?>(null) }
+    var audioTrackTileIndex by remember { mutableStateOf<Int?>(null) }
+    // Hoisted per-tile player handles, keyed by tile POSITION (the tiles are
+    // positional: a removal shifts channels through them, but each ExoTile
+    // instance keeps its index for life). Registered by ExoTile's factory,
+    // unregistered in onRelease.
+    val tilePlayers = remember { mutableStateMapOf<Int, ExoPlayer>() }
     // For the themeFading mode: track the last time audio focus changed so the
     // accent border can auto-hide after 5s. Resets when the user taps a new tile.
     var focusActivityAt by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -179,6 +214,17 @@ fun MultiviewScreen(
         }
     }
 
+    // Derived spotlight index (null when the spotlit channel is no longer
+    // tiled -- the contains-guard iOS applies to spotlightTileID).
+    val spotlightIndex = selected.indexOfFirst { it.id == spotlightId }.takeIf { it >= 0 }
+    // If the tile count shrinks under an open per-tile sheet, drop the stale
+    // index so the sheet cannot re-attach to a future tile at that position.
+    LaunchedEffect(selected.size) {
+        if ((subtitleTileIndex ?: -1) >= selected.size) subtitleTileIndex = null
+        if ((audioTrackTileIndex ?: -1) >= selected.size) audioTrackTileIndex = null
+        if ((tileMenuIndex ?: -1) >= selected.size) tileMenuIndex = null
+    }
+
     if (selected.isEmpty()) {
         Box(
             modifier = Modifier
@@ -210,6 +256,7 @@ fun MultiviewScreen(
             focusedIndex = focused,
             relocatingIndex = relocatingIndex,
             fullscreenIndex = fullscreenIndex,
+            spotlightIndex = spotlightIndex,
             httpHeaders = httpHeaders,
             cachingMs = bufferMillisFor(bufferSize),
             audioFocusStyle = audioFocusStyle,
@@ -257,6 +304,25 @@ fun MultiviewScreen(
                     relocatingIndex = null
                 }
             },
+            onTileMenu = { idx ->
+                // tvOS parity (MultiviewTileView line 355): no context menu
+                // at N=1. Suppressed mid-move so a held OK can't pop the
+                // menu over the relocate machinery.
+                if (relocatingIndex == null && selected.size > 1) {
+                    tileMenuIndex = idx
+                    tileMenuGuard.arm()
+                }
+            },
+            onRelocateStep = { from, to ->
+                // Move Tile (tvOS parity): each arrow swaps the relocating
+                // tile with its neighbor immediately; swaps commit as they
+                // happen, BACK/OK merely finishes.
+                storeHandle.swap(from, to)
+                relocatingIndex = to
+            },
+            onTilePlayer = { idx, player ->
+                if (player != null) tilePlayers[idx] = player else tilePlayers.remove(idx)
+            },
         )
 
         if (chromeVisible) {
@@ -274,7 +340,7 @@ fun MultiviewScreen(
                 // On TV the tile gestures are D-pad: arrows move, OK picks
                 // audio, BACK exits. Surface that so a remote user isn't
                 // hunting for the touch-only X.
-                relocatingIndex != null -> if (isTvDevice) "OK on a tile to swap · Back to cancel" else "Tap a tile to swap"
+                relocatingIndex != null -> if (isTvDevice) "Move Tile · arrows to move · OK or Back to finish" else "Tap a tile to swap"
                 fullscreenIndex != null -> if (isTvDevice) "Back to exit fullscreen" else "Double-tap to exit fullscreen"
                 isTvDevice -> "${selected.size} / ${storeHandle.maxTiles} · Back to exit"
                 else -> "${selected.size} / ${storeHandle.maxTiles}"
@@ -322,8 +388,159 @@ fun MultiviewScreen(
         )
     }
 
-    LaunchedEffect(chromeVisible, lastInteractionAt) {
-        if (chromeVisible) {
+    // Tile context menu: the Android port of tvOS MultiviewTileView.
+    // tileContextMenu (MultiviewTileView.swift 428-496). Same action order:
+    // Make Audio (hidden on the audio tile), Full-Screen in Grid, Spotlight,
+    // Audio Track (audio tile only, >1 track), Subtitle Track (only when
+    // tracks exist), Move Tile, Remove (destructive). Opened by long-OK on a
+    // tile; only reachable from the grid (the key handler is gated off in
+    // fullscreen), so no "Exit Full-Screen" row is needed -- BACK exits.
+    val menuIdx = tileMenuIndex
+    val menuChannel = menuIdx?.let { selected.getOrNull(it) }
+    if (menuIdx != null && menuChannel != null) {
+        val isSpotlit = spotlightId == menuChannel.id
+        // Track lists evaluated at menu-open, the same way tvOS hides the
+        // rows when the tile reports nothing.
+        val menuPlayer = tilePlayers[menuIdx]
+        val menuSubtitleTracks = remember(menuIdx, menuChannel.id) {
+            menuPlayer?.readSubtitleTracks().orEmpty()
+        }
+        val menuAudioTracks = remember(menuIdx, menuChannel.id) {
+            // Selecting audio on a non-focused tile is moot (its audio track
+            // type is disabled by the budget gate), so only the audio tile
+            // offers the row.
+            if (menuIdx == focused) menuPlayer?.readAudioTracks().orEmpty() else emptyList()
+        }
+        TvActionMenuDialog(
+            title = menuChannel.name,
+            actions = buildList {
+                if (menuIdx != focused) {
+                    add(
+                        TvMenuAction(
+                            label = "Make Audio",
+                            icon = Icons.Filled.VolumeUp,
+                            onClick = { storeHandle.setAudioFocus(menuIdx) },
+                        ),
+                    )
+                }
+                add(
+                    TvMenuAction(
+                        label = "Full-Screen in Grid",
+                        icon = Icons.Filled.Fullscreen,
+                        onClick = {
+                            // First D-pad entry point to the existing mode
+                            // (touch enters via double-tap). Audio rides
+                            // along, matching the double-tap path; BACK exits.
+                            fullscreenIndex = menuIdx
+                            storeHandle.setAudioFocus(menuIdx)
+                            relocatingIndex = null
+                        },
+                    ),
+                )
+                add(
+                    TvMenuAction(
+                        label = if (isSpotlit) "Remove Spotlight" else "Spotlight",
+                        icon = Icons.Filled.ViewSidebar,
+                        onClick = {
+                            if (isSpotlit) {
+                                spotlightId = null
+                            } else {
+                                spotlightId = menuChannel.id
+                                // Mutually exclusive with fullscreen, tvOS
+                                // parity (MultiviewTileView 452-455).
+                                fullscreenIndex = null
+                            }
+                        },
+                    ),
+                )
+                if (menuAudioTracks.size > 1) {
+                    add(
+                        TvMenuAction(
+                            label = "Audio Track",
+                            icon = Icons.Filled.Audiotrack,
+                            onClick = { audioTrackTileIndex = menuIdx },
+                        ),
+                    )
+                }
+                if (menuSubtitleTracks.isNotEmpty()) {
+                    add(
+                        TvMenuAction(
+                            label = "Subtitle Track",
+                            icon = Icons.Filled.Subtitles,
+                            onClick = { subtitleTileIndex = menuIdx },
+                        ),
+                    )
+                }
+                add(
+                    TvMenuAction(
+                        label = "Move Tile",
+                        icon = Icons.Filled.OpenWith,
+                        onClick = {
+                            relocatingIndex = menuIdx
+                            chromeVisible = true
+                        },
+                    ),
+                )
+                add(
+                    TvMenuAction(
+                        label = "Remove",
+                        icon = Icons.Outlined.Close,
+                        destructive = true,
+                        onClick = {
+                            // iOS MultiviewStore.remove(id:) semantics live in
+                            // removeAt (audio promotes to the newest remaining
+                            // tile). Spotlight/relocate that pointed at the
+                            // removed tile are cleared here.
+                            val removingLast = selected.size <= 1
+                            if (spotlightId == menuChannel.id) spotlightId = null
+                            relocatingIndex = null
+                            storeHandle.removeAt(menuIdx)
+                            if (removingLast) onClose()
+                        },
+                    ),
+                )
+            },
+            guard = tileMenuGuard,
+            onDismiss = { tileMenuIndex = null },
+        )
+    }
+
+    // Per-tile Subtitle Track sheet. selectSubtitleTrack only writes
+    // TEXT-type overrides, so it cannot disturb the critical audio-budget
+    // gate, and ExoTile.update's buildUpon() preserves it across
+    // recompositions. The tile PlayerView renders captions via its built-in
+    // SubtitleView.
+    val subtitlePlayer = subtitleTileIndex?.let { tilePlayers[it] }
+    if (subtitlePlayer != null) {
+        SubtitlesSheet(
+            tracks = subtitlePlayer.readSubtitleTracks(),
+            currentTrackId = subtitlePlayer.readCurrentSid(),
+            onSelect = { sid ->
+                subtitlePlayer.selectSubtitleTrack(sid)
+                subtitleTileIndex = null
+            },
+            onDismiss = { subtitleTileIndex = null },
+        )
+    }
+    // Per-tile Audio Track sheet (audio-focused tile only; see the menu row).
+    val audioTrackPlayer = audioTrackTileIndex?.let { tilePlayers[it] }
+    if (audioTrackPlayer != null) {
+        AudioTracksSheet(
+            tracks = audioTrackPlayer.readAudioTracks(),
+            currentTrackId = audioTrackPlayer.readCurrentAid(),
+            onSelect = { aid ->
+                audioTrackPlayer.selectAudioTrack(aid)
+                audioTrackTileIndex = null
+            },
+            onDismiss = { audioTrackTileIndex = null },
+        )
+    }
+
+    // Auto-hide stands down while a tile is being moved so the instruction
+    // label cannot fade mid-move; the key restarts the timer when the move
+    // finishes.
+    LaunchedEffect(chromeVisible, lastInteractionAt, relocatingIndex) {
+        if (chromeVisible && relocatingIndex == null) {
             kotlinx.coroutines.delay(4_000L)
             chromeVisible = false
         }
@@ -373,6 +590,7 @@ private fun TileGrid(
     focusedIndex: Int,
     relocatingIndex: Int?,
     fullscreenIndex: Int?,
+    spotlightIndex: Int?,
     httpHeaders: Map<String, String>,
     cachingMs: Int,
     audioFocusStyle: String,
@@ -385,6 +603,9 @@ private fun TileGrid(
     onTileLongPress: (Int) -> Unit,
     onTileDoubleTap: (Int) -> Unit,
     onReorder: (Int, Int) -> Unit,
+    onTileMenu: (Int) -> Unit,
+    onRelocateStep: (Int, Int) -> Unit,
+    onTilePlayer: (Int, ExoPlayer?) -> Unit,
 ) {
     val isTv = (
         LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK
@@ -429,6 +650,10 @@ private fun TileGrid(
     var dragSource by remember { mutableStateOf<Int?>(null) }
     var dragPos by remember { mutableStateOf(Offset.Zero) }
 
+    // Long-OK latch for the tile context menu: set when KeyDown auto-repeat
+    // fires the menu so the eventual KeyUp does not ALSO fire the tap.
+    var centerLongFired by remember { mutableStateOf(false) }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -441,28 +666,85 @@ private fun TileGrid(
             .focusable()
             .onKeyEvent { ev ->
                 if (!isTv || anyFullscreen) return@onKeyEvent false
+                // OK/Center is handled on BOTH edges: KeyDown auto-repeat
+                // (repeatCount >= 1, ~500ms in, the same signal TvMenuGuard's
+                // docs describe) opens the tile context menu once; KeyUp
+                // without the long-latch is the plain tap. The non-KeyDown
+                // gate therefore lives below, after this branch.
+                if (ev.key == Key.DirectionCenter || ev.key == Key.Enter) {
+                    when (ev.type) {
+                        KeyEventType.KeyDown -> {
+                            if (ev.nativeKeyEvent.repeatCount == 0) {
+                                centerLongFired = false
+                            } else if (!centerLongFired) {
+                                centerLongFired = true
+                                onTileMenu(dpadIndex)
+                            }
+                        }
+                        KeyEventType.KeyUp -> {
+                            if (!centerLongFired) onTileTap(dpadIndex)
+                            centerLongFired = false
+                        }
+                        else -> Unit
+                    }
+                    return@onKeyEvent true
+                }
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
-                val (gr, gc) = gridShapeFor(tiles.size)
-                val r = dpadIndex / gc
-                val c = dpadIndex % gc
-                fun idx(rr: Int, cc: Int) = rr * gc + cc
+                // One neighbor topology for both cursor navigation and the
+                // Move Tile stepping. Spotlight layout (left 2/3 tile + right
+                // stack) gets its own graph: on a small tile Left jumps to the
+                // spotlight and Up/Down step the stack; on the spotlight tile
+                // Right enters the top of the stack.
+                fun neighborOf(from: Int, key: Key): Int? {
+                    if (spotlightIndex != null && tiles.size > 1) {
+                        val others = tiles.indices.filter { it != spotlightIndex }
+                        if (from == spotlightIndex) {
+                            return if (key == Key.DirectionRight) others.firstOrNull() else null
+                        }
+                        val k = others.indexOf(from)
+                        return when (key) {
+                            Key.DirectionLeft -> spotlightIndex
+                            Key.DirectionUp -> others.getOrNull(k - 1)
+                            Key.DirectionDown -> others.getOrNull(k + 1)
+                            else -> null
+                        }
+                    }
+                    val (gr, gc) = gridShapeFor(tiles.size)
+                    val r = from / gc
+                    val c = from % gc
+                    return when (key) {
+                        Key.DirectionRight ->
+                            (from + 1).takeIf { c + 1 < gc && it < tiles.size }
+                        Key.DirectionLeft ->
+                            (from - 1).takeIf { c > 0 }
+                        Key.DirectionDown ->
+                            (from + gc).takeIf { r + 1 < gr && it < tiles.size }
+                        Key.DirectionUp ->
+                            (from - gc).takeIf { r > 0 }
+                        else -> null
+                    }
+                }
                 when (ev.key) {
-                    Key.DirectionRight -> {
-                        val n = idx(r, c + 1)
-                        if (c + 1 < gc && n < tiles.size) { dpadIndex = n; true } else false
-                    }
-                    Key.DirectionLeft -> {
-                        if (c > 0) { dpadIndex = idx(r, c - 1); true } else false
-                    }
-                    Key.DirectionDown -> {
-                        val n = idx(r + 1, c)
-                        if (r + 1 < gr && n < tiles.size) { dpadIndex = n; true } else false
-                    }
-                    Key.DirectionUp -> {
-                        if (r > 0) { dpadIndex = idx(r - 1, c); true } else false
-                    }
-                    Key.DirectionCenter, Key.Enter -> {
-                        onTileTap(dpadIndex); true
+                    Key.DirectionRight, Key.DirectionLeft,
+                    Key.DirectionDown, Key.DirectionUp -> {
+                        val reloc = relocatingIndex
+                        if (reloc != null) {
+                            // Move Tile mode (tvOS MultiviewContainerView
+                            // .onMoveCommand): each arrow swaps the relocating
+                            // tile with its neighbor immediately; the cursor
+                            // stays pinned on the moving tile.
+                            val n = neighborOf(reloc, ev.key)
+                            if (n != null) {
+                                onRelocateStep(reloc, n)
+                                dpadIndex = n
+                            }
+                            // Consume even at an edge so the cursor cannot
+                            // escape mid-move.
+                            true
+                        } else {
+                            val n = neighborOf(dpadIndex, ev.key)
+                            if (n != null) { dpadIndex = n; true } else false
+                        }
                     }
                     else -> false
                 }
@@ -486,23 +768,54 @@ private fun TileGrid(
         // releases an AndroidView / destroys an mpv handle. Normal mode tiles
         // the grid; fullscreen promotes the focused tile to the whole viewport
         // (zIndex on top) and parks the rest just off the right edge, paused.
+        val spotIdx = spotlightIndex
         tiles.forEachIndexed { index, channel ->
             val isFull = fullscreenIndex == index
             val col = index % cols
             val row = index / cols
-            val offX = when {
-                isFull -> 0.dp
-                anyFullscreen -> gridW + cellWDp * col // parked off-screen (right)
-                else -> cellWDp * col
+            // Per-tile rect. Fullscreen branch stays OUTERMOST (fullscreen
+            // overrides spotlight visually, matching iOS render priority).
+            // Spotlight mirrors iOS MultiviewGridMath.spotlightRects: the
+            // spotlit tile takes the left 2/3 at full height; the remaining
+            // N-1 tiles stack equally in the right 1/3 column in list order.
+            // The spotlight toggle deliberately does NOT animate (iOS snaps;
+            // snapping also avoids TextureView resize churn).
+            val tileX: Dp
+            val tileY: Dp
+            val tileW: Dp
+            val tileH: Dp
+            when {
+                isFull -> {
+                    tileX = 0.dp; tileY = 0.dp
+                    tileW = gridW; tileH = gridH
+                }
+                anyFullscreen -> {
+                    tileX = gridW + cellWDp * col // parked off-screen (right)
+                    tileY = cellHDp * row
+                    tileW = cellWDp; tileH = cellHDp
+                }
+                spotIdx != null && tiles.size > 1 -> {
+                    val bigW = gridW * (2f / 3f)
+                    if (index == spotIdx) {
+                        tileX = 0.dp; tileY = 0.dp
+                        tileW = bigW; tileH = gridH
+                    } else {
+                        val k = if (index < spotIdx) index else index - 1
+                        val smallH = gridH / (tiles.size - 1)
+                        tileX = bigW; tileY = smallH * k
+                        tileW = gridW - bigW; tileH = smallH
+                    }
+                }
+                else -> {
+                    tileX = cellWDp * col
+                    tileY = cellHDp * row
+                    tileW = cellWDp; tileH = cellHDp
+                }
             }
-            val offY = if (isFull) 0.dp else cellHDp * row
             Box(
                 modifier = Modifier
-                    .offset(x = offX, y = offY)
-                    .size(
-                        width = if (isFull) gridW else cellWDp,
-                        height = if (isFull) gridH else cellHDp,
-                    )
+                    .offset(x = tileX, y = tileY)
+                    .size(width = tileW, height = tileH)
                     .zIndex(if (isFull) 1f else 0f)
                     .padding(pad)
                     .then(
@@ -551,6 +864,7 @@ private fun TileGrid(
                     isDpadFocused = isTv && !anyFullscreen && index == dpadIndex,
                     onTap = { onTileTap(index) },
                     onDoubleTap = { onTileDoubleTap(index) },
+                    onPlayer = { player -> onTilePlayer(index, player) },
                 )
             }
         }
@@ -574,6 +888,7 @@ private fun Tile(
     isDpadFocused: Boolean,
     onTap: () -> Unit,
     onDoubleTap: () -> Unit,
+    onPlayer: (ExoPlayer?) -> Unit,
 ) {
     val shape = if (tileRounded) RoundedCornerShape(8.dp) else RoundedCornerShape(0.dp)
     // D-pad focus (which tile the remote is currently on) is owned by the
@@ -644,6 +959,7 @@ private fun Tile(
             cachingMs = cachingMs,
             isAudioFocused = isAudioFocused,
             paused = paused,
+            onPlayer = onPlayer,
         )
         // Channel-name overlay (top-left). Fades with the chrome: it's up
         // on launch + whenever the user interacts (tap toggles chrome,
@@ -718,6 +1034,9 @@ private fun ExoTile(
     cachingMs: Int,
     isAudioFocused: Boolean,
     paused: Boolean,
+    // Hoists the tile's player handle to the screen (per-tile track sheets).
+    // Called with the player once from factory, with null from onRelease.
+    onPlayer: (ExoPlayer?) -> Unit,
 ) {
     val currentUrlRef = remember { mutableStateOf("") }
     val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
@@ -786,6 +1105,7 @@ private fun ExoTile(
                     playWhenReady = !paused
                 }
             playerRef.value = player
+            onPlayer(player)
 
             // Bounded re-prepare on fatal error, copying the cooldown shape
             // of AerioExoPlayerHolder.forceReload (5s cooldown, 3 attempts,
@@ -870,6 +1190,7 @@ private fun ExoTile(
         },
         onRelease = { _ ->
             Log.i(TAG, "Tile ExoPlayer releasing: $channelName")
+            onPlayer(null)
             playerRef.value?.release()
             playerRef.value = null
         },

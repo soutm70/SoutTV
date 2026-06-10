@@ -511,6 +511,23 @@ fun GuideScreen(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
                 )
+                // Android-only Clear affordance: tvOS wipes the previous pile
+                // on entering staging mode, but this banner persists across
+                // tabs (singleton store), so the user needs a one-press way to
+                // abandon a staged set without launching it.
+                TextButton(
+                    onClick = bannerGuard.wrap { multiviewStore.clear() },
+                    modifier = Modifier.dpadFocusRing(
+                        shape = RoundedCornerShape(50),
+                        washTint = MaterialTheme.colorScheme.primary,
+                    ),
+                ) {
+                    Text(
+                        text = "Clear",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 TextButton(
                     onClick = launchMultiviewGuarded,
                     modifier = Modifier.dpadFocusRing(
