@@ -88,9 +88,11 @@ fun PlaylistDetailScreen(
                 }
             },
             actions = {
-                TextButton(onClick = onEdit, enabled = playlist != null) {
-                    Text("Edit", color = MaterialTheme.colorScheme.primary)
-                }
+                SettingsHeaderTextButton(
+                    label = "Edit",
+                    enabled = playlist != null,
+                    onClick = onEdit,
+                )
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,

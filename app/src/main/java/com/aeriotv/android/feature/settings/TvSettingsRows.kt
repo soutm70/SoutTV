@@ -410,3 +410,63 @@ fun SettingsDetailTopBar(title: String, onBack: () -> Unit) {
         ),
     )
 }
+
+/**
+ * Header-corner text action ("Save" on Edit Playlist, "Edit" on Playlist
+ * Detail) for the CenterAlignedTopAppBar `actions` slot.
+ *
+ * On TV a bare TextButton is invisible to D-pad focus (no chrome) and the
+ * appbar parks it at the raw screen edge, outside the 48dp overscan margin.
+ * This gives it the guide-pill treatment (white 2dp focus ring + tinted
+ * fill) and insets it to the title-safe area. Phones keep the plain
+ * iOS-style text action.
+ */
+@Composable
+fun SettingsHeaderTextButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
+    if (rememberIsTvDevice()) {
+        var focused by remember { mutableStateOf(false) }
+        Box(
+            modifier = Modifier
+                // The appbar's own end inset is ~12dp; +36dp lands the pill
+                // at the 48dp overscan margin.
+                .padding(end = 36.dp)
+                .heightIn(min = 36.dp)
+                .onFocusChanged { focused = it.isFocused }
+                .clip(RoundedCornerShape(50))
+                .background(
+                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                )
+                .border(
+                    width = 2.dp,
+                    color = if (focused) androidx.compose.ui.graphics.Color.White
+                    else androidx.compose.ui.graphics.Color.Transparent,
+                    shape = RoundedCornerShape(50),
+                )
+                .clickable(
+                    enabled = enabled,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    } else {
+        androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled) {
+            Text(label, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}

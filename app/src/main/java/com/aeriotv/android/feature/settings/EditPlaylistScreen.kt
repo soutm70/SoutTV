@@ -125,7 +125,9 @@ fun EditPlaylistScreen(
                 }
             },
             actions = {
-                TextButton(
+                SettingsHeaderTextButton(
+                    label = "Save",
+                    enabled = canSave,
                     onClick = {
                         viewModel.saveEdits(
                             name = name,
@@ -161,14 +163,7 @@ fun EditPlaylistScreen(
                         )
                         onBack()
                     },
-                    enabled = canSave,
-                ) {
-                    Text(
-                        text = "Save",
-                        color = if (canSave) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                )
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.background,
