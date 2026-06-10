@@ -75,7 +75,13 @@ fun UpdateGate(currentRoute: String?) {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) vm.autoCheck()
+            if (event == Lifecycle.Event.ON_START) {
+                // Returning from the "Install unknown apps" Settings toggle
+                // lands here: flip AwaitingInstallPermission straight back to
+                // ReadyToInstall so the prompt offers Install immediately.
+                vm.refreshInstallPermission()
+                vm.autoCheck()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -207,10 +213,12 @@ private fun UpdatePromptBody(
         }
         is UpdateState.AwaitingInstallPermission -> {
             titleText = "One-time permission needed"
-            bodyText = "Android needs you to allow AerioTV to install updates. In the " +
-                "Settings screen that opens, turn on \"Allow from this source\", then " +
-                "come back and tap Install."
-            primaryLabel = "Open Settings"
+            bodyText = "Android needs you to allow AerioTV to install updates. Turn on " +
+                "\"Allow from this source\" in the Settings screen, come back, and tap " +
+                "Install. If you've already allowed it, Install continues right away."
+            // Routes through install(): proceeds if the grant is in place,
+            // reopens the Settings toggle otherwise.
+            primaryLabel = "Install"
         }
         is UpdateState.Installing -> {
             titleText = "Installing"

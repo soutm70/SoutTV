@@ -49,6 +49,15 @@ interface UpdateManager {
     fun dismissError()
 
     /**
+     * Re-evaluate the "Install unknown apps" grant. Called on every app
+     * foreground: when the user returns from the Settings toggle (and the
+     * process survived the grant), this flips AwaitingInstallPermission back
+     * to ReadyToInstall so the prompt offers Install immediately instead of
+     * appearing stuck on the permission step.
+     */
+    fun refreshInstallPermission()
+
+    /**
      * Launch-time bookkeeping: resume a staged update that survived a
      * process death (the unknown-sources grant and the install commit both
      * kill the process), or clean up after a completed one.

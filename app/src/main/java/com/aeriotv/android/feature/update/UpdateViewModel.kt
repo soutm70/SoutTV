@@ -36,4 +36,5 @@ class UpdateViewModel @Inject constructor(
     fun install() = manager.install()
     fun later() = manager.skipAvailableVersion()
     fun dismissError() = manager.dismissError()
+    fun refreshInstallPermission() = manager.refreshInstallPermission()
 }

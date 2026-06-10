@@ -24,6 +24,7 @@ class NoOpUpdateManager @Inject constructor() : UpdateManager {
     override fun install() = Unit
     override fun skipAvailableVersion() = Unit
     override fun dismissError() = Unit
+    override fun refreshInstallPermission() = Unit
     override suspend fun resumePending() = Unit
 }
 

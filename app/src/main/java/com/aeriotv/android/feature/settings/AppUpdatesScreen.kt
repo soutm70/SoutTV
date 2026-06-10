@@ -116,11 +116,12 @@ fun AppUpdatesScreen(
                     }
                     is UpdateState.AwaitingInstallPermission -> SettingsSection(
                         header = "One-time permission needed",
-                        footer = "Allow AerioTV to install updates in the Settings screen " +
-                            "that opens, then come back and install.",
+                        footer = "Allow AerioTV to install updates in the Settings screen, " +
+                            "then come back. If you've already allowed it, Install " +
+                            "continues right away.",
                     ) {
                         SettingsActionRow(
-                            label = "Open Settings",
+                            label = "Install",
                             leadingIcon = Icons.Filled.SystemUpdate,
                             onClick = { viewModel.install() },
                         )

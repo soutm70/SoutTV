@@ -226,6 +226,13 @@ class GithubUpdateManager @Inject constructor(
         if (_state.value is UpdateState.Error) _state.value = UpdateState.Idle
     }
 
+    override fun refreshInstallPermission() {
+        val awaiting = _state.value as? UpdateState.AwaitingInstallPermission ?: return
+        if (context.packageManager.canRequestPackageInstalls()) {
+            _state.value = UpdateState.ReadyToInstall(awaiting.info)
+        }
+    }
+
     override suspend fun resumePending() {
         if (!isEnabled) return
         // Post-update bookkeeping (set by PackageReplacedReceiver).
