@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
@@ -80,7 +79,7 @@ import java.util.Date
  *      token directly. Otherwise we launch the consent IntentSender via
  *      an ActivityResultLauncher and parse the result on return.
  *
- * After step 2 succeeds the per-category toggles + Sync Now / Clear
+ * After step 2 succeeds the per-category toggles + Push / Pull / Clear
  * unlock. The "missing OAuth config" red banner shows only when the
  * BuildConfig.GOOGLE_DRIVE_WEB_CLIENT_ID field is empty.
  */
@@ -97,7 +96,6 @@ fun SyncSettingsScreen(
     val lastPush by viewModel.lastPushAt.collectAsStateWithLifecycle(initialValue = 0L)
     val lastPull by viewModel.lastPullAt.collectAsStateWithLifecycle(initialValue = 0L)
     val statusObj by viewModel.driveStatus.collectAsState()
-    val syncNowStatus by viewModel.syncNowStatus.collectAsState()
     val clearStatus by viewModel.clearStatus.collectAsState()
     val pushStatus by viewModel.pushStatus.collectAsState()
     val pullStatus by viewModel.pullStatus.collectAsState()
@@ -106,7 +104,7 @@ fun SyncSettingsScreen(
     val configured = remember { SyncConfig.isConfigured() }
 
     // Silently restore a persisted Drive session on open so the screen shows
-    // signed-in (and Sync Now works) without a manual re-login.
+    // signed-in (and Push/Pull work) without a manual re-login.
     LaunchedEffect(Unit) { viewModel.restoreSessionIfPossible() }
 
     // Action results are point-in-time feedback; don't let a stale "Synced 5
@@ -182,7 +180,7 @@ fun SyncSettingsScreen(
             // whatever fit above the bottom edge.
             modifier = Modifier.adaptiveFormWidth().fillMaxHeight(),
             // 104dp bottom clears the MainScaffold NavigationBar so the
-            // Actions card (Sync Now + Clear Drive Data) isn't clipped
+            // Actions card (Push/Pull + Clear Drive Data) isn't clipped
             // when signed in.
             contentPadding = PaddingValues(
                 start = 16.dp,
@@ -267,31 +265,19 @@ fun SyncSettingsScreen(
                 item {
                     SettingsSection(
                         header = "Actions",
-                        footer = "Sync Now pushes local changes then pulls remote changes. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.",
+                        footer = "Push overwrites the Drive backup with this device; Pull overwrites this device with the backup. Last Push: ${formatTimestamp(lastPush)}. Last Pull: ${formatTimestamp(lastPull)}.",
                     ) {
                         // Inline spinner + result line replaced the old Toasts,
                         // which never surfaced on Android TV (rows looked dead).
                         val actionRunning =
-                            syncNowStatus is SyncSettingsViewModel.ActionStatus.Running ||
-                                clearStatus is SyncSettingsViewModel.ActionStatus.Running ||
+                            clearStatus is SyncSettingsViewModel.ActionStatus.Running ||
                                 pushStatus is SyncSettingsViewModel.ActionStatus.Running ||
                                 pullStatus is SyncSettingsViewModel.ActionStatus.Running
-                        SettingsActionRow(
-                            label = "Sync Now",
-                            subtitle = "Last synced: ${formatTimestamp(lastPull)}",
-                            leadingIcon = Icons.Filled.Sync,
-                            running = syncNowStatus is SyncSettingsViewModel.ActionStatus.Running,
-                            statusLine = when (val s = syncNowStatus) {
-                                is SyncSettingsViewModel.ActionStatus.Success -> s.message
-                                is SyncSettingsViewModel.ActionStatus.Failure -> s.message
-                                else -> null
-                            },
-                            statusIsError = syncNowStatus is SyncSettingsViewModel.ActionStatus.Failure,
-                            onClick = {
-                                if (inFlight || actionRunning) return@SettingsActionRow
-                                viewModel.runSyncNow()
-                            },
-                        )
+                        // "Sync Now" (push-then-pull in one tap) was removed in
+                        // favor of the explicit one-way Push/Pull actions: after a
+                        // blank install overwrote a good Drive backup, the user
+                        // wants every manual sync to state its direction. The
+                        // periodic background worker still does push-then-pull.
                         SettingsActionRow(
                             label = "Push Config to Drive",
                             subtitle = "Overwrite the Drive backup with this device's setup",

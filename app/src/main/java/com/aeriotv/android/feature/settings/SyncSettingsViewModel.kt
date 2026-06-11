@@ -51,7 +51,7 @@ class SyncSettingsViewModel @Inject constructor(
     fun clearRestoreProgress() = sync.clearRestoreProgress()
 
     /** Same shape as PlaylistViewModel.ActionStatus: drives the inline
-     *  spinner + result line on the Sync Now / Clear Drive Data rows
+     *  spinner + result line on the Push / Pull / Clear Drive Data rows
      *  (the previous Toast-only feedback never surfaced on Android TV). */
     sealed interface ActionStatus {
         data object Idle : ActionStatus
@@ -59,9 +59,6 @@ class SyncSettingsViewModel @Inject constructor(
         data class Success(val message: String) : ActionStatus
         data class Failure(val message: String) : ActionStatus
     }
-
-    private val _syncNowStatus = MutableStateFlow<ActionStatus>(ActionStatus.Idle)
-    val syncNowStatus: StateFlow<ActionStatus> = _syncNowStatus
 
     private val _clearStatus = MutableStateFlow<ActionStatus>(ActionStatus.Idle)
     val clearStatus: StateFlow<ActionStatus> = _clearStatus
@@ -75,7 +72,6 @@ class SyncSettingsViewModel @Inject constructor(
     /** Reset both action rows to Idle; the screen calls this on dispose so a
      *  stale result line doesn't greet the next visit. */
     fun clearActionStatuses() {
-        _syncNowStatus.value = ActionStatus.Idle
         _clearStatus.value = ActionStatus.Idle
         _pushStatus.value = ActionStatus.Idle
         _pullStatus.value = ActionStatus.Idle
@@ -100,8 +96,9 @@ class SyncSettingsViewModel @Inject constructor(
 
     /**
      * Silently restore the Drive session from the persisted token (or refresh
-     * with no UI when it has lapsed) so the screen reflects signed-in and Sync
-     * Now works without a manual re-login. Safe no-op when never signed in.
+     * with no UI when it has lapsed) so the screen reflects signed-in and the
+     * Push/Pull actions work without a manual re-login. Safe no-op when never
+     * signed in.
      */
     fun restoreSessionIfPossible() {
         viewModelScope.launch { sync.ensureSignedIn() }
@@ -114,46 +111,6 @@ class SyncSettingsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Push-then-pull over the user's enabled categories, reporting progress
-     * and outcome through [syncNowStatus]. DriveSyncManager.pushAll/pullAll
-     * each return a Map<SyncCategory, Boolean> (per-category success); a
-     * category counts as synced only when both directions succeeded.
-     */
-    fun runSyncNow() {
-        if (_syncNowStatus.value is ActionStatus.Running) return
-        viewModelScope.launch {
-            _syncNowStatus.value = ActionStatus.Running
-            val token = (sync.status.value as? DriveSyncManager.Status.SignedIn)?.accessToken
-            if (token == null) {
-                _syncNowStatus.value = ActionStatus.Failure("Not signed in to Drive")
-                return@launch
-            }
-            val enabled = SyncCategory.entries
-                .filter { prefs.syncCategoryEnabled(it).first() }
-                .toSet()
-            if (enabled.isEmpty()) {
-                _syncNowStatus.value = ActionStatus.Failure("No sync categories enabled")
-                return@launch
-            }
-            // Same blank-install guard as the periodic worker: the push leg
-            // waits until this install has pulled once (the pull below sets
-            // the flag, so the NEXT Sync Now pushes normally).
-            val initialPullDone = prefs.syncInitialPullDone.first()
-            val pushed = if (initialPullDone) sync.pushAll(token, enabled) else emptyMap()
-            val pulled = sync.pullAll(token, enabled)
-            val merged = pulled.mapValues { (cat, ok) ->
-                (pushed[cat] != false) && ok
-            }
-            val failed = merged.count { !it.value }
-            _syncNowStatus.value = if (failed == 0) {
-                val n = merged.size
-                ActionStatus.Success("Synced $n ${if (n == 1) "category" else "categories"}")
-            } else {
-                ActionStatus.Failure("$failed of ${merged.size} categories failed to sync")
-            }
-        }
-    }
 
     /**
      * EXPLICIT one-way push: overwrite the Drive backup with this device's
