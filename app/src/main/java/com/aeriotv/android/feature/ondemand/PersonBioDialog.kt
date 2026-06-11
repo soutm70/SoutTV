@@ -2,6 +2,8 @@ package com.aeriotv.android.feature.ondemand
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -48,9 +51,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.network.TmdbPerson
-import com.aeriotv.android.core.tv.qrCodeBitmap
 import com.aeriotv.android.core.network.TmdbPersonBio
+import com.aeriotv.android.core.tv.qrCodeBitmap
 import com.aeriotv.android.feature.settings.SettingsDialogTextButton
+import com.aeriotv.android.ui.tv.tvFocusScale
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -63,8 +67,10 @@ import java.util.TimeZone
  * VM-agnostic on purpose: callers hand in [fetchBio] and [profileUrl]
  * (the detail screens pass OnDemandViewModel::resolveTmdbPersonBio and
  * ::tmdbProfileImageUrl), so the dialog never needs a ViewModel reference
- * of its own. BACK and the scrim dismiss via the Dialog defaults; Close is
- * the only focus stop, so D-pad users land on it immediately.
+ * of its own. BACK and the scrim dismiss via the Dialog defaults; Close
+ * takes initial focus (the Known For tiles compose later, once the fetch
+ * lands), and the tiles are focus stops so D-pad LEFT/RIGHT scrolls the
+ * strip.
  */
 @Composable
 fun PersonBioDialog(
@@ -234,19 +240,38 @@ private fun TmdbPersonQr(personId: String) {
 }
 
 /**
- * One poster + title tile in the bio sheet's "Known For" strip. Not
- * focusable: the strip is informational (the dialog's only focus stop is
- * Close), matching the read-only "Known For" row on TMDB's person page.
+ * One poster + title tile in the bio sheet's "Known For" strip. Focusable
+ * (with the poster-card ring + scale chrome) even though OK does nothing:
+ * only ~5 of the 8 tiles fit the dialog width, so D-pad LEFT/RIGHT walking
+ * the tiles is what scrolls the rest of the strip into view on TV.
  */
 @Composable
 private fun KnownForCard(title: String, posterUrl: String?) {
-    Column(modifier = Modifier.width(96.dp)) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .width(96.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .tvFocusScale(focused)
+            .focusable(),
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
+                .then(
+                    if (focused) {
+                        Modifier.border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
             contentAlignment = Alignment.Center,
         ) {
             if (!posterUrl.isNullOrBlank()) {
