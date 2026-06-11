@@ -132,6 +132,18 @@ class AerioExoPlayerHolder @Inject constructor(
     private val reloadCooldownMs = 5_000L
     private val watchdogPollMs = 1_000L
     private val maxConsecutiveReloads = 3
+    // ---- black-screen (no-video-frame) net ----
+    // The position poll above cannot see the field-reported black screen:
+    // audio keeps currentPosition advancing while the video renderer never
+    // draws a frame (Stream Info shows an active MediaCodec decoder and
+    // state: playing over pure black; survives channel switches). Track the
+    // FIRST rendered frame per primed stream; if steady playback runs this
+    // long without one, heal: re-prime the url, then recreate the player
+    // (fresh codec + fresh surface binding via the playerInstance flow).
+    private var videoFrameRendered = false
+    private var noFrameHealAttempts = 0
+    private var streamPrimedAtMs = 0L
+    private val noVideoFrameThresholdMs = 8_000L
 
     /** Arms the watchdog on first steady playback + recovers on a hard error. */
     private val watchdogListener = object : Player.Listener {
@@ -147,6 +159,11 @@ class AerioExoPlayerHolder @Inject constructor(
             // Android companion to the frame-stall path: a terminal source/HTTP
             // error. Re-prime under the same cooldown + reload cap.
             if (lastPlayUrl != null) forceReload("error:${error.errorCodeName}")
+        }
+
+        override fun onRenderedFirstFrame() {
+            videoFrameRendered = true
+            noFrameHealAttempts = 0
         }
     }
 
@@ -468,6 +485,9 @@ class AerioExoPlayerHolder @Inject constructor(
         hasReachedPlaybackRestart = true
         lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
         lastKnownPositionMs = player?.currentPosition ?: 0L
+        // Measure the no-frame window from steady playback, not from prime,
+        // so a slow cold start is never mistaken for a black screen.
+        if (!videoFrameRendered) streamPrimedAtMs = lastPositionAdvanceAtMs
     }
 
     private fun startWatchdog() {
@@ -485,6 +505,26 @@ class AerioExoPlayerHolder @Inject constructor(
                     continue
                 }
                 val now = SystemClock.elapsedRealtime()
+                // Black-screen net. Runs before the position check because an
+                // advancing audio position is exactly what masks this failure.
+                // videoFormat != null excludes radio/audio-only feeds; the
+                // disabled-types check excludes deliberate Audio Only mode.
+                if (!videoFrameRendered &&
+                    p.isPlaying &&
+                    p.videoFormat != null &&
+                    !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
+                    now - streamPrimedAtMs >= noVideoFrameThresholdMs
+                ) {
+                    when (noFrameHealAttempts) {
+                        0 -> if (forceReload("no-video-frame")) noFrameHealAttempts = 1
+                        1 -> { noFrameHealAttempts = 2; recreateForBlackScreen() }
+                        2 -> {
+                            noFrameHealAttempts = 3
+                            Log.w(TAG, "[BLACKSCREEN] still no frame after reload + recreate ch=$currentChannelId; giving up")
+                        }
+                    }
+                    continue
+                }
                 val pos = p.currentPosition
                 if (pos > lastKnownPositionMs) {
                     lastKnownPositionMs = pos
@@ -500,15 +540,17 @@ class AerioExoPlayerHolder @Inject constructor(
         }
     }
 
-    /** Re-prime the demuxer + decoder against the SAME url (mpv loadfile replace). */
-    private fun forceReload(reason: String) {
-        val p = player ?: return
-        val url = lastPlayUrl ?: return
+    /** Re-prime the demuxer + decoder against the SAME url (mpv loadfile
+     *  replace). Returns true when a reload actually ran (false while inside
+     *  the cooldown or past the attempt cap). */
+    private fun forceReload(reason: String): Boolean {
+        val p = player ?: return false
+        val url = lastPlayUrl ?: return false
         val now = SystemClock.elapsedRealtime()
-        if (now - lastForcedReloadAtMs < reloadCooldownMs) return        // shared 5s cooldown
+        if (now - lastForcedReloadAtMs < reloadCooldownMs) return false   // shared 5s cooldown
         if (consecutiveReloads >= maxConsecutiveReloads) {
             Log.w(TAG, "[MPV-RELOAD] giving up after $consecutiveReloads attempts ch=$currentChannelId reason=$reason")
-            return
+            return false
         }
         lastForcedReloadAtMs = now
         consecutiveReloads++
@@ -517,10 +559,35 @@ class AerioExoPlayerHolder @Inject constructor(
         hasReachedPlaybackRestart = false
         lastKnownPositionMs = 0L
         lastPositionAdvanceAtMs = now
+        videoFrameRendered = false
+        streamPrimedAtMs = now
         val source = buildMediaSource(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
         p.setMediaSource(source)
         p.prepare()
         p.playWhenReady = true
+        return true
+    }
+
+    /** Last-resort black-screen heal: full player teardown + rebuild + replay.
+     *  A recreate gets a fresh video codec AND a fresh surface binding (the
+     *  persistent window rebinds via the playerInstance flow), curing wedges
+     *  a same-player re-prime cannot reach. */
+    private fun recreateForBlackScreen() {
+        val url = lastPlayUrl ?: return
+        val ctx = appContext ?: return
+        Log.w(TAG, "[BLACKSCREEN] no video frame after reload; recreating player ch=$currentChannelId")
+        val title = lastPlayTitle
+        val subtitle = lastPlaySubtitle
+        val art = lastPlayArtworkUri
+        val chan = currentChannelId
+        val attempts = noFrameHealAttempts
+        destroy()
+        acquireOrCreate(ctx)
+        playUrl(url, title, subtitle, art)
+        // destroy()/playUrl() reset these; the heal must keep its place in the
+        // escalation ladder and the screen's channel identity.
+        currentChannelId = chan
+        noFrameHealAttempts = attempts
     }
 
     /** Reset watchdog state for a brand-new stream (iOS play(url:)/swapStream). */
@@ -530,6 +597,9 @@ class AerioExoPlayerHolder @Inject constructor(
         lastForcedReloadAtMs = 0L
         lastKnownPositionMs = 0L
         lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
+        videoFrameRendered = false
+        noFrameHealAttempts = 0
+        streamPrimedAtMs = lastPositionAdvanceAtMs
     }
 
     private object LoggingPlayerListener : Player.Listener {
