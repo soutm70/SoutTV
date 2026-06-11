@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +74,7 @@ import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
 import com.aeriotv.android.ui.tv.tvFocusScale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Movie detail screen. Mirrors iOS VODDetailView (Aerio/Features/VOD/VODDetailView.swift)
@@ -98,6 +100,10 @@ fun MovieDetailScreen(
     movieUuid: String,
     onBack: () -> Unit,
     onPlay: (DispatcharrVODMovie) -> Unit,
+    // Known For tile pushes from the bio dialog: plain navigation pushes so
+    // remote BACK returns here. Defaults keep non-nav call sites compiling.
+    onOpenMovie: (String) -> Unit = {},
+    onOpenSeries: (Int) -> Unit = {},
     viewModel: OnDemandViewModel = hiltViewModel(),
     watchVm: WatchProgressViewModel = hiltViewModel(),
 ) {
@@ -178,6 +184,11 @@ fun MovieDetailScreen(
         tmdbCredits?.let { c -> (c.cast + c.directors).distinctBy { it.id } }.orEmpty()
     }
     var bioPerson by remember { mutableStateOf<TmdbPerson?>(null) }
+    // Latch for the bio dialog's Known For tile: the library resolve is a
+    // suspend call (it can hit the Dispatcharr search endpoint), so a double
+    // OK press would otherwise stack two detail pushes.
+    var resolvingKnownFor by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     BackHandler(enabled = true) { onBack() }
     val isTv = rememberLiveTvFormFactor().isTv
@@ -322,11 +333,33 @@ fun MovieDetailScreen(
         }
 
         bioPerson?.let { person ->
+            // Known For tiles resolve against the library and push the
+            // matched detail route. No dismissal on success: the push
+            // disposes this composition (dialog included), and on BACK the
+            // dialog state re-lands closed over THIS title, which is the
+            // desired return-to-origin behavior.
             PersonBioDialog(
                 person = person,
                 fetchBio = viewModel::resolveTmdbPersonBio,
                 profileUrl = viewModel::tmdbProfileImageUrl,
                 onDismiss = { bioPerson = null },
+                onTileClick = { item ->
+                    if (!resolvingKnownFor) {
+                        resolvingKnownFor = true
+                        scope.launch {
+                            when (val target = viewModel.resolveKnownForTarget(item)) {
+                                is OnDemandViewModel.KnownForTarget.Movie -> onOpenMovie(target.uuid)
+                                is OnDemandViewModel.KnownForTarget.Series -> onOpenSeries(target.id)
+                                null -> android.widget.Toast.makeText(
+                                    context,
+                                    "Not in your library.",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            resolvingKnownFor = false
+                        }
+                    }
+                },
             )
         }
 

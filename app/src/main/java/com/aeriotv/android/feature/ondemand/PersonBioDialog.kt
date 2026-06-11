@@ -3,6 +3,7 @@ package com.aeriotv.android.feature.ondemand
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.aeriotv.android.core.network.TmdbKnownForItem
 import com.aeriotv.android.core.network.TmdbPerson
 import com.aeriotv.android.core.network.TmdbPersonBio
 import com.aeriotv.android.core.tv.qrCodeBitmap
@@ -71,6 +73,11 @@ import java.util.TimeZone
  * takes initial focus (the Known For tiles compose later, once the fetch
  * lands), and the tiles are focus stops so D-pad LEFT/RIGHT scrolls the
  * strip.
+ *
+ * [onTileClick] (when non-null) makes the Known For tiles actionable: OK on
+ * a tile hands its [TmdbKnownForItem] to the caller, which resolves it
+ * against the library and pushes the matching detail route. Null keeps the
+ * strip read-only (tiles stay plain focus stops for D-pad scrolling).
  */
 @Composable
 fun PersonBioDialog(
@@ -78,6 +85,7 @@ fun PersonBioDialog(
     fetchBio: suspend (String) -> TmdbPersonBio?,
     profileUrl: (String?, String) -> String?,
     onDismiss: () -> Unit,
+    onTileClick: ((TmdbKnownForItem) -> Unit)? = null,
 ) {
     var bio by remember(person.id) { mutableStateOf<TmdbPersonBio?>(null) }
     var loaded by remember(person.id) { mutableStateOf(false) }
@@ -187,6 +195,7 @@ fun PersonBioDialog(
                                 KnownForCard(
                                     title = item.title,
                                     posterUrl = profileUrl(item.posterPath, "w185"),
+                                    onClick = onTileClick?.let { handler -> { handler(item) } },
                                 )
                             }
                         }
@@ -240,20 +249,25 @@ private fun TmdbPersonQr(personId: String) {
 }
 
 /**
- * One poster + title tile in the bio sheet's "Known For" strip. Focusable
- * (with the poster-card ring + scale chrome) even though OK does nothing:
- * only ~5 of the 8 tiles fit the dialog width, so D-pad LEFT/RIGHT walking
- * the tiles is what scrolls the rest of the strip into view on TV.
+ * One poster + title tile in the bio sheet's "Known For" strip, with the
+ * poster-card ring + scale chrome. Only ~5 of the 8 tiles fit the dialog
+ * width, so D-pad LEFT/RIGHT walking the tiles is what scrolls the rest of
+ * the strip into view on TV. [onClick] (when non-null) makes OK open the
+ * title; clickable is itself a focus stop, so the D-pad walk behaves the
+ * same as the read-only plain-focusable branch.
  */
 @Composable
-private fun KnownForCard(title: String, posterUrl: String?) {
+private fun KnownForCard(title: String, posterUrl: String?, onClick: (() -> Unit)? = null) {
     var focused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .width(96.dp)
             .onFocusChanged { focused = it.isFocused }
             .tvFocusScale(focused)
-            .focusable(),
+            .then(
+                if (onClick != null) Modifier.clickable { onClick() }
+                else Modifier.focusable(),
+            ),
     ) {
         Box(
             modifier = Modifier

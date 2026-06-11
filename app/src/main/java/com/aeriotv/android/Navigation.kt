@@ -593,6 +593,11 @@ fun AerioTVNavHost(
                     onEpisodeClick = { episode ->
                         navController.navigate(Routes.vodEpisodePlayer(episode.uuid))
                     },
+                    // Known For tile in the cast bio dialog: a PLAIN push (no
+                    // popUpTo / singleTop) so remote BACK pops the new detail
+                    // entry and lands back on this title.
+                    onOpenMovie = { uuid -> navController.navigate(Routes.movieDetail(uuid)) },
+                    onOpenSeries = { id -> navController.navigate(Routes.seriesDetail(id)) },
                     viewModel = onDemandVm,
                 )
             }
@@ -610,6 +615,9 @@ fun AerioTVNavHost(
                     movieUuid = movieUuid,
                     onBack = { navController.popBackStack() },
                     onPlay = { navController.navigate(Routes.vodPlayer(movieUuid)) },
+                    // Same plain Known For push as SERIES_DETAIL above.
+                    onOpenMovie = { uuid -> navController.navigate(Routes.movieDetail(uuid)) },
+                    onOpenSeries = { id -> navController.navigate(Routes.seriesDetail(id)) },
                     viewModel = onDemandVm,
                 )
             }

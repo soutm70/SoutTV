@@ -67,12 +67,16 @@ data class TmdbCredits(
 /**
  * One title in a person's "Known For" strip: display [title] plus the
  * [posterPath] for its artwork (TMDB drops the path for obscure titles, so
- * those entries are filtered out before display).
+ * those entries are filtered out before display). [isMovie] mirrors the
+ * row's `media_type` ("movie" -> true, "tv" -> false) so a tile can be
+ * routed to the matching library detail screen; rows with any other or
+ * absent media_type are skipped at parse time.
  */
 data class TmdbKnownForItem(
     val id: String,
     val title: String,
     val posterPath: String?,
+    val isMovie: Boolean,
 )
 
 /**
@@ -526,6 +530,9 @@ class TMDBService @Inject constructor() {
      *   - "Self" appearances (the person playing themselves),
      *   - tv credits with fewer than 3 episodes (guest spots),
      *   - movie credits billed past order 8 (bit parts),
+     *   - rows whose `media_type` is anything but "movie" / "tv" (or absent);
+     *     [TmdbKnownForItem.isMovie] needs an unambiguous answer so a tile
+     *     can open the right library detail screen,
      * then ordering the survivors by popularity and capping at 8 (one TV
      * row). Movie rows carry `title`, tv rows carry `name`. Returns an empty
      * list when the block is absent rather than failing the whole bio parse.
@@ -556,8 +563,14 @@ class TMDBService @Inject constructor() {
             }
             int("episode_count")?.let { if (it < 3) return@mapNotNull null }
             int("order")?.let { if (it > 8) return@mapNotNull null }
+            val isMovie = when (o["media_type"]?.jsonPrimitive?.contentOrNull) {
+                "movie" -> true
+                "tv" -> false
+                // Anything else has no detail screen to land on; drop it.
+                else -> return@mapNotNull null
+            }
             val popularity = o["popularity"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull() ?: 0f
-            Triple(id, TmdbKnownForItem(id, title, poster), popularity)
+            Triple(id, TmdbKnownForItem(id, title, poster, isMovie), popularity)
         }
             .sortedByDescending { it.third }
             .distinctBy { it.first }

@@ -15,6 +15,7 @@ import com.aeriotv.android.core.network.DispatcharrVODSeries
 import com.aeriotv.android.core.network.TMDBService
 import com.aeriotv.android.core.network.TmdbCredits
 import com.aeriotv.android.core.network.TmdbDetails
+import com.aeriotv.android.core.network.TmdbKnownForItem
 import com.aeriotv.android.core.network.TmdbPersonBio
 import com.aeriotv.android.core.network.XtreamCodesApi
 import com.aeriotv.android.core.preferences.AppPreferences
@@ -618,6 +619,145 @@ class OnDemandViewModel @Inject constructor(
             ?: _state.value.searchResults.firstOrNull { it.uuid == uuid }
 
     /**
+     * Navigation target for a "Known For" tile in the cast bio sheet: the
+     * library entity's route key (movie [Movie.uuid] / series [Series.id],
+     * the same args Routes.movieDetail / Routes.seriesDetail take). Null
+     * from [resolveKnownForTarget] means the title is not in the library.
+     */
+    sealed interface KnownForTarget {
+        data class Movie(val uuid: String) : KnownForTarget
+        data class Series(val id: Int) : KnownForTarget
+    }
+
+    /** Trailing "(YYYY)" suffix many playlists append to VOD display names.
+     *  Same shape TMDBService.splitTitleYear strips; re-implemented here
+     *  because that helper is private to the service. */
+    private val knownForTrailingYear = Regex("""\(((?:19|20)\d{2})\)\s*$""")
+
+    /** Fold a display name for loose matching: trim, drop a trailing
+     *  "(YYYY)" year suffix, lowercase. A name that is ONLY "(2010)" keeps
+     *  its original text, mirroring splitTitleYear's empty-query guard. */
+    private fun normalizeVodTitle(raw: String): String {
+        val trimmed = raw.trim()
+        val cleaned = knownForTrailingYear.find(trimmed)
+            ?.let { trimmed.removeRange(it.range).trim() }
+            ?.ifEmpty { trimmed }
+            ?: trimmed
+        return cleaned.lowercase()
+    }
+
+    /**
+     * Find the library entity behind a "Known For" tile so the bio sheet can
+     * open its detail screen. Loaded lists first (browse + search results,
+     * same pair the by-uuid/by-id lookups above walk): an entity with a
+     * non-blank tmdbId must match on tmdbId, everything else falls back to
+     * the normalized-title comparison. When the loaded lists miss AND the
+     * active source is Dispatcharr (whose library pages in lazily, ~1k of a
+     * possibly 30k+ catalog), a one-shot server search covers the unwalked
+     * remainder. XC sources load their whole library up front, so a
+     * loaded-list miss there is a real miss and the fallback is skipped.
+     * Returns null when the title is not in the library (or the fallback
+     * fetch failed, which the caller treats the same way).
+     */
+    suspend fun resolveKnownForTarget(item: TmdbKnownForItem): KnownForTarget? {
+        val wantTitle = normalizeVodTitle(item.title)
+        if (item.isMovie) {
+            val loaded = _state.value.movies + _state.value.searchResults
+            val match = loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+                ?: loaded.firstOrNull {
+                    it.tmdbId.isNullOrBlank() && normalizeVodTitle(it.displayName) == wantTitle
+                }
+                ?: searchDispatcharrKnownForMovie(item, wantTitle)
+                ?: return null
+            return KnownForTarget.Movie(match.uuid)
+        }
+        val loaded = _state.value.series + _state.value.seriesSearchResults
+        val match = loaded.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+            ?: loaded.firstOrNull {
+                it.tmdbId.isNullOrBlank() && normalizeVodTitle(it.displayName) == wantTitle
+            }
+            ?: searchDispatcharrKnownForSeries(item, wantTitle)
+            ?: return null
+        return KnownForTarget.Series(match.id)
+    }
+
+    /** The active playlist when it is a Dispatcharr source with a usable
+     *  key, else null. Same gate the server-side search flows apply. */
+    private suspend fun dispatcharrPlaylistOrNull(): PlaylistEntity? {
+        val playlist = playlistRepository.activePlaylist() ?: return null
+        val sourceType = SourceType.entries.firstOrNull { it.name == playlist.sourceType }
+        val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+                sourceType == SourceType.DispatcharrUserPass
+        return playlist.takeIf { isDispatcharr && !it.apiKey.isNullOrBlank() }
+    }
+
+    /**
+     * One-shot Dispatcharr movie search for a Known For tile the loaded
+     * lists missed. Same endpoint + auth shape as setSearchQuery, but a
+     * small page suffices (the query is the tile's exact display title).
+     * A match is merged into the browse list, stamped with its group name
+     * like every other ingest path, so movieByUuid resolves it when the
+     * detail screen opens. Any failure returns null (= not in library).
+     */
+    private suspend fun searchDispatcharrKnownForMovie(
+        item: TmdbKnownForItem,
+        wantTitle: String,
+    ): DispatcharrVODMovie? {
+        val playlist = dispatcharrPlaylistOrNull() ?: return null
+        ensureDispatcharrCategories(playlist)
+        val base = playlist.urlString.trimEnd('/')
+        val url = "$base/api/vod/movies/?search=" +
+                java.net.URLEncoder.encode(item.title, "UTF-8") +
+                "&page_size=$KNOWN_FOR_SEARCH_PAGE_SIZE&page=1"
+        val results = runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.getVODMoviesPage(url, key)
+            }
+        }.onFailure { Log.w(TAG, "KnownFor movie search failed", it) }
+            .getOrNull()?.results ?: return null
+        val match = results.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+            ?: results.firstOrNull { normalizeVodTitle(it.displayName) == wantTitle }
+            ?: return null
+        val stamped = stampMovieGroup(match)
+        // Merge (uuid is the movies de-dup key everywhere else) so the
+        // pushed detail screen's movieByUuid lookup can resolve it.
+        _state.update { st ->
+            if (st.movies.any { it.uuid == stamped.uuid }) st
+            else st.copy(movies = st.movies + stamped)
+        }
+        return stamped
+    }
+
+    /** Series counterpart of [searchDispatcharrKnownForMovie]; merges on the
+     *  Int id (the series de-dup key) so seriesById resolves it. */
+    private suspend fun searchDispatcharrKnownForSeries(
+        item: TmdbKnownForItem,
+        wantTitle: String,
+    ): DispatcharrVODSeries? {
+        val playlist = dispatcharrPlaylistOrNull() ?: return null
+        ensureDispatcharrCategories(playlist)
+        val base = playlist.urlString.trimEnd('/')
+        val url = "$base/api/vod/series/?search=" +
+                java.net.URLEncoder.encode(item.title, "UTF-8") +
+                "&page_size=$KNOWN_FOR_SEARCH_PAGE_SIZE&page=1"
+        val results = runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.getVODSeriesPage(url, key)
+            }
+        }.onFailure { Log.w(TAG, "KnownFor series search failed", it) }
+            .getOrNull()?.results ?: return null
+        val match = results.firstOrNull { !it.tmdbId.isNullOrBlank() && it.tmdbId == item.id }
+            ?: results.firstOrNull { normalizeVodTitle(it.displayName) == wantTitle }
+            ?: return null
+        val stamped = stampSeriesGroup(match)
+        _state.update { st ->
+            if (st.series.any { it.id == stamped.id }) st
+            else st.copy(series = st.series + stamped)
+        }
+        return stamped
+    }
+
+    /**
      * TMDB poster fallback (iOS VODDetailView.loadTMDBPosterIfNeeded parity).
      * Returns a poster image URL only when the user has opted in AND set a key;
      * prefers an exact tmdb_id lookup, falling back to a title search. Returns
@@ -1131,5 +1271,9 @@ class OnDemandViewModel @Inject constructor(
 
         /** Debounce before a keystroke fires a server-side VOD search. */
         const val SEARCH_DEBOUNCE_MS = 300L
+
+        /** Page size for the one-shot Known For fallback search. The query
+         *  is an exact display title, so a small page is plenty. */
+        const val KNOWN_FOR_SEARCH_PAGE_SIZE = 25
     }
 }
