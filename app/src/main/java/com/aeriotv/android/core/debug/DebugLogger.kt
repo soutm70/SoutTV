@@ -123,11 +123,17 @@ class DebugLogger @Inject constructor(
         queue.trySend(combined)
     }
 
-    fun clearLogs() {
+    /**
+     * Delete EVERY file in the logs directory: the active log, the rotated
+     * 10 MB archive, and anything else that ever lands there. A directory
+     * sweep (rather than naming the two known files) keeps the button
+     * honest if rotation ever grows more generations. The active file is
+     * recreated on the next write, so capture keeps running seamlessly.
+     */
+    fun deleteAllLogs() {
         scope.launch {
             runCatching {
-                logFile().writeText("")
-                archiveFile().delete()
+                File(context.filesDir, LOGS_DIR).listFiles()?.forEach { it.delete() }
             }
         }
     }
@@ -241,11 +247,11 @@ class DebugLogger @Inject constructor(
 
     fun archiveFile(): File = File(File(context.filesDir, LOGS_DIR), ARCHIVE_FILE)
 
-    /** Size of the live log file in bytes. Returns 0 when the file is missing. */
-    fun logSizeBytes(): Long {
-        val f = logFile()
-        return if (f.exists()) f.length() else 0L
-    }
+    /** Combined size of every file in the logs directory (active log plus
+     *  the rotated archive), so the Developer screen reports the real disk
+     *  cost and visibly drops to zero after Delete All Logs. */
+    fun totalLogSizeBytes(): Long =
+        File(context.filesDir, LOGS_DIR).listFiles()?.sumOf { it.length() } ?: 0L
 
     private fun writeLine(line: String) {
         val f = logFile()

@@ -107,10 +107,10 @@ fun DeveloperSettingsScreen(
     // Poll the file size while we're on this screen so the displayed value
     // tracks live writes. 1 Hz is plenty for a multi-MB file; iOS does the
     // same in refreshLogSize via .task().
-    var sizeBytes by remember { mutableLongStateOf(debugLogger.logSizeBytes()) }
+    var sizeBytes by remember { mutableLongStateOf(debugLogger.totalLogSizeBytes()) }
     LaunchedEffect(Unit) {
         while (true) {
-            sizeBytes = debugLogger.logSizeBytes()
+            sizeBytes = debugLogger.totalLogSizeBytes()
             delay(1000L)
         }
     }
@@ -214,16 +214,19 @@ fun DeveloperSettingsScreen(
     if (pendingClear) {
         AlertDialog(
             onDismissRequest = { pendingClear = false },
-            title = { Text("Clear Log File?") },
+            title = { Text("Delete All Logs?") },
             text = {
-                Text("This permanently deletes the current aerio_debug_logs.txt. This cannot be undone.")
+                Text(
+                    "This permanently deletes the current log and any rotated " +
+                        "archives. This cannot be undone.",
+                )
             },
             confirmButton = {
                 SettingsDialogTextButton(
-                    label = "Clear Logs",
+                    label = "Delete All Logs",
                     onClick = {
                         pendingClear = false
-                        debugLogger.clearLogs()
+                        debugLogger.deleteAllLogs()
                     },
                     destructive = true,
                 )
@@ -280,7 +283,7 @@ private fun LogFileSection(
             "preserved as aerio_debug_logs_archive.txt.",
     ) {
         SettingsInfoRow(
-            label = "Log File Size",
+            label = "Total Log Size",
             value = formatBytes(sizeBytes),
             leadingIcon = Icons.Outlined.Description,
         )
@@ -297,7 +300,8 @@ private fun LogFileSection(
             onClick = onShare,
         )
         SettingsActionRow(
-            label = "Clear Log File",
+            label = "Delete All Logs",
+            subtitle = "Removes the current log and rotated archives",
             leadingIcon = Icons.Filled.Delete,
             onClick = onClear,
             destructive = true,
