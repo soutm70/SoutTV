@@ -30,6 +30,9 @@ import com.aeriotv.android.BuildConfig
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +74,23 @@ class AerioExoPlayerHolder @Inject constructor(
 
     var player: ExoPlayer? = null
         private set
+
+    /**
+     * Observable mirror of [player] so the persistent PlayerView can REBIND
+     * when the instance is recreated. The view's AndroidView factory runs
+     * once per process and bound the original instance; after a destroy()
+     * (X-close) plus a re-create (next playUrl, the media service, or a
+     * passthrough-pref rebuild) the view kept pointing at the RELEASED
+     * player, so Media3 configured the codec against a placeholder surface:
+     * audio played, the screen stayed black, and only an app restart
+     * recovered (GitHub report, Pixel 9 Pro XL log).
+     */
+    private val _playerInstance = MutableStateFlow<ExoPlayer?>(null)
+    val playerInstance: StateFlow<ExoPlayer?> = _playerInstance.asStateFlow()
+
+    /** Application context captured at first acquire so playUrl can
+     *  self-heal when called before/after the player exists. */
+    private var appContext: android.content.Context? = null
 
     /** Passthrough state the current player was built with; a pref flip
      *  forces a rebuild because sink capabilities are fixed at build. */
@@ -161,6 +181,7 @@ class AerioExoPlayerHolder @Inject constructor(
     fun acquireOrCreate(
         context: Context,
     ): ExoPlayer {
+        appContext = context.applicationContext
         val audioPassthrough = runBlocking { appPreferences.audioPassthroughEnabled.first() }
         player?.let { existing ->
             if (builtWithPassthrough == audioPassthrough) return existing
@@ -236,6 +257,7 @@ class AerioExoPlayerHolder @Inject constructor(
             }
 
         player = fresh
+        _playerInstance.value = fresh
         builtWithPassthrough = audioPassthrough
         startWatchdog()
         return fresh
@@ -323,8 +345,13 @@ class AerioExoPlayerHolder @Inject constructor(
         subtitle: String? = null,
         artworkUri: android.net.Uri? = null,
     ) {
-        val p = player ?: run {
-            Log.w(TAG, "playUrl called before acquireOrCreate")
+        // Self-heal: a channel tap can land before the persistent window's
+        // factory ran, or after destroy() released the instance. Swallowing
+        // the call here left the screen dead until the user picked a
+        // DIFFERENT channel (PlayerScreen stamps currentChannelId after this
+        // call, so re-selecting the same one was a no-op).
+        val p = player ?: appContext?.let { acquireOrCreate(it) } ?: run {
+            Log.w(TAG, "playUrl called before acquireOrCreate and no context cached")
             return
         }
         // Remember the args so the stall watchdog can re-prime the same stream;
@@ -423,6 +450,7 @@ class AerioExoPlayerHolder @Inject constructor(
     fun destroy() {
         val p = player ?: return
         player = null
+        _playerInstance.value = null
         currentChannelId = null
         watchdogJob?.cancel()
         watchdogJob = null

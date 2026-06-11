@@ -58,6 +58,9 @@ fun BoxScope.PersistentExoWindow(
     state: ExoWindowState,
 ) {
     val mode by state.mode.collectAsStateWithLifecycle()
+    // Recomposes the AndroidView update block whenever the holder swaps the
+    // underlying ExoPlayer instance; see the rebind comment below.
+    val boundPlayer by holder.playerInstance.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val settingsVm: SettingsViewModel = hiltViewModel()
     val aspectMode by settingsVm.playerAspectMode.collectAsStateWithLifecycle(initialValue = "fit")
@@ -151,6 +154,17 @@ fun BoxScope.PersistentExoWindow(
                     "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                     else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+                // Rebind when the holder recreated the player (post-X-close
+                // re-create, media-service acquire, passthrough rebuild).
+                // The factory's one-time setPlayer covered only the original
+                // instance; without this, a recreated player renders into a
+                // placeholder surface: audio with a black screen until the
+                // app process restarts (GitHub report).
+                val current = boundPlayer
+                if (current != null && view.player !== current) {
+                    Log.i(TAG, "PersistentExoWindow: rebinding PlayerView to recreated player")
+                    view.player = current
                 }
             },
             modifier = Modifier.fillMaxSize(),
