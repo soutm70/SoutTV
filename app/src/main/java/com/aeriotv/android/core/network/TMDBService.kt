@@ -65,8 +65,22 @@ data class TmdbCredits(
 )
 
 /**
+ * One title in a person's "Known For" strip: display [title] plus the
+ * [posterPath] for its artwork (TMDB drops the path for obscure titles, so
+ * those entries are filtered out before display).
+ */
+data class TmdbKnownForItem(
+    val id: String,
+    val title: String,
+    val posterPath: String?,
+)
+
+/**
  * `/person/{id}` profile payload for the bio sheet. [name] is the only
- * field TMDB guarantees; the rest arrive blank-stripped to null.
+ * field TMDB guarantees; the rest arrive blank-stripped to null. [knownFor]
+ * is the person's most popular credits, parsed from the `combined_credits`
+ * block appended to the same request and ordered like TMDB's own "Known For"
+ * row (most popular first).
  */
 data class TmdbPersonBio(
     val name: String,
@@ -75,6 +89,7 @@ data class TmdbPersonBio(
     val deathday: String?,
     val placeOfBirth: String?,
     val profilePath: String?,
+    val knownFor: List<TmdbKnownForItem> = emptyList(),
 )
 
 /**
@@ -344,7 +359,9 @@ class TMDBService @Inject constructor() {
         if (key.isEmpty() || id.isEmpty()) return null
         val cacheKey = "person:$id"
         personBioCache[cacheKey]?.let { return it }
-        val body = getJsonOrNull("/person/$id", "", key)
+        // combined_credits comes back in the same response, so the "Known For"
+        // strip costs no extra round-trip.
+        val body = getJsonOrNull("/person/$id", "append_to_response=combined_credits", key)
         val bio = body?.let { parsePersonBio(it) }
         if (bio != null) personBioCache[cacheKey] = bio
         Log.d(TAG, "person $id -> ${if (bio != null) "ok" else "no match"}")
@@ -495,8 +512,58 @@ class TMDBService @Inject constructor() {
             deathday = field("deathday"),
             placeOfBirth = field("place_of_birth"),
             profilePath = field("profile_path"),
+            knownFor = parseKnownFor(obj),
         )
     }.getOrNull()
+
+    /**
+     * The person's "Known For" row, parsed from the `combined_credits.cast`
+     * block appended to the person request. TMDB's own person page hides
+     * talk-show / reality cameos and one-off guest spots from this row, so a
+     * raw popularity sort (which floats daily talk shows to the top) does not
+     * match it. We reproduce the intent by dropping:
+     *   - Talk (10767), News (10763), Reality (10764) genre entries,
+     *   - "Self" appearances (the person playing themselves),
+     *   - tv credits with fewer than 3 episodes (guest spots),
+     *   - movie credits billed past order 8 (bit parts),
+     * then ordering the survivors by popularity and capping at 8 (one TV
+     * row). Movie rows carry `title`, tv rows carry `name`. Returns an empty
+     * list when the block is absent rather than failing the whole bio parse.
+     */
+    private fun parseKnownFor(personObj: kotlinx.serialization.json.JsonObject): List<TmdbKnownForItem> {
+        val cast = personObj["combined_credits"]?.jsonObject?.get("cast")?.jsonArray
+            ?: return emptyList()
+        val excludedGenres = setOf(10767, 10763, 10764)
+        return cast.mapNotNull { element ->
+            val o = element.jsonObject
+            fun int(name: String): Int? =
+                o[name]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val title = (o["title"] ?: o["name"])?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val poster = o["poster_path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val genres = o["genre_ids"]?.jsonArray
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull?.toIntOrNull() }
+                ?.toSet().orEmpty()
+            if (genres.any { it in excludedGenres }) return@mapNotNull null
+            val character = o["character"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase().orEmpty()
+            if (character == "self" || character.startsWith("self ") ||
+                character == "herself" || character == "himself"
+            ) {
+                return@mapNotNull null
+            }
+            int("episode_count")?.let { if (it < 3) return@mapNotNull null }
+            int("order")?.let { if (it > 8) return@mapNotNull null }
+            val popularity = o["popularity"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull() ?: 0f
+            Triple(id, TmdbKnownForItem(id, title, poster), popularity)
+        }
+            .sortedByDescending { it.third }
+            .distinctBy { it.first }
+            .take(8)
+            .map { it.second }
+    }
 
     /** Prefer (when [year] is known) a movie/tv hit with a poster released
      *  that year, then any movie/tv hit with a poster, then any hit with a

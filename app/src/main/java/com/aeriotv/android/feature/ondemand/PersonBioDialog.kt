@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -76,68 +80,73 @@ fun PersonBioDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(0.62f),
+            // Bound to the viewport (a 1080p TV is only ~540dp tall): the body
+            // scrolls if a long bio plus the Known For strip overflow, while
+            // the Close footer below stays pinned and reachable.
+            modifier = Modifier
+                .fillMaxWidth(0.62f)
+                .heightIn(max = 504.dp),
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    // w342 headshot: the dialog photo renders ~2x the strip
-                    // card, so the w185 thumb would upscale soft on a TV.
-                    val photo = profileUrl(bio?.profilePath ?: person.profilePath, "w342")
-                    Box(
-                        modifier = Modifier
-                            .width(160.dp)
-                            .aspectRatio(2f / 3f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (!photo.isNullOrBlank()) {
-                            AsyncImage(
-                                model = photo,
-                                contentDescription = person.name,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop,
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Outlined.Person,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                modifier = Modifier.size(48.dp),
-                            )
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        // w342 headshot: the dialog photo renders ~2x the strip
+                        // card, so the w185 thumb would upscale soft on a TV.
+                        val photo = profileUrl(bio?.profilePath ?: person.profilePath, "w342")
+                        Box(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .aspectRatio(2f / 3f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!photo.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = photo,
+                                    contentDescription = person.name,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Outlined.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(48.dp),
+                                )
+                            }
                         }
-                    }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = bio?.name ?: person.name,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        bio?.birthday?.let { LifeDetailLine("Born", formatBioDate(it)) }
-                        bio?.deathday?.let { LifeDetailLine("Died", formatBioDate(it)) }
-                        bio?.placeOfBirth?.let { LifeDetailLine("Birthplace", it) }
-                        Spacer(Modifier.height(10.dp))
-                        val biography = bio?.biography
-                        when {
-                            !loaded -> CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp),
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = bio?.name ?: person.name,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.Bold,
                             )
-                            biography.isNullOrBlank() -> Text(
-                                text = "No biography available.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            else -> Column(
-                                modifier = Modifier
-                                    .heightIn(max = 320.dp)
-                                    .verticalScroll(rememberScrollState()),
-                            ) {
-                                Text(
+                            bio?.birthday?.let { LifeDetailLine("Born", formatBioDate(it)) }
+                            bio?.deathday?.let { LifeDetailLine("Died", formatBioDate(it)) }
+                            bio?.placeOfBirth?.let { LifeDetailLine("Birthplace", it) }
+                            Spacer(Modifier.height(10.dp))
+                            val biography = bio?.biography
+                            when {
+                                !loaded -> CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                biography.isNullOrBlank() -> Text(
+                                    text = "No biography available.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                else -> Text(
                                     text = biography,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -145,7 +154,28 @@ fun PersonBioDialog(
                             }
                         }
                     }
+
+                    val knownFor = bio?.knownFor.orEmpty()
+                    if (knownFor.isNotEmpty()) {
+                        Spacer(Modifier.height(18.dp))
+                        Text(
+                            text = "Known For",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(knownFor, key = { it.id }) { item ->
+                                KnownForCard(
+                                    title = item.title,
+                                    posterUrl = profileUrl(item.posterPath, "w185"),
+                                )
+                            }
+                        }
+                    }
                 }
+
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -155,6 +185,49 @@ fun PersonBioDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * One poster + title tile in the bio sheet's "Known For" strip. Not
+ * focusable: the strip is informational (the dialog's only focus stop is
+ * Close), matching the read-only "Known For" row on TMDB's person page.
+ */
+@Composable
+private fun KnownForCard(title: String, posterUrl: String?) {
+    Column(modifier = Modifier.width(96.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!posterUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = posterUrl,
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Outlined.Movie,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
