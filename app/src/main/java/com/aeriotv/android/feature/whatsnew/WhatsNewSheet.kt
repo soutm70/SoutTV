@@ -202,17 +202,28 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "In-app updates",
-            body = "AerioTV now tells you when a new release is out. Download " +
-                "and install it right from the app; your channels, settings, " +
-                "and recordings are kept. You can also check any time in " +
-                "Settings, App Updates.",
+            title = "Black screen fixes",
+            body = "Fixed several causes of live TV playing audio over a " +
+                "black screen. The player now also watches for the problem " +
+                "and recovers on its own, so a channel that starts black " +
+                "heals within seconds instead of needing an app restart.",
         ),
         WhatsNewItem(
-            title = "Reminders survive updates",
-            body = "Programme reminders are re-registered automatically after " +
-                "the app updates, so they fire even if an update landed in " +
-                "between.",
+            title = "The channel you pick is the channel that plays",
+            body = "Selecting a channel right after switching groups could " +
+                "start the first channel in your playlist instead. Fixed.",
+        ),
+        WhatsNewItem(
+            title = "Clearer Drive sync controls",
+            body = "Settings, Sync now has explicit Push Config to Drive and " +
+                "Pull Config from Drive buttons so every manual sync states " +
+                "its direction. A fresh install can no longer overwrite your " +
+                "Drive backup before it has pulled once.",
+        ),
+        WhatsNewItem(
+            title = "Update check at launch",
+            body = "Sideloaded builds now check for a new release when the " +
+                "app starts, in addition to the periodic check.",
         ),
     )
 }
