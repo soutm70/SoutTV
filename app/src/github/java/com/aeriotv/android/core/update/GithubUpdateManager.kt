@@ -83,6 +83,9 @@ class GithubUpdateManager @Inject constructor(
         ownSignerSha256().contains(UPLOAD_KEY_SHA256)
     }
 
+    /** First auto-check of this process bypasses the 12h throttle. */
+    private var checkedThisProcess = false
+
     override suspend fun check(manual: Boolean) {
         if (!isEnabled) return
         // Never clobber an in-flight download/install with a fresh check.
@@ -95,9 +98,15 @@ class GithubUpdateManager @Inject constructor(
         }
         val now = System.currentTimeMillis()
         if (!manual) {
+            // The 12h throttle applies to foreground RETURNS only. The first
+            // auto-check of each process always goes out, so launching the
+            // app right after a release publishes surfaces the update prompt
+            // immediately instead of waiting out a stamp from the previous
+            // session (user request for 0.2.8).
             val last = appPreferences.updateLastCheckAtOnce()
-            if (now - last < AUTO_CHECK_INTERVAL_MS) return
+            if (checkedThisProcess && now - last < AUTO_CHECK_INTERVAL_MS) return
         }
+        checkedThisProcess = true
         when (val outcome = checker.fetchLatest(BuildConfig.VERSION_NAME)) {
             is UpdateChecker.Outcome.UpdateAvailable -> {
                 appPreferences.setUpdateLastCheckAt(now)

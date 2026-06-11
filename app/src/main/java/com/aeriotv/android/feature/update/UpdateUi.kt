@@ -70,8 +70,10 @@ fun UpdateGate(currentRoute: String?) {
     // grant / install commit both kill the process).
     LaunchedEffect(Unit) { vm.resumePending() }
 
-    // Throttled auto-check on every app foreground (TV keeps the process
-    // resident for days, so cold-launch-only checks would go stale).
+    // Auto-check on every app foreground. The first check of each process
+    // is unthrottled (sideload builds check at launch, so a fresh release is
+    // offered immediately); later foreground returns are throttled to 12h in
+    // the manager because a TV keeps the process resident for days.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
