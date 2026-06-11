@@ -98,7 +98,7 @@ import java.util.TimeZone
  * rows, then per-season episode list with thumbnail / duration / air-date /
  * rating / plot per row - matching TVEpisodeRowButton on iOS (line 827-979).
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun SeriesDetailScreen(
     seriesId: Int,
@@ -285,7 +285,21 @@ fun SeriesDetailScreen(
         // Offset counts too: the chip row's own bring-into-view can settle at
         // item 0 with the hero title still clipped above the screen edge.
         if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
-            scope.launch { listState.animateScrollToItem(0) }
+            scope.launch {
+                // The focus move that lands here queues its own bring-into-view,
+                // which steals the scroll mutex and cancels this animation
+                // mid-flight, leaving the hero clipped. Retry until the list
+                // genuinely rests at the top.
+                repeat(4) {
+                    runCatching { listState.animateScrollToItem(0) }
+                    if (listState.firstVisibleItemIndex == 0 &&
+                        listState.firstVisibleItemScrollOffset == 0
+                    ) {
+                        return@launch
+                    }
+                    delay(90L)
+                }
+            }
         }
     }
     // Mirrors SeriesInfoSection's own chip-visibility logic; keep in sync.
@@ -325,6 +339,14 @@ fun SeriesDetailScreen(
                 )
             }
         } else {
+            // TV: same large-card deadband spec as the VOD grids; the Cast &
+            // Crew row's person cards otherwise bounce the whole screen on
+            // D-pad left/right (user report, round 2).
+            val bringSpec = if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
+            else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringSpec,
+            ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -485,6 +507,7 @@ fun SeriesDetailScreen(
                         )
                     }
                 }
+            }
             }
         }
 

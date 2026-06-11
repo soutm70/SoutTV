@@ -321,3 +321,27 @@ fun Modifier.tvFormFieldInput(): Modifier {
         }
     }
 }
+
+/**
+ * BringIntoViewSpec for TV surfaces whose focusables are large cards (poster
+ * grids, cast rows): D-pad moves WITHIN a row must never produce a transient
+ * vertical scroll of the host list. Fully visible -> no scroll; an item
+ * taller than the viewport stays put while any part is visible; corrections
+ * under 24px are the title-strip oscillation from a same-row move, not a
+ * genuine row change, and are suppressed. Provide via
+ * CompositionLocalProvider(LocalBringIntoViewSpec provides ...) around the
+ * scrollable, TV only.
+ */
+@kotlin.OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+object TvLargeCardBringIntoViewSpec : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(
+        offset: Float,
+        size: Float,
+        containerSize: Float,
+    ): Float {
+        if (offset >= 0f && offset + size <= containerSize) return 0f
+        if (size > containerSize && offset < containerSize && offset + size > 0f) return 0f
+        val distance = if (offset < 0f) offset else offset + size - containerSize
+        return if (kotlin.math.abs(distance) < 24f) 0f else distance
+    }
+}

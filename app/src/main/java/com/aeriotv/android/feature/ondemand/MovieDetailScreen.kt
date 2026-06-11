@@ -92,7 +92,7 @@ import kotlinx.coroutines.delay
  * renders whatever's available immediately so the user never sees an empty
  * shell while the upstream Xtream fetch (Dispatcharr line 1693-1701) runs.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MovieDetailScreen(
     movieUuid: String,
@@ -213,6 +213,14 @@ fun MovieDetailScreen(
                 )
             }
         } else {
+            // TV: same large-card deadband spec as the VOD grids; the Cast &
+            // Crew row's person cards otherwise bounce the whole screen on
+            // D-pad left/right (user report, round 2).
+            val bringSpec = if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
+            else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringSpec,
+            ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 32.dp),
@@ -268,6 +276,7 @@ fun MovieDetailScreen(
                         )
                     }
                 }
+            }
             }
         }
 

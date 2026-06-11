@@ -489,9 +489,9 @@ private fun MoviesSubScreen(
         }
 
         // TV: deadband spec kills the horizontal-move vertical jump (see
-        // VodGridBringIntoViewSpec). Phone keeps the inherited default.
+        // com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec). Phone keeps the inherited default.
         val bringIntoViewSpec =
-            if (isTv) VodGridBringIntoViewSpec
+            if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
             else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
         CompositionLocalProvider(
             androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
@@ -705,9 +705,9 @@ private fun SeriesSubScreen(
             return@Column
         }
 
-        // TV: same deadband spec as the Movies grid (VodGridBringIntoViewSpec).
+        // TV: same deadband spec as the Movies grid (com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec).
         val bringIntoViewSpec =
-            if (isTv) VodGridBringIntoViewSpec
+            if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
             else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
         CompositionLocalProvider(
             androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
@@ -879,25 +879,6 @@ private const val UNCATEGORIZED = "Uncategorized"
  * keeps horizontal traversal rock-steady without touching real scrolls.
  */
 @OptIn(ExperimentalFoundationApi::class)
-private object VodGridBringIntoViewSpec : androidx.compose.foundation.gestures.BringIntoViewSpec {
-    override fun calculateScrollDistance(
-        offset: Float,
-        size: Float,
-        containerSize: Float,
-    ): Float {
-        // Already fully visible: no scroll.
-        if (offset >= 0f && offset + size <= containerSize) return 0f
-        // Item taller than the viewport (a poster card at an extreme zoom /
-        // display-scale combination): if ANY part is visible, stay put --
-        // slamming its edge flush would fling the grid on a horizontal move.
-        if (size > containerSize && offset < containerSize && offset + size > 0f) return 0f
-        // Minimal nudge (default behavior)...
-        val distance = if (offset < 0f) offset else offset + size - containerSize
-        // ...unless it is below the deadband: that is the title-strip
-        // oscillation from a within-row horizontal move, not a row change.
-        return if (kotlin.math.abs(distance) < 24f) 0f else distance
-    }
-}
 
 /**
  * BACK-from-detail D-pad focus restoration for the VOD grids/rails (TV only;
