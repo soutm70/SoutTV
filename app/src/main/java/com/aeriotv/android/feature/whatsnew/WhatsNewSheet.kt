@@ -202,28 +202,19 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Black screen fixes",
-            body = "Fixed several causes of live TV playing audio over a " +
-                "black screen. The player now also watches for the problem " +
-                "and recovers on its own, so a channel that starts black " +
-                "heals within seconds instead of needing an app restart.",
+            title = "Black screen after returning to the app, fixed",
+            body = "Minimizing a channel to the audio chip, leaving the app, " +
+                "then coming back and reopening it could leave you with audio " +
+                "and a black screen until a force close. The video window now " +
+                "re-attaches itself on return, so the picture comes back.",
         ),
         WhatsNewItem(
-            title = "The channel you pick is the channel that plays",
-            body = "Selecting a channel right after switching groups could " +
-                "start the first channel in your playlist instead. Fixed.",
-        ),
-        WhatsNewItem(
-            title = "Clearer Drive sync controls",
-            body = "Settings, Sync now has explicit Push Config to Drive and " +
-                "Pull Config from Drive buttons so every manual sync states " +
-                "its direction. A fresh install can no longer overwrite your " +
-                "Drive backup before it has pulled once.",
-        ),
-        WhatsNewItem(
-            title = "Update check at launch",
-            body = "Sideloaded builds now check for a new release when the " +
-                "app starts, in addition to the periodic check.",
+            title = "Automatic local network switching, no setup",
+            body = "If your server has a Local URL, AerioTV now uses it " +
+                "whenever the server answers locally, checked at launch, on " +
+                "network changes, and after edits. No more saving home Wi-Fi " +
+                "names, and it works on Ethernet and over VPN. AerioTV no " +
+                "longer asks for Location permission at all.",
         ),
     )
 }
