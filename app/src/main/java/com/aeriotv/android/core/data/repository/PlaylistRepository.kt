@@ -13,13 +13,13 @@ import android.content.Context
 import android.util.Log
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
+import com.aeriotv.android.core.network.LanReachability
 import com.aeriotv.android.core.network.DispatcharrEpgEntry
 import com.aeriotv.android.core.network.DispatcharrTokenStore
 import com.aeriotv.android.core.network.PlaylistFetcher
 import com.aeriotv.android.core.parser.M3UParser
 import com.aeriotv.android.core.parser.XMLTVParser
 import com.aeriotv.android.core.preferences.AppPreferences
-import com.aeriotv.android.core.wifi.WifiSsidProbe
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
 import java.util.UUID
@@ -65,6 +65,7 @@ class PlaylistRepository @Inject constructor(
     private val epgProgrammeDao: EpgProgrammeDao,
     private val channelSnapshotDao: ChannelSnapshotDao,
     private val activeCredentials: com.aeriotv.android.core.network.ActivePlaylistCredentials,
+    private val lanReachability: LanReachability,
 ) {
 
     /**
@@ -88,18 +89,15 @@ class PlaylistRepository @Inject constructor(
     }
 
     /**
-     * Returns [PlaylistEntity.lanUrlString] when the device is connected to
-     * one of the user's saved home SSIDs and the playlist has a LAN URL set;
-     * otherwise [PlaylistEntity.urlString]. Reads the SSID via WifiSsidProbe
-     * on every call so a network change since the last read is reflected
-     * immediately.
+     * Returns [PlaylistEntity.lanUrlString] when the server actually answers
+     * at that address; otherwise [PlaylistEntity.urlString]. Replaced the old
+     * home-SSID match (fine-location permission + per-device saved networks
+     * that never synced, so fresh installs silently routed WAN) with a cached
+     * reachability probe; see [LanReachability] for the trigger points.
      */
     suspend fun effectiveBaseUrl(playlist: PlaylistEntity): String {
         val lan = playlist.lanUrlString?.takeIf { it.isNotBlank() } ?: return playlist.urlString
-        val homeSsids = appPreferences.homeSsidsOnce()
-        if (homeSsids.isEmpty()) return playlist.urlString
-        val ssid = WifiSsidProbe.currentSsid(context) ?: return playlist.urlString
-        return if (ssid in homeSsids) lan else playlist.urlString
+        return if (lanReachability.isReachable(lan)) lan else playlist.urlString
     }
 
     /** Inputs for creating or updating a playlist row. */
@@ -226,6 +224,10 @@ class PlaylistRepository @Inject constructor(
             android.util.Log.w("PlaylistRepository", "saveChannelsToCache failed (loadAndPersist)", t)
         }
         publishActiveCredentials(entity)
+        // The user just edited connection details: probe the LAN URL now so
+        // the very next request routes correctly instead of waiting for a
+        // network change.
+        entity.lanUrlString?.takeIf { it.isNotBlank() }?.let { lanReachability.refresh(it) }
         entity to channels
     }
 

@@ -1005,7 +1005,8 @@ class PlaylistViewModel @Inject constructor(
 
     /**
      * Re-resolve which URL [PlaylistRepository.effectiveBaseUrl] would use
-     * right now (LAN when on a saved home SSID with a LAN URL set, WAN
+     * right now (LAN when the reachability probe says the server answers
+     * at the LAN URL, WAN
      * otherwise) so Playlist Detail's Connection row reflects reality. Called
      * on screen entry / ON_RESUME and after each detail action; there is no
      * app-wide network callback, matching the NetworkSettingsScreen idiom.

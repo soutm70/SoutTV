@@ -8,39 +8,11 @@
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
-    <!-- ACCESS_FINE_LOCATION (home-Wi-Fi SSID detection) and ACCESS_WIFI_STATE
-         implicitly mark location + wifi HARDWARE as required. Android TV devices
-         often lack GPS/location hardware, so Google Play then filters the app
-         out of the Android TV catalog (the "not available on TV" / missing from
-         "Install on more devices" symptom). These features are optional for us;
-         the SSID/LAN-switch feature simply no-ops where the hardware or
-         permission is absent, so mark them not-required to keep TV eligible. -->
-    <uses-feature
-        android:name="android.hardware.location"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.location.gps"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.location.network"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.wifi"
-        android:required="false" />
-
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Home Wi-Fi detection for LAN URL switching. Reading the CONNECTED
-         network's SSID (WifiInfo.getSSID) requires ACCESS_FINE_LOCATION at
-         runtime on API 29+ (and location services on), or it is redacted to
-         unknown-ssid. NEARBY_WIFI_DEVICES does NOT unlock the connected SSID
-         (it gates Wi-Fi scanning / peer APIs), so fine location is the only
-         path on every API level at or above 29. Coarse is declared alongside
-         fine because the platform expects both to be requested together
-         (lint CoarseFineLocation); we still only read the SSID, which needs
-         fine. -->
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- LAN URL switching probes the server over HTTP (LanReachability); no
+         location or wifi-state permissions needed since the SSID is never
+         read. Keeping the manifest free of location permissions also keeps
+         the app eligible for Android TV devices without location hardware. -->
     <!-- Phase 9b Local DVR. Foreground service handles in-flight downloads
          so Android doesn't kill the recording when the user backgrounds the
          app. mediaPlayback service type matches the spirit of the work even

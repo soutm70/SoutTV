@@ -249,8 +249,8 @@ private fun InfoCardsGroup() {
         Spacer(Modifier.height(10.dp))
         SourceTypeCard(
             icon = Icons.Outlined.Wifi,
-            title = "Detect Home WiFi",
-            subtitle = "After setup, add a LAN URL to your playlist in Settings and AerioTV will switch to it automatically when you're on your home network.",
+            title = "Automatic LAN Switching",
+            subtitle = "After setup, add a LAN URL to your playlist in Settings and AerioTV uses it automatically whenever your server is reachable locally.",
         )
     }
 }

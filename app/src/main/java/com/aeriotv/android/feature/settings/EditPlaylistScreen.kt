@@ -267,7 +267,7 @@ fun EditPlaylistScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "Used when connected to a home SSID configured in Network > Home WiFi.",
+                            text = "Used automatically whenever the server answers at this address (checked at launch, on network changes, and after edits).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
