@@ -143,7 +143,11 @@ class AerioExoPlayerHolder @Inject constructor(
     private var videoFrameRendered = false
     private var noFrameHealAttempts = 0
     private var streamPrimedAtMs = 0L
-    private val noVideoFrameThresholdMs = 8_000L
+    // A healthy stream renders its first frame well under 1s after READY, and
+    // field logs show users abandon a black screen in seconds (one closed the
+    // player 7.8s in, 200ms before the original 8s trigger). 5s keeps a wide
+    // margin over normal startup while healing before the user gives up.
+    private val noVideoFrameThresholdMs = 5_000L
 
     /** Arms the watchdog on first steady playback + recovers on a hard error. */
     private val watchdogListener = object : Player.Listener {
@@ -164,6 +168,10 @@ class AerioExoPlayerHolder @Inject constructor(
         override fun onRenderedFirstFrame() {
             videoFrameRendered = true
             noFrameHealAttempts = 0
+            // The one line that lets a user log definitively separate "video
+            // rendered" from "decoded but never painted". Once per prime, so
+            // it's cheap enough for release builds.
+            Log.i(TAG, "first video frame rendered ch=$currentChannelId (+${SystemClock.elapsedRealtime() - streamPrimedAtMs}ms)")
         }
     }
 
