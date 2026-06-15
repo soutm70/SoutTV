@@ -177,6 +177,25 @@ fun VODPlayerScreen(
             android.content.res.Configuration.UI_MODE_TYPE_MASK
         ) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
+    // "Audio keeps playing after leaving the app" on TV (jonzee222): VOD owns
+    // its OWN ExoPlayer (not the live holder MainActivity.onUserLeaveHint tears
+    // down), and a TV has no PiP, so HOME left this player decoding audio at
+    // the launcher. Pause on ON_STOP when on a TV (also covers screen-off).
+    // Phone is untouched -- it keeps the existing PiP / continue behavior. The
+    // player stays built, so returning resumes from where it paused.
+    if (isTvForm) {
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, exoPlayer) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                    exoPlayer?.playWhenReady = false
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
     // Step the scrub preview one increment. Mirrors iOS PlayerView.scrubStep
     // (10_000ms base, accelerating to 12x). Autorepeat events are throttled
     // to one step per 250ms so holding LEFT/RIGHT sweeps smoothly instead of

@@ -144,6 +144,24 @@ class MainActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         when {
+            // Android TV / leanback: there is no PiP and no music-app
+            // background-audio expectation, so leaving the app (HOME / overview)
+            // must STOP playback. Without this the live holder + foreground
+            // media service keep decoding and audio plays on at the launcher
+            // (jonzee222 report): syncAutoEnterPip no-ops with no PiP feature,
+            // the API<31 branch never runs on a modern TV, so the old when{}
+            // matched nothing and nothing tore down. onUserLeaveHint fires only
+            // on a genuine user leave -- never on config-change/fold recreation
+            // -- so this cannot kill audio on a recreation. stop() (not
+            // destroy()) so a quick relaunch reuses the holder. Same teardown
+            // order as the X-close path. Must be FIRST so it short-circuits the
+            // audio-only + API<31 video branches on TV.
+            isTelevisionDevice() -> {
+                runCatching { miniPlayerSession.dismiss() }
+                runCatching { exoWindowState.hide() }
+                runCatching { exoHolder.stop() }
+                AerioMediaPlaybackService.stop(this)
+            }
             // Audio-only: never enter PiP. Keep a foreground media notification
             // alive so audio continues with status-bar + lock-screen controls.
             PipState.audioPlaybackActive.value -> {
