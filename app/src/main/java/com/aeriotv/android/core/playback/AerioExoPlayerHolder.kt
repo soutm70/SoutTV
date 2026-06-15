@@ -95,6 +95,14 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Passthrough state the current player was built with; a pref flip
      *  forces a rebuild because sink capabilities are fixed at build. */
     private var builtWithPassthrough: Boolean? = null
+    // GH #8: some devices (Chromecast w/ Google TV report) output NO audio
+    // on the forced-PCM no-context sink the lip-sync fix uses when
+    // passthrough is off. When the sink raises an AudioTrack init/write
+    // error we rebuild THIS PROCESS with the stock context sink so audio
+    // always comes out; the user's passthrough pref is untouched. Sticky once
+    // tripped: re-trying the forced-PCM sink on every channel switch would
+    // just re-fail and glitch audio on the affected device.
+    private var audioSinkFallback = false
 
     /** Most-recent channel id played, so a resuming PlayerScreen knows
      *  whether to skip the setMediaItem re-init. */
@@ -160,6 +168,19 @@ class AerioExoPlayerHolder @Inject constructor(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // GH #8: the forced-PCM sink produced no audio / failed to init on
+            // some devices. Rebuild once with the stock context sink (which is
+            // the path that works everywhere) and replay. A plain forceReload
+            // would just hit the same dead sink.
+            if (!audioSinkFallback &&
+                (error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED)
+            ) {
+                Log.w(TAG, "[AUDIO-HEAL] sink failed (${error.errorCodeName}); rebuilding with stock context sink")
+                audioSinkFallback = true
+                rebuildWithStockAudioAndReplay()
+                return
+            }
             // Android companion to the frame-stall path: a terminal source/HTTP
             // error. Re-prime under the same cooldown + reload cap.
             if (lastPlayUrl != null) forceReload("error:${error.errorCodeName}")
@@ -207,7 +228,7 @@ class AerioExoPlayerHolder @Inject constructor(
         context: Context,
     ): ExoPlayer {
         appContext = context.applicationContext
-        val audioPassthrough = runBlocking { appPreferences.audioPassthroughEnabled.first() }
+        val audioPassthrough = runBlocking { appPreferences.audioPassthroughEnabled.first() } || audioSinkFallback
         player?.let { existing ->
             if (builtWithPassthrough == audioPassthrough) return existing
             Log.i(TAG, "Audio passthrough pref changed; rebuilding player")
@@ -596,6 +617,26 @@ class AerioExoPlayerHolder @Inject constructor(
         // escalation ladder and the screen's channel identity.
         currentChannelId = chan
         noFrameHealAttempts = attempts
+    }
+
+    /** GH #8 audio self-heal: full teardown + rebuild (acquireOrCreate now
+     *  sees audioSinkFallback=true, so it builds the stock context sink) +
+     *  replay the same channel. Preserves the screen's channel identity across
+     *  the destroy()/playUrl() resets, same shape as recreateForBlackScreen. */
+    private fun rebuildWithStockAudioAndReplay() {
+        val url = lastPlayUrl ?: return
+        val ctx = appContext ?: return
+        val title = lastPlayTitle
+        val subtitle = lastPlaySubtitle
+        val art = lastPlayArtworkUri
+        val chan = currentChannelId
+        destroy()
+        acquireOrCreate(ctx)
+        playUrl(url, title, subtitle, art)
+        currentChannelId = chan
+        // destroy() cleared the flag's backing player but not the field; keep
+        // it set so this session stays on the working sink.
+        audioSinkFallback = true
     }
 
     /** Reset watchdog state for a brand-new stream (iOS play(url:)/swapStream). */

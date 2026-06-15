@@ -56,8 +56,10 @@ fun aerioRenderersFactory(
             enableAudioTrackPlaybackParams: Boolean,
         ): AudioSink? {
             if (audioPassthrough) {
+                android.util.Log.i("AerioPlayerDiag", "audio sink -> stock context sink (passthrough on)")
                 return super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
             }
+            android.util.Log.i("AerioPlayerDiag", "audio sink -> forced-PCM no-context sink (passthrough off)")
             @Suppress("DEPRECATION")
             return DefaultAudioSink.Builder()
                 .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
