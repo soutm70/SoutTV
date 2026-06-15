@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -99,36 +100,51 @@ private fun WelcomeSingleColumn(
             .background(MaterialTheme.colorScheme.background),
     ) {
         WelcomeAmbientOrbs(modifier = Modifier.fillMaxSize())
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
-                // Constrain + center so the column doesn't stretch edge-to-edge
-                // on wide screens (TV) -- mirrors the centered tvOS layout while
-                // staying full-width on a narrow phone. 560dp matches the rest
-                // of onboarding (Choose Source Type / Configure) so the brand
-                // block, source rows and CTA share one column width; a no-op on
-                // phones, which are narrower than the cap.
                 .align(Alignment.TopCenter)
-                .fillMaxHeight()
-                .widthIn(max = 560.dp)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .fillMaxSize(),
         ) {
-            Spacer(Modifier.height(12.dp))
-            BrandBlock()
-            Spacer(Modifier.height(18.dp))
-            SupportedTypesGroup(alignStart = false)
-            Spacer(Modifier.height(14.dp))
-            InfoCardsGroup()
-            Spacer(Modifier.height(20.dp))
-            ActionButtons(
-                onConnectServer = onConnectServer,
-                onSkip = onSkip,
-                onSignInWithGoogle = onSignInWithGoogle,
-                googleSignInInProgress = googleSignInInProgress,
-            )
-            Spacer(Modifier.height(24.dp))
+            // Fit the whole page without scrolling, at any screen size. A short
+            // viewport (every Android TV: a 1080p panel is only ~540dp tall, and
+            // landscape phones) can't fit the roomy stacked layout -- its
+            // intrinsic content height alone exceeds the screen. Below the
+            // threshold we switch to a COMPACT layout that spends the ample
+            // WIDTH instead: source types in one row, the two info cards side by
+            // side, a smaller logo, tighter spacing. The roomy stacked layout
+            // stays for tall screens (portrait phones). verticalScroll remains
+            // only as a last-ditch fallback so an unforeseen size never clips.
+            val compact = maxHeight < 640.dp
+            val colMaxWidth = if (compact) 900.dp else 560.dp
+            val vPad = if (compact) 12.dp else 24.dp
+            val gap = if (compact) 12.dp else 18.dp
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxHeight()
+                    .widthIn(max = colMaxWidth)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = vPad),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                // Center the content so, when it fits (the normal case now), it
+                // sits balanced in the viewport instead of pinned to the top.
+                verticalArrangement = Arrangement.Center,
+            ) {
+                BrandBlock(compact = compact)
+                Spacer(Modifier.height(gap))
+                SupportedTypesGroup(alignStart = false, compact = compact)
+                Spacer(Modifier.height(gap))
+                InfoCardsGroup(compact = compact)
+                Spacer(Modifier.height(gap))
+                ActionButtons(
+                    onConnectServer = onConnectServer,
+                    onSkip = onSkip,
+                    onSignInWithGoogle = onSignInWithGoogle,
+                    googleSignInInProgress = googleSignInInProgress,
+                    compact = compact,
+                )
+            }
         }
     }
 }
@@ -201,36 +217,56 @@ private fun WelcomeTwoColumnRow(
 }
 
 @Composable
-private fun BrandBlock(alignStart: Boolean = false) {
+private fun BrandBlock(alignStart: Boolean = false, compact: Boolean = false) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (alignStart) Alignment.Start else Alignment.CenterHorizontally,
     ) {
-        BrandLogo()
-        Spacer(Modifier.height(12.dp))
+        BrandLogo(compact = compact)
+        Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
         Text(
             text = "AerioTV",
-            style = MaterialTheme.typography.headlineMedium,
+            style = if (compact) MaterialTheme.typography.titleLarge
+            else MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(if (compact) 2.dp else 4.dp))
         Text(
             text = "Your IPTV & Media Hub",
-            style = MaterialTheme.typography.titleMedium,
+            style = if (compact) MaterialTheme.typography.bodyMedium
+            else MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = "Android TV · Phone · Tablet",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // The platform line is the least essential brand text; drop it in the
+        // compact (short-viewport) layout to reclaim vertical space.
+        if (!compact) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Android TV · Phone · Tablet",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 @Composable
-private fun SupportedTypesGroup(alignStart: Boolean = false) {
+private fun SupportedTypesGroup(alignStart: Boolean = false, compact: Boolean = false) {
+    if (compact) {
+        // Short viewport: the three supported types ride a single row so they
+        // cost ~one line of height instead of three.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SupportedTypeInline(icon = Icons.Filled.Key, label = "Dispatcharr Direct Connect")
+            SupportedTypeInline(icon = Icons.Filled.Tv, label = "Xtream Codes")
+            SupportedTypeInline(icon = Icons.Filled.Description, label = "M3U + EPG")
+        }
+        return
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         SupportedTypeRow(icon = Icons.Filled.Key, label = "Dispatcharr Direct Connect", alignStart = alignStart)
         SupportedTypeRow(icon = Icons.Filled.Tv, label = "Xtream Codes", alignStart = alignStart)
@@ -239,7 +275,30 @@ private fun SupportedTypesGroup(alignStart: Boolean = false) {
 }
 
 @Composable
-private fun InfoCardsGroup() {
+private fun InfoCardsGroup(compact: Boolean = false) {
+    if (compact) {
+        // Short viewport: the two info cards sit side by side (each takes half
+        // the wide TV/landscape column) so they cost one card-height, not two.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            SourceTypeCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Filled.CloudOff,
+                title = "Sync via Google Account",
+                subtitle = "After setup, sign in to Drive in Settings > Sync to mirror playlists, watch progress, reminders, and preferences across devices.",
+            )
+            SourceTypeCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Outlined.Wifi,
+                title = "Automatic LAN Switching",
+                subtitle = "After setup, add a LAN URL to your playlist in Settings and AerioTV uses it automatically whenever your server is reachable locally.",
+            )
+        }
+        return
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         SourceTypeCard(
             icon = Icons.Filled.CloudOff,
@@ -255,17 +314,42 @@ private fun InfoCardsGroup() {
     }
 }
 
+/** One supported-source type as a compact inline icon+label, for the
+ *  short-viewport single-row layout. */
+@Composable
+private fun SupportedTypeInline(icon: ImageVector, label: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GradientIcon(
+            imageVector = icon,
+            brush = accentBrush(),
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
 @Composable
 private fun ActionButtons(
     onConnectServer: () -> Unit,
     onSkip: () -> Unit,
     onSignInWithGoogle: (() -> Unit)? = null,
     googleSignInInProgress: Boolean = false,
+    compact: Boolean = false,
 ) {
     val gradient = accentBrush()
     val shape = RoundedCornerShape(28.dp)
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        // Cap width in compact so the buttons don't stretch across the wide
+        // TV/landscape column; full-width on the narrow stacked layout.
+        modifier = (if (compact) Modifier.widthIn(max = 520.dp) else Modifier)
+            .fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // iOS WelcomeView line 174: `.background(LinearGradient.accentGradient)`.
@@ -371,17 +455,19 @@ private fun WelcomeGoogleSignInButton(enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun BrandLogo() {
+private fun BrandLogo(compact: Boolean = false) {
     // Mirrors iOS WelcomeView's `.shadow(color: aerioCyan @ 0.45, radius: 20, y: 8)`
     // under the logo. Compose's shadow modifier only renders elevation drop-shadows,
     // not colored glows, so we draw a soft radial gradient halo behind the logo
     // bitmap instead — same visual effect, API-agnostic.
     val accent = MaterialTheme.colorScheme.primary
+    val haloSize = if (compact) 64.dp else 96.dp
+    val imageSize = if (compact) 44.dp else 64.dp
     Box(
-        modifier = Modifier.size(96.dp),
+        modifier = Modifier.size(haloSize),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(96.dp)) {
+        Canvas(modifier = Modifier.size(haloSize)) {
             drawCircle(
                 brush = Brush.radialGradient(
                     colorStops = arrayOf(
@@ -400,7 +486,7 @@ private fun BrandLogo() {
         Image(
             painter = painterResource(id = R.drawable.aerio_logo),
             contentDescription = null,
-            modifier = Modifier.size(64.dp),
+            modifier = Modifier.size(imageSize),
         )
     }
 }
