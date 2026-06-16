@@ -81,6 +81,23 @@ class AerioMediaPlaybackService : MediaLibraryService() {
         mediaSession = MediaLibrarySession.Builder(this, player, LibraryCallback())
             .setSessionActivity(launchPi)
             .build()
+
+        // Let Media3 own the foreground notification so it shows the REAL
+        // now-playing (channel name, programme, logo, play/pause/next) pulled
+        // from the session's current MediaItem metadata. Pinned to the SAME
+        // channel + notification id as our onStartCommand placeholder so the
+        // rich notification REPLACES "Starting playback..." instead of leaving
+        // it stuck (car report: the only sign the app was running was that
+        // useless placeholder, in Auto AND on the phone). Once Auto plays, Media3
+        // promotes the bound service via onStartCommand, so the placeholder did
+        // show there too -- this aligns the ids so it's swapped out immediately.
+        setMediaNotificationProvider(
+            androidx.media3.session.DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId(CHANNEL_ID)
+                .setChannelName(R.string.app_name)
+                .setNotificationId(NOTIF_ID)
+                .build(),
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

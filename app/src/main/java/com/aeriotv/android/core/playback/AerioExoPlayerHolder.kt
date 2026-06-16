@@ -282,10 +282,22 @@ class AerioExoPlayerHolder @Inject constructor(
                     DefaultExtractorsFactory().setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT),
                 ),
             )
-            // Persistent-view architecture: handleAudioBecomingNoisy
-            // pauses on headphone unplug. This is Media3's built-in
-            // equivalent of the audio focus handling we hand-rolled
-            // for MPV.
+            // Request audio focus + declare media-usage attributes. WITHOUT
+            // this, Android Auto shows the stream "playing" (the head-unit
+            // timeline advances) but routes NO audio to the car: the player
+            // decodes but never holds audio focus, so the car's audio system
+            // won't play it (car report -- silent in Auto, and the audio
+            // resumed on the phone the instant it was unplugged from Auto).
+            // handleAudioFocus=true also ducks/pauses correctly on phone-side
+            // interruptions. handleAudioBecomingNoisy (headphone unplug pause)
+            // is a SEPARATE concern, not audio focus.
+            .setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             .setHandleAudioBecomingNoisy(true)
             .build()
             .apply {
