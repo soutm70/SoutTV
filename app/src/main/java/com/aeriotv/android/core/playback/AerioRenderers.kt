@@ -104,7 +104,17 @@ fun aerioRenderersFactory(
     }
     return factory
         .setEnableDecoderFallback(true)
-        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+        // EXTENSION_RENDERER_MODE_ON places the bundled FFmpeg audio renderer
+        // AFTER the platform MediaCodec renderers, so hardware decoders stay
+        // primary and FFmpeg is used only as a fallback for formats the device
+        // can't decode in hardware -- notably AC-3 / E-AC-3 / DTS on broadcast
+        // (ATSC) channels, which cheaper boxes like the Chromecast with Google
+        // TV have no MediaCodec decoder for. Before the FFmpeg extension was
+        // bundled those channels reported "no audio track" and played silent;
+        // the software decoder restores the AC-3 capability libmpv used to give.
+        // (PREFER would route ALL audio through the software decoder, wasting
+        // CPU on formats the hardware handles fine.)
+        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 }
 
 /**

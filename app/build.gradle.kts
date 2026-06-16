@@ -146,6 +146,13 @@ dependencies {
     implementation(libs.androidx.media3.extractor)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
+    // FFmpeg software audio decoder (built from the media3 1.4.1 decoder_ffmpeg
+    // extension, AC-3/E-AC-3/DTS/TrueHD/MP2 enabled). Google ships no prebuilt,
+    // so this AAR is built from source; it restores Dolby broadcast audio on
+    // devices with no hardware AC-3 decoder (e.g. Chromecast with Google TV),
+    // wired in as the fallback renderer by aerioRenderersFactory. Consumed via
+    // files() so its base media3 classes resolve against the maven deps above.
+    implementation(files("libs/media3-decoder-ffmpeg.aar"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ktor.client.core)
