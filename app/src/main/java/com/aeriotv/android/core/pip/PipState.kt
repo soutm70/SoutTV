@@ -57,21 +57,37 @@ fun Context.findActivity(): Activity? {
     return null
 }
 
-/** Is the device capable of PiP? PiP requires API 26+ and the FEATURE_PICTURE_IN_PICTURE feature. */
+/** True on Android TV / leanback set-top boxes (FEATURE_LEANBACK, with a
+ *  uiMode fallback for boxes that under-report it). */
+fun Context.isTelevision(): Boolean {
+    if (packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) return true
+    val mode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK
+    return mode == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+}
+
+/**
+ * Is the device capable of (and willing to use) PiP? PiP requires API 26+ and
+ * the FEATURE_PICTURE_IN_PICTURE feature. Android TV is deliberately treated as
+ * PiP-INCAPABLE: modern Google TV reports the feature, but PiP on a TV is
+ * unwanted (nobody uses it, it's more annoying than useful -- Archie), so this
+ * single gate suppresses every PiP affordance (the player-chrome PiP buttons),
+ * the auto-enter-on-leave, and the manual enter call on TVs at once. On TV,
+ * leaving the app stops playback instead (MainActivity.onStop).
+ */
 fun Context.supportsPip(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    if (isTelevision()) return false
     return packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
 }
 
 /**
  * Request that the host activity enter PiP at 16:9. Safe to call on any API
- * level / device — bails silently when PiP isn't supported. Aspect ratio is
- * pinned at 16:9 because all our content is video and the system clamps
- * to ranges around 2.39:1 / 1:2.39 anyway.
+ * level / device — bails silently when PiP isn't supported (including all TVs).
+ * Aspect ratio is pinned at 16:9 because all our content is video and the
+ * system clamps to ranges around 2.39:1 / 1:2.39 anyway.
  */
 fun Activity.enterPip16x9() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+    if (!supportsPip()) return
     runCatching {
         val params = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
