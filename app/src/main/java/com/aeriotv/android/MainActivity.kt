@@ -141,6 +141,28 @@ class MainActivity : ComponentActivity() {
         deepLinkTarget.value = target
     }
 
+    /**
+     * TV leave-app teardown. onUserLeaveHint does NOT reliably fire on every
+     * Android TV launcher's HOME press (verified on the Google TV Streamer:
+     * the app backgrounded but onUserLeaveHint never ran, so playback kept
+     * going). onStop ALWAYS fires when the activity goes invisible (HOME,
+     * overview, app switch, screen off), so the TV stop lives here. Guarded by
+     * !isChangingConfigurations so a config-change recreation (which also calls
+     * onStop) never kills audio, and by isTelevisionDevice so phones keep their
+     * background-audio / PiP behavior. Back-to-mini does NOT stop the activity,
+     * so the mini-player keeps playing -- only a real leave triggers this.
+     */
+    override fun onStop() {
+        if (isTelevisionDevice() && !isChangingConfigurations) {
+            android.util.Log.i("AerioLeave", "onStop: TV leave -> stopping playback")
+            runCatching { miniPlayerSession.dismiss() }
+            runCatching { exoWindowState.hide() }
+            runCatching { exoHolder.stop() }
+            AerioMediaPlaybackService.stop(this)
+        }
+        super.onStop()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         when {
@@ -200,11 +222,17 @@ class MainActivity : ComponentActivity() {
     private fun syncAutoEnterPip(videoActive: Boolean) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        // Modern Google TV / Android TV DOES support PiP (the Google TV
+        // Streamer auto-entered PiP on HOME), which kept audio + video playing
+        // at the launcher -- the "audio keeps playing after leaving" report.
+        // tvOS parity is: leaving the app STOPS playback (done in onStop). So
+        // never auto-enter PiP on a TV; phones keep auto-PiP.
+        val enable = videoActive && !isTelevisionDevice()
         runCatching {
             setPictureInPictureParams(
                 PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
-                    .setAutoEnterEnabled(videoActive)
+                    .setAutoEnterEnabled(enable)
                     .build(),
             )
         }
