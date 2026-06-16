@@ -202,19 +202,27 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Black screen after returning to the app, fixed",
-            body = "Minimizing a channel to the audio chip, leaving the app, " +
-                "then coming back and reopening it could leave you with audio " +
-                "and a black screen until a force close. The video window now " +
-                "re-attaches itself on return, so the picture comes back.",
+            title = "Leaving the app stops playback on TV",
+            body = "On Android TV, pressing Home or going to recent apps now " +
+                "stops playback instead of leaving audio running in the " +
+                "background at the launcher.",
         ),
         WhatsNewItem(
-            title = "Automatic local network switching, no setup",
-            body = "If your server has a Local URL, AerioTV now uses it " +
-                "whenever the server answers locally, checked at launch, on " +
-                "network changes, and after edits. No more saving home Wi-Fi " +
-                "names, and it works on Ethernet and over VPN. AerioTV no " +
-                "longer asks for Location permission at all.",
+            title = "True fullscreen on phone",
+            body = "Watching on a phone now hides the status and navigation " +
+                "bars for a clean, edge-to-edge picture, in both landscape and " +
+                "portrait. Swipe from the edge to bring them back.",
+        ),
+        WhatsNewItem(
+            title = "Sound fixes",
+            body = "Fixed a case where some devices played a stream with no " +
+                "audio, and audio now pauses correctly when another app takes " +
+                "over the speakers.",
+        ),
+        WhatsNewItem(
+            title = "Closing the floating window stops playback",
+            body = "Closing the floating mini-window with its X now stops the " +
+                "stream instead of leaving audio playing in the background.",
         ),
     )
 }
