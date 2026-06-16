@@ -450,9 +450,10 @@ private fun M3uFields(state: PlaylistViewModel.UiState, viewModel: PlaylistViewM
 /**
  * Optional LAN URL field. Pairs with the Server URL so the user can capture
  * both the public/remote and the LAN-side host in one pass during onboarding;
- * AerioTV swaps to the LAN value once the device joins a saved home SSID
- * (Settings > Network > Home WiFi). M3U sources skip this — they're already
- * URL-based and there's no auth credential reuse implied.
+ * AerioTV swaps to the LAN value automatically whenever the server answers
+ * locally (a reachability probe, checked at launch, on network changes, and
+ * after edits). M3U sources skip this — they're already URL-based and there's
+ * no auth credential reuse implied.
  */
 @Composable
 private fun LanUrlField(state: PlaylistViewModel.UiState, viewModel: PlaylistViewModel) {
@@ -466,9 +467,8 @@ private fun LanUrlField(state: PlaylistViewModel.UiState, viewModel: PlaylistVie
         )
     }
     Text(
-        text = "When you're on a saved home WiFi network, AerioTV routes through this URL " +
-                "instead of the public one above. Mark a home SSID in Settings > Network " +
-                "to activate the switch.",
+        text = "AerioTV uses this URL automatically whenever your server is reachable on " +
+                "the local network, and the public one above otherwise. No setup needed.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
