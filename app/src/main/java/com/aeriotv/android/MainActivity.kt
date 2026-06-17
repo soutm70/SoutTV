@@ -84,6 +84,51 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    /**
+     * Long-press BACK on Android TV = resume the mini-player to fullscreen.
+     * Google TV remotes have no play/pause key, and a single OK has to keep
+     * opening the focused channel (the old double-press-OK resume hijacked OK
+     * and trapped users -- Coolwolf report), so the resume affordance is moved
+     * onto a gesture nothing else uses: holding BACK. A SHORT back is left
+     * untouched -- it's routed through the OnBackPressedDispatcher so every
+     * existing BackHandler still fires (the mini's dismiss, the player's
+     * 3-press flow, nav-up). Only armed on TV, and only resumes while the
+     * mini-player is Active. Predictive back is off, so this legacy key path is
+     * authoritative.
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice()) {
+            // Arm long-press tracking; the action is decided in onKeyLongPress
+            // (resume) or onKeyUp (normal short back).
+            event.startTracking()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice() &&
+            miniPlayerSession.state.value is MiniPlayerSession.State.Active
+        ) {
+            android.util.Log.i("MiniPlayerResume", "long-press BACK -> resume mini-player")
+            miniPlayerSession.requestResume()
+            return true // consumed; the framework cancels the following key-up
+        }
+        return super.onKeyLongPress(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice()) {
+            // A handled long-press cancels this up -> ignore it. Otherwise it's
+            // a short press: run the normal back through the dispatcher so the
+            // existing BackHandlers / nav still work.
+            if (event.isCanceled) return true
+            onBackPressedDispatcher.onBackPressed()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
     override fun onPictureInPictureModeChanged(
         isInPictureInPictureMode: Boolean,
         newConfig: Configuration,

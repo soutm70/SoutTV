@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
  *
  * The VIDEO is rendered by the activity-lifetime [com.aeriotv.android
  * .feature.player.PersistentMpvWindow] mounted at MainActivity root.
- * This overlay only contributes the "Double press OK to resume" hint
+ * This overlay only contributes the "Hold Back to resume" hint
  * chip below where the video shows. The chip is positioned right-
  * aligned and offset down past the mini video's bottom edge:
  *   mini top inset (12) + mini height (118) + small gap (8) = 138dp
@@ -53,15 +53,16 @@ fun BoxScope.TvMiniPlayerOverlay(
         onDismiss()
     }
 
-    // Hint chip rendered directly below the persistent mini video's
-    // bottom edge. No clickable / focusable surface -- resume is owned
-    // by MainActivity.dispatchKeyEvent's double-press-OK detection so
-    // this overlay doesn't trap D-pad focus.
+    // Hint chip rendered directly below the persistent mini video's bottom
+    // edge. No clickable / focusable surface so the overlay never traps D-pad
+    // focus: resume is a HOLD of BACK (handled in MainActivity.onKeyLongPress),
+    // and a short BACK dismisses (the BackHandler above). Both are remote
+    // gestures, so the chip stays purely informational.
     // Hint text shrunk 25% from labelSmall (relative, so it tracks the app's
     // TV-scaled typography).
     val hintBase = MaterialTheme.typography.labelSmall
     Text(
-        text = "Press Back to close",
+        text = "Hold Back to resume · Back to close",
         style = hintBase.copy(fontSize = (hintBase.fontSize.value * 0.75f).sp),
         color = Color.White,
         fontWeight = FontWeight.Medium,

@@ -41,12 +41,12 @@ class MiniPlayerSession @Inject constructor() {
     val state: StateFlow<State> = _state.asStateFlow()
 
     /**
-     * One-shot resume events. MainActivity.dispatchKeyEvent emits here when it
-     * detects a double-press of D-pad Select while the mini-player is Active
-     * (Google TV Streamer remotes have no play/pause key). The Navigation root
-     * collects this and re-pushes the PLAYER route with the active channel.
-     * Buffer is 1 + DROP_OLDEST so a quick double-tap during nav transition
-     * isn't lost.
+     * One-shot resume events. MainActivity.onKeyLongPress emits here when the
+     * user HOLDS BACK on Android TV while the mini-player is Active (Google TV
+     * remotes have no play/pause key, and a short Back dismisses the mini). The
+     * Navigation root collects this and re-pushes the PLAYER route with the
+     * active channel. Buffer is 1 + DROP_OLDEST so a resume fired during a nav
+     * transition isn't lost.
      */
     private val _resumeRequests = MutableSharedFlow<M3UChannel>(
         extraBufferCapacity = 1,
@@ -55,10 +55,10 @@ class MiniPlayerSession @Inject constructor() {
     val resumeRequests: SharedFlow<M3UChannel> = _resumeRequests.asSharedFlow()
 
     /**
-     * Called from MainActivity.dispatchKeyEvent when D-pad Select is
-     * double-pressed and the mini-player is Active. Promotes Active -> Pending
-     * (so the mini overlay vanishes) and emits a resume event for the
-     * NavController to navigate on. No-op when the state isn't Active.
+     * Called from MainActivity.onKeyLongPress when BACK is held and the
+     * mini-player is Active. Promotes Active -> Pending (so the mini overlay
+     * vanishes) and emits a resume event for the NavController to navigate on.
+     * No-op when the state isn't Active.
      */
     fun requestResume() {
         val current = _state.value

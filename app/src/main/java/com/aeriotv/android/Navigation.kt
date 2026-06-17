@@ -861,7 +861,7 @@ fun AerioTVNavHost(
         // is rooted here so the same instance is visible from PlayerScreen
         // (writes state on its dispose) and from this overlay (reads state
         // and renders). The TV variant draws a top-right video window with a
-        // "double-press OK to resume" hint; the phone variant lives inside
+        // "hold Back to resume" hint; the phone variant lives inside
         // MainScaffold as a row above the bottom nav.
         val miniPlayerVm: MiniPlayerViewModel = androidx.hilt.navigation.compose.hiltViewModel()
         val miniState by miniPlayerVm.state.collectAsStateWithLifecycle()
@@ -874,8 +874,8 @@ fun AerioTVNavHost(
         }
         val miniExoHolder = remember { miniEntry.exoPlayerHolder() }
         val miniExoWindowState = remember { miniEntry.exoWindowState() }
-        // The TV mini is a static chip (Double-press OK to resume).
-        // The video continues to be drawn by the activity-lifetime
+        // The TV mini is a static chip (hold Back to resume, short Back to
+        // close). The video continues to be drawn by the activity-lifetime
         // PersistentExoWindow at MainActivity root, which the mini
         // BackHandler dismiss flips into Hidden mode + stop()'s.
         TvMiniPlayerOverlay(
