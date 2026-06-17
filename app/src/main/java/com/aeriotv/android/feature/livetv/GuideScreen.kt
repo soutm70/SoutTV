@@ -1319,6 +1319,18 @@ private fun ChannelGuideRow(
     // nearest), so a channel up/down lands in the same time column.
     val visibleCellSpans = remember { mutableListOf<CellSpan>() }
 
+    // Whether THIS row currently owns D-pad focus (used by the viewport-clip
+    // exception in the strip below). guideNav.lastFocusedChannelIndex is a
+    // mutableStateOf; reading it DIRECTLY in the per-cell loop subscribed every
+    // composed row to the raw index, so a single channel up/down recomposed
+    // EVERY visible row (each re-running its forEachIndexed: category tint, live
+    // progress, msToDp...). Wrapping the comparison in a structural-equality
+    // derivedStateOf scopes each row's subscription to a Boolean, so only the
+    // two rows whose focused-ness actually flips recompose on a vertical move.
+    val rowIsFocused by remember(channelIndex) {
+        derivedStateOf { channelIndex == guideNav.lastFocusedChannelIndex }
+    }
+
     // Compact rail sizing. On TV we keep it tight (narrow rail, small logo) so
     // more channels fit; legibility comes from the name/cell text, not bulk.
     val numberStyle = if (isTv) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall
@@ -1576,7 +1588,9 @@ private fun ChannelGuideRow(
                     // bug). Keeping the whole focused row alive means focus always
                     // has a live cell to step onto. Only the single focused row pays
                     // this; every other row stays clipped to the pad.
-                    val rowIsFocused = channelIndex == guideNav.lastFocusedChannelIndex
+                    // rowIsFocused is hoisted to the row body as a derivedStateOf
+                    // (see above) so reading it here doesn't subscribe this row to
+                    // every lastFocusedChannelIndex change.
                     if (!rowIsFocused &&
                         (rawEnd <= visibleStartMs || rawStart >= visibleEndMs)
                     ) return@forEachIndexed
@@ -1907,7 +1921,15 @@ private fun ProgrammeCell(
         // anchored DropdownMenu on phone (a thumb-distance idiom) and as the
         // shared centered TvActionMenuDialog on TV.
         val canRecordToServer = LocalCanRecordToServer.current
-        val menuActions = buildList {
+        // Built lazily ONLY while the long-press menu is open. This buildList plus
+        // its up-to-5 TvMenuAction objects, their captured lambdas, and the
+        // System.currentTimeMillis() call below previously ran on EVERY cell
+        // recomposition -- including the cells that recompose on each D-pad focus
+        // move -- even though the result is consumed only inside the `menuOpen`
+        // branches further down. Gating on menuOpen eliminates that per-cell
+        // allocation churn during navigation; the list rebuilds fresh (with the
+        // current lambdas) the moment the menu opens.
+        val menuActions = if (menuOpen) buildList {
             add(TvMenuAction("Program Info", Icons.Outlined.Info) { onShowInfo() })
             add(
                 TvMenuAction(
@@ -1951,7 +1973,7 @@ private fun ProgrammeCell(
                     ) { onRecord() },
                 )
             }
-        }
+        } else emptyList()
         if (isTv) {
             if (menuOpen) {
                 TvActionMenuDialog(

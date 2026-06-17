@@ -1,64 +1,102 @@
-# ART baseline profile rules. The methods listed here are AOT-compiled by
-# ProfileInstaller at install time, so they never run interpreted -> JIT on
-# cold launch. Each line is an ART-format method or class entry; `H` =
-# include in startup pre-compile, `S` = include in startup hot list, `P` =
-# include in post-startup. `L` followed by a JVM-style class descriptor
-# matches the whole class.
+# ART baseline profile rules. Methods matched here are AOT-compiled by
+# ProfileInstaller at install time (via the binary profile AGP bundles into
+# assets/dexopt/baseline.prof), so they run as native code instead of
+# interpreter -> JIT. This eliminates the press-to-action lag on low-end TV
+# boxes (e.g. Google TV Streamer) where guide/list/player navigation would
+# otherwise run interpreted on a cold install.
 #
-# Coverage focus: cold-launch hot path observed in logcat as the JIT
-# allocating thousands of KB to compile these methods on first paint. With
-# wildcards we don't have to enumerate every method -- ART matches all
-# methods whose descriptor matches.
+# FORMAT
+#   Each line is a profgen "human readable profile" rule:
+#     <flags>L<class-glob>-><method-glob>(<param-glob>)<return-glob>
+#   Flags: H = hot (AOT-compile the method), S = startup, P = post-startup.
+#   Wildcards: `*` matches within a name segment; `**` matches ACROSS package
+#   separators (`/`) AND nested/synthetic-class separators (`$`). The class
+#   subtree form `Lpkg/**` (no trailing `;`) plus `->**(**)**` matches every
+#   method of every class under that package, INCLUDING the synthetic lambda
+#   classes the Kotlin/Compose compiler generates per composable
+#   (e.g. GuideScreenKt$GuideContent$1$2, ComposableSingletons$GuideScreenKt).
+#
+# WHY THE OLD PROFILE WAS INADEQUATE
+#   It listed exact classes like `LGuideScreenKt;->**(**)**`, which match the
+#   top-level class but NOT the synthetic lambda classes that hold the bulk of
+#   composable bodies. It also assumed framework (Compose/coroutine/collection)
+#   coverage was handled entirely by the libraries' own bundled profiles. On
+#   this app's specific guide-grid + D-pad-focus hot path that left the
+#   per-frame navigation code interpreted. AGP's profgen expands the globs
+#   below against the MERGED dex (app + every dependency dexed into the APK),
+#   so framework subtrees listed here are resolved to concrete methods at
+#   build time -- it does NOT only accept the app's own classes.
+#
+# Coverage is intentionally broad over the rendering/navigation-critical
+# subtrees rather than narrowly enumerated: on a dedicated TV box the modestly
+# larger install-time dexopt is an acceptable trade for guaranteeing that no
+# guide/list/player navigation code path runs interpreted.
 
-# Entry point + main Activity
-HSPLcom/aeriotv/android/MainActivity;->**(**)**
+# ---------------------------------------------------------------------------
+# App code -- ALL of it, including every composable's synthetic lambda classes,
+# ViewModels, repositories, preferences, playback holders and DB wrappers.
+# The `**` crosses `$`, so GuideScreenKt$... ProgrammeCell lambdas, etc. are
+# all covered (the single biggest gap in the previous profile).
+# ---------------------------------------------------------------------------
+HSPLcom/aeriotv/android/**->**(**)**
 
-# Application class + Hilt
-HSPLcom/aeriotv/android/AerioTVApplication;->**(**)**
-HSPLcom/aeriotv/android/Hilt_AerioTVApplication;->**(**)**
+# ---------------------------------------------------------------------------
+# Jetpack Compose runtime -- recomposer, snapshot system, Composer, State,
+# SnapshotStateList/Map, derivedStateOf. Runs on every recomposition, i.e.
+# every D-pad focus move in the guide.
+# ---------------------------------------------------------------------------
+HSPLandroidx/compose/runtime/**->**(**)**
 
-# Navigation
-HSPLcom/aeriotv/android/Navigation**;->**(**)**
+# Compose foundation -- LazyColumn/LazyRow item composition + measurement,
+# scroll state, gesture/focus handling, background/border/clip modifiers.
+HSPLandroidx/compose/foundation/**->**(**)**
 
-# Live TV / Guide -- the largest single Compose function in the app
-HSPLcom/aeriotv/android/feature/livetv/GuideScreenKt;->**(**)**
-HSPLcom/aeriotv/android/feature/livetv/LiveTVTabContentKt;->**(**)**
-HSPLcom/aeriotv/android/feature/livetv/LiveTVViewMode;->**(**)**
-HSPLcom/aeriotv/android/feature/livetv/ChannelGuideRow**;->**(**)**
+# Compose UI core -- layout nodes, modifier chain resolution, focus traversal,
+# semantics, graphics layers, text layout, key/input event dispatch.
+HSPLandroidx/compose/ui/**->**(**)**
 
-# Main scaffold + nav bar
-HSPLcom/aeriotv/android/feature/main/MainScaffoldKt;->**(**)**
-HSPLcom/aeriotv/android/feature/main/AppTab;->**(**)**
-HSPLcom/aeriotv/android/feature/main/SyncActivityPillKt;->**(**)**
+# Compose Material3 + Material + animation -- widgets, the focus-scale
+# animations used throughout the TV chrome, and the material-icons-extended
+# vector assets the guide cell menus / chrome build during composition (these
+# live under androidx.compose.material.icons, NOT material3).
+HSPLandroidx/compose/material3/**->**(**)**
+HSPLandroidx/compose/material/**->**(**)**
+HSPLandroidx/compose/animation/**->**(**)**
 
-# On Demand
-HSPLcom/aeriotv/android/feature/ondemand/OnDemandTabContentKt;->**(**)**
-HSPLcom/aeriotv/android/feature/ondemand/OnDemandViewModel;->**(**)**
+# androidx.tv Material/Foundation -- the TV-specific components the guide,
+# pills and cards are built from.
+HSPLandroidx/tv/**->**(**)**
 
-# Channels list (used by both Live TV list mode and the Multiview picker)
-HSPLcom/aeriotv/android/feature/channels/ChannelListScreenKt;->**(**)**
+# androidx.collection -- ScatterMap/ObjectList et al. that Compose's runtime
+# and layout lean on heavily per frame.
+HSPLandroidx/collection/**->**(**)**
 
-# ViewModels that bootstrap on app launch
-HSPLcom/aeriotv/android/feature/playlist/PlaylistViewModel;->**(**)**
-HSPLcom/aeriotv/android/feature/settings/SettingsViewModel;->**(**)**
-HSPLcom/aeriotv/android/feature/dvr/DvrViewModel;->**(**)**
-HSPLcom/aeriotv/android/feature/favorites/FavoritesViewModel;->**(**)**
+# Lifecycle -- collectAsStateWithLifecycle, ViewModel, repeatOnLifecycle that
+# feed guide/list state into composition.
+HSPLandroidx/lifecycle/**->**(**)**
 
-# Repository + preferences + database (every cold launch hits these)
-HSPLcom/aeriotv/android/core/data/repository/PlaylistRepository;->**(**)**
-HSPLcom/aeriotv/android/core/preferences/AppPreferences;->**(**)**
-HSPLcom/aeriotv/android/core/data/db/**;->**(**)**
+# Navigation-Compose -- route changes when opening the player / switching tabs.
+HSPLandroidx/navigation/**->**(**)**
 
-# Compose runtime + foundation + material3 hot paths -- these are huge but
-# their hot methods get compiled by ART's app-startup heuristic for free
-# when our composables that USE them are listed above. We don't need to
-# enumerate compose internals; ProfileInstaller's tooling expects only the
-# app's own classes here.
+# DataStore -- preference reads that gate guide layout (scale, tints, groups).
+HSPLandroidx/datastore/**->**(**)**
 
-# ExoPlayer holder + persistent window (built eagerly in MainScaffold)
-HSPLcom/aeriotv/android/core/playback/AerioExoPlayerHolder;->**(**)**
-HSPLcom/aeriotv/android/core/playback/PersistentExoWindowKt;->**(**)**
+# ---------------------------------------------------------------------------
+# Kotlin coroutines + the kotlin stdlib. The guide leans on stdlib collection/
+# sequence/text/comparison/range ops every frame for filtering, sorting,
+# grouping, time formatting and StateFlow plumbing; covering the whole stdlib
+# (it is small relative to Compose) closes the gap to full-AOT smoothness.
+# ---------------------------------------------------------------------------
+HSPLkotlinx/coroutines/**->**(**)**
+HSPLkotlin/**->**(**)**
 
-# Theme + scaling
-HSPLcom/aeriotv/android/ui/theme/**;->**(**)**
-HSPLcom/aeriotv/android/ui/displayscale/**;->**(**)**
+# ---------------------------------------------------------------------------
+# Coil 3 -- channel/programme logo loading shown inline in the guide rows.
+# ---------------------------------------------------------------------------
+HSPLcoil3/**->**(**)**
+
+# ---------------------------------------------------------------------------
+# Media3 ExoPlayer -- the persistent player window is built eagerly in the main
+# scaffold and entered from the guide; keep its setup/render path native.
+# ---------------------------------------------------------------------------
+HSPLandroidx/media3/**->**(**)**
