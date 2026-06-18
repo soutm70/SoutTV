@@ -11,6 +11,7 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -59,13 +60,14 @@ fun aerioRenderersFactory(
                 android.util.Log.i("AerioPlayerDiag", "audio sink -> stock context sink (passthrough on)")
                 return super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
             }
-            android.util.Log.i("AerioPlayerDiag", "audio sink -> forced-PCM no-context sink (passthrough off)")
+            android.util.Log.i("AerioPlayerDiag", "audio sink -> forced-PCM no-context sink + PTS-smoothing (passthrough off)")
             @Suppress("DEPRECATION")
-            return DefaultAudioSink.Builder()
+            val pcmSink = DefaultAudioSink.Builder()
                 .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
                 .setEnableFloatOutput(enableFloatOutput)
                 .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                 .build()
+            return PtsSmoothingAudioSink(pcmSink)
         }
 
         override fun buildVideoRenderers(
@@ -115,6 +117,90 @@ fun aerioRenderersFactory(
         // (PREFER would route ALL audio through the software decoder, wasting
         // CPU on formats the hardware handles fine.)
         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+}
+
+/**
+ * Wraps the forced-PCM audio sink to absorb the periodic ~1s output-PTS jumps
+ * the FFmpeg AC-3 / E-AC-3 decoder emits on live single-PMT MPEG-TS. Root cause
+ * (verified against media3 1.4.1 DefaultAudioSink.handleBuffer): when the
+ * incoming presentationTimeUs diverges from the sink's frame-derived expected by
+ * more than a hardcoded 200ms, the sink drains the AudioTrack to re-sync, which
+ * underruns it; since the audio renderer is the MediaClock, the player stalls
+ * READY -> BUFFERING for 2-4s and flushes the video codec. There is no public
+ * knob to widen that 200ms gate, and the UnexpectedDiscontinuityException is
+ * log-only (never thrown), so catching it does nothing. Instead we keep the
+ * OUTPUT timeline continuous: on a spurious forward jump (>=150ms and <=1.5s) we
+ * advance the rewritten PTS by the last NORMAL inter-buffer cadence instead of
+ * the jump, so the gate never trips. Normal buffers, backward jumps, and real
+ * gaps (>1.5s) pass through untouched, so it is a structural no-op for VOD and
+ * multiview (continuous timestamps) and for passthrough (this wrapper isn't used
+ * when passthrough is on). State resets on configure/flush/reset/discontinuity so
+ * a genuine seek is never mis-corrected. Position reporting is unaffected (the
+ * sink derives it from AudioTrack frames, not from our rewrite).
+ */
+@OptIn(UnstableApi::class)
+private class PtsSmoothingAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
+    private var hasLast = false
+    private var lastInUs = 0L
+    private var lastOutUs = 0L
+    private var lastNormalDeltaUs = -1L // -1 until we have seen a normal cadence
+
+    override fun handleBuffer(
+        buffer: java.nio.ByteBuffer,
+        presentationTimeUs: Long,
+        encodedAccessUnitCount: Int,
+    ): Boolean {
+        val outUs: Long = if (!hasLast) {
+            presentationTimeUs // first buffer: anchor the output timeline to the real PTS
+        } else {
+            val deltaIn = presentationTimeUs - lastInUs
+            val effectiveDelta =
+                if (lastNormalDeltaUs >= 0 && deltaIn in TRIP_THRESHOLD_US..MAX_SWALLOW_US) {
+                    lastNormalDeltaUs // spurious jump -> advance by the normal cadence
+                } else {
+                    deltaIn // normal increment, backward jump, or real large gap
+                }
+            lastOutUs + effectiveDelta
+        }
+        val ok = super.handleBuffer(buffer, outUs, encodedAccessUnitCount)
+        // Advance state only when the buffer was accepted; on a partial/false return
+        // the same buffer is re-submitted and must map to the same rewritten PTS.
+        if (ok) {
+            if (hasLast) {
+                val deltaIn = presentationTimeUs - lastInUs
+                if (deltaIn in 0 until TRIP_THRESHOLD_US) lastNormalDeltaUs = deltaIn
+            }
+            lastInUs = presentationTimeUs
+            lastOutUs = outUs
+            hasLast = true
+        }
+        return ok
+    }
+
+    override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
+        resetSmoothing()
+        super.configure(inputFormat, specifiedBufferSize, outputChannels)
+    }
+
+    override fun flush() { resetSmoothing(); super.flush() }
+
+    override fun reset() { resetSmoothing(); super.reset() }
+
+    override fun handleDiscontinuity() { resetSmoothing(); super.handleDiscontinuity() }
+
+    private fun resetSmoothing() {
+        hasLast = false
+        lastInUs = 0L
+        lastOutUs = 0L
+        lastNormalDeltaUs = -1L
+    }
+
+    companion object {
+        // Below the sink's hardcoded 200ms re-sync gate, so we pre-empt it.
+        private const val TRIP_THRESHOLD_US = 150_000L
+        // Cap: only absorb the known ~1s muxer hiccups; larger = a real gap, pass through.
+        private const val MAX_SWALLOW_US = 1_500_000L
+    }
 }
 
 /**
