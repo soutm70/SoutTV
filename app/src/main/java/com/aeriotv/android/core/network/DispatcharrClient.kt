@@ -20,6 +20,7 @@ import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -938,24 +939,98 @@ class DispatcharrClient @Inject constructor() {
      * the channel UUID (the proxy path uses UUIDs, like [streamUrl]). Requires an
      * admin-level api_key (Direct Connect authenticates as admin).
      */
+    /**
+     * POST /proxy/ts/change_stream/{uuid}. Returns the resolved upstream URL the
+     * server will swap to (from the response body's `url`), or null if absent.
+     *
+     * The caller gates its client-side re-prime on /proxy/ts/status reporting this
+     * SAME url, NOT on stream_id: when the request lands on a non-owner worker
+     * (owner:false) the switch is applied via a Redis event, and that event-apply
+     * path on the server updates metadata.url but never metadata.stream_id (see
+     * apps/proxy/live_proxy/server.py STREAM_SWITCH handler) -- so status.stream_id
+     * stays stale even though the stream really did switch.
+     */
     suspend fun changeStream(
         baseUrl: String,
         apiKey: String,
         channelUuid: String,
         streamId: Int,
-    ) {
+    ): String? {
         val url = "${baseUrl.trimEnd('/')}/proxy/ts/change_stream/$channelUuid"
         val response: HttpResponse = client.post(url) {
             applyAuth(apiKey)
             contentType(ContentType.Application.Json)
             setBody(JsonObject(mapOf("stream_id" to JsonPrimitive(streamId))))
         }
+        val respBody = runCatching { response.bodyAsText() }.getOrNull()
+        android.util.Log.i(
+            "DispatcharrSwitch",
+            "change_stream POST $url stream_id=$streamId -> HTTP ${response.status.value} body=$respBody",
+        )
         unauthorizedCheck(response, url)
         if (!response.status.isSuccess()) {
             throw DispatcharrError.Transport(
-                "Switch Stream failed: HTTP ${response.status.value} ${response.status.description}",
+                "Switch Stream failed: HTTP ${response.status.value} ${response.status.description} body=$respBody",
             )
         }
+        return respBody?.let { body ->
+            runCatching {
+                (kotlinx.serialization.json.Json.parseToJsonElement(body) as? JsonObject)
+                    ?.get("url")?.let { (it as? JsonPrimitive)?.contentOrNull }
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * GET /proxy/ts/status/{channelUuid} — the channel's live status. Returns the
+     * currently-active stream's pk (info['stream_id']). NOTE: this is only reliable
+     * on first read / after an owner-direct switch; after an event-apply switch
+     * (owner:false) the server leaves metadata.stream_id stale, so the caller
+     * prefers the in-session selection. Used to radio-mark the active row in the
+     * Switch Stream sheet when nothing has been switched yet this session.
+     * Returns null when the channel has no active session or the call fails.
+     */
+    suspend fun getCurrentStreamId(
+        baseUrl: String,
+        apiKey: String,
+        channelUuid: String,
+    ): Int? {
+        val url = "${baseUrl.trimEnd('/')}/proxy/ts/status/$channelUuid"
+        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            android.util.Log.i("DispatcharrSwitch", "status $channelUuid -> HTTP ${response.status.value}")
+            return null
+        }
+        val obj = runCatching { response.body<JsonElement>() }.getOrNull() as? JsonObject ?: return null
+        val sid = (obj["stream_id"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+        android.util.Log.i("DispatcharrSwitch", "status $channelUuid -> stream_id=$sid")
+        return sid
+    }
+
+    /**
+     * Active upstream URL for a channel, read from /proxy/ts/status. Reliable
+     * across both the owner-direct and event-apply switch paths (the server keeps
+     * metadata.url current on both), unlike stream_id. Used to confirm a switch
+     * landed before the client re-primes its connection.
+     */
+    suspend fun getCurrentStreamUrl(
+        baseUrl: String,
+        apiKey: String,
+        channelUuid: String,
+    ): String? {
+        val url = "${baseUrl.trimEnd('/')}/proxy/ts/status/$channelUuid"
+        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            android.util.Log.i("DispatcharrSwitch", "status $channelUuid -> HTTP ${response.status.value}")
+            return null
+        }
+        val obj = runCatching { response.body<JsonElement>() }.getOrNull() as? JsonObject ?: return null
+        val u = (obj["url"] as? JsonPrimitive)?.contentOrNull
+        val sid = (obj["stream_id"] as? JsonPrimitive)?.contentOrNull
+        android.util.Log.i("DispatcharrSwitch", "status $channelUuid -> url=$u stream_id=$sid")
+        return u
     }
 
     /**

@@ -1141,8 +1141,17 @@ class PlaylistViewModel @Inject constructor(
      * upstream to [streamId] (a Stream pk). [channelUuid] is M3UChannel.id minus
      * the "disp:" prefix. Result so the caller can Toast success/failure.
      */
-    suspend fun switchChannelStream(channelUuid: String, streamId: Int): Result<Unit> =
+    /** Switch the upstream; Result carries the resolved upstream URL (re-prime gate). */
+    suspend fun switchChannelStream(channelUuid: String, streamId: Int): Result<String?> =
         runCatching { repository.switchDispatcharrStream(channelUuid, streamId) }
+
+    /** Currently-active stream pk for the Switch Stream sheet's radio mark. */
+    suspend fun loadCurrentStreamId(channelUuid: String): Int? =
+        runCatching { repository.currentDispatcharrStreamId(channelUuid) }.getOrNull()
+
+    /** Currently-active upstream URL (re-prime gate after a switch). */
+    suspend fun loadCurrentStreamUrl(channelUuid: String): String? =
+        runCatching { repository.currentDispatcharrStreamUrl(channelUuid) }.getOrNull()
 }
 
 /** Find the programme containing `now` for a given channel. */

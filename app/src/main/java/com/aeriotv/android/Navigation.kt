@@ -591,6 +591,12 @@ fun AerioTVNavHost(
                     onSwitchChannelStream = { channelUuid, streamId ->
                         vm.switchChannelStream(channelUuid, streamId).getOrThrow()
                     },
+                    onLoadCurrentStreamId = { channelUuid ->
+                        vm.loadCurrentStreamId(channelUuid)
+                    },
+                    onLoadCurrentStreamUrl = { channelUuid ->
+                        vm.loadCurrentStreamUrl(channelUuid)
+                    },
                 )
                 }
             }

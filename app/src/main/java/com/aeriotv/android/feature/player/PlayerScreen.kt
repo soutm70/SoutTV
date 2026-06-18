@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -62,7 +63,10 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 private const val TAG = "PlayerScreen"
@@ -85,7 +89,9 @@ fun PlayerScreen(
     onClose: () -> Unit = {},
     onLaunchMultiview: () -> Unit = {},
     onLoadChannelStreams: suspend (Int) -> List<StreamOption> = { emptyList() },
-    onSwitchChannelStream: suspend (String, Int) -> Unit = { _, _ -> },
+    onSwitchChannelStream: suspend (String, Int) -> String? = { _, _ -> null },
+    onLoadCurrentStreamId: suspend (String) -> Int? = { null },
+    onLoadCurrentStreamUrl: suspend (String) -> String? = { null },
 ) {
     // Hold the screen awake while the fullscreen player is mounted. Without
     // this the system screen-timeout fires mid-stream after its idle window
@@ -531,11 +537,20 @@ fun PlayerScreen(
                 )
             },
             onShowSwitchStream = {
-                val chPk = currentChannel?.dispatcharrChannelId ?: return@PlayerChromeOverlay
+                val ch = currentChannel ?: return@PlayerChromeOverlay
+                val chPk = ch.dispatcharrChannelId ?: return@PlayerChromeOverlay
+                val uuid = ch.id.removePrefix("disp:")
                 scope.launch {
+                    val streams = onLoadChannelStreams(chPk)
+                    // Prefer the in-session selection for the radio mark: after an
+                    // event-apply switch the server leaves /proxy/ts/status's stream_id
+                    // stale (it only refreshes url), so switchedStreamId is the truthful
+                    // "what we last switched to". Fall back to status stream_id when we
+                    // haven't switched anything this session (correct on first read).
+                    val current = onLoadCurrentStreamId(uuid)
                     switchStream = SwitchStreamState(
-                        streams = onLoadChannelStreams(chPk),
-                        currentStreamId = switchedStreamId,
+                        streams = streams,
+                        currentStreamId = switchedStreamId ?: current,
                     )
                 }
             },
@@ -716,18 +731,106 @@ fun PlayerScreen(
                 switchStream = null
                 if (ch != null) {
                     switchedStreamId = id
+                    val uuid = ch.id.removePrefix("disp:")
+                    val proxyUrl = ch.url
                     scope.launch {
-                        runCatching { onSwitchChannelStream(ch.id.removePrefix("disp:"), id) }
-                        // Re-prime the SAME proxy URL so ExoPlayer pulls the newly
-                        // selected source (Dispatcharr swapped it server-side behind
-                        // the unchanged /proxy/ts/stream/<uuid>).
+                        // --- Why this dance (all verified against Dispatcharr source) ---
+                        // change_stream applies the switch to the LIVE session, usually
+                        // ASYNCHRONOUSLY (owner:false -> Redis event, applied by the owner
+                        // worker). The owner swaps the upstream IN PLACE on the running
+                        // stream_manager -- a mid-stream TS discontinuity, no EOF -- and the
+                        // deep live buffer (ca07882) absorbs the splice so ExoPlayer's
+                        // ProgressiveMediaSource never flushes and won't follow it. To make
+                        // it follow we must re-prepare (flush) the same proxy URL. BUT a
+                        // bare re-prepare drops our only TCP connection, and with the
+                        // server default channel_shutdown_delay=0 that fires stop_channel,
+                        // which DELETES channel_stream:{id} and makes the reconnect cold-
+                        // resolve to the channel's DEFAULT (first-ordered) stream -- worse
+                        // than doing nothing. So:
+                        //   1. Confirm the switch actually landed: poll /status until
+                        //      status.url == the change_stream url. We gate on URL, never
+                        //      stream_id (the event-apply path refreshes metadata.url but
+                        //      leaves stream_id stale 20+s, so stream_id false-negatives).
+                        //   2. Hold a SECOND AllowAny GET to the same /proxy/ts/stream URL
+                        //      open across the re-prime so the channel never drops to 0
+                        //      clients -> stream_manager survives -> the reconnect re-attaches
+                        //      to the already-switched session instead of cold-resolving.
+                        //      Best-effort: if the keepalive can't connect we re-prime anyway.
+                        val newUrl = runCatching { onSwitchChannelStream(uuid, id) }.getOrNull()
+                        if (newUrl.isNullOrBlank()) {
+                            Toast.makeText(context, "Stream switch failed", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+
+                        // confirm: poll status.url == target within budgetMs (strict equality)
+                        suspend fun confirm(target: String, budgetMs: Long): Boolean {
+                            val end = android.os.SystemClock.elapsedRealtime() + budgetMs
+                            while (android.os.SystemClock.elapsedRealtime() < end) {
+                                if (currentChannel?.id != ch.id || switchedStreamId != id) return false
+                                if (onLoadCurrentStreamUrl(uuid) == target) return true
+                                delay(150)
+                            }
+                            return false
+                        }
+                        var targetUrl = newUrl
+                        var confirmed = confirm(newUrl, 6_000L)
+                        if (!confirmed) {
+                            // Safe retry: re-issue once (may now hit the owner:true direct
+                            // path), brief re-confirm. Never re-prime blind on timeout.
+                            val u2 = runCatching { onSwitchChannelStream(uuid, id) }.getOrNull()
+                            if (!u2.isNullOrBlank()) { targetUrl = u2; confirmed = confirm(u2, 3_000L) }
+                        }
+                        if (currentChannel?.id != ch.id || switchedStreamId != id) return@launch
+                        if (!confirmed) {
+                            Toast.makeText(
+                                context,
+                                "Stream switch not confirmed; staying on current feed",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return@launch
+                        }
+
+                        Toast.makeText(context, "Switching stream...", Toast.LENGTH_SHORT).show()
+                        // Keepalive: a bare GET to the AllowAny /proxy/ts/stream URL, read +
+                        // discarded on IO, holding the client count >= 1 across the re-prime.
+                        val connHolder = java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection?>()
+                        val connected = CompletableDeferred<Boolean>()
+                        val keepAlive = launch(Dispatchers.IO) {
+                            try {
+                                val c = (java.net.URL(proxyUrl).openConnection() as java.net.HttpURLConnection).apply {
+                                    connectTimeout = 4000
+                                    readTimeout = 8000
+                                    requestMethod = "GET"
+                                    setRequestProperty("User-Agent", "AerioTV-switch-keepalive")
+                                }
+                                connHolder.set(c)
+                                c.inputStream.use { ins ->
+                                    val buf = ByteArray(32 * 1024)
+                                    if (ins.read(buf) >= 0 && !connected.isCompleted) connected.complete(true)
+                                    while (isActive) { if (ins.read(buf) < 0) break }
+                                }
+                            } catch (_: Throwable) {
+                                // best-effort; fall through to the re-prime regardless
+                            } finally {
+                                if (!connected.isCompleted) connected.complete(false)
+                                runCatching { connHolder.get()?.disconnect() }
+                            }
+                        }
+                        // Ensure the keepalive is actually attached (or definitively failed)
+                        // before we drop ExoPlayer's connection. Proceed either way.
+                        withTimeoutOrNull(4_000L) { connected.await() }
                         exoHolder.playUrl(
-                            url = ch.url,
+                            url = proxyUrl,
                             title = ch.name,
                             subtitle = nowProgramme?.title.orEmpty(),
                             artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
                                 ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() },
                         )
+                        // Hold the keepalive long enough for ExoPlayer's reconnect to be
+                        // established (client count back >= 2) before releasing it.
+                        delay(5_000L)
+                        keepAlive.cancel()
+                        runCatching { connHolder.get()?.disconnect() }
                     }
                 }
             },

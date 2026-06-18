@@ -628,12 +628,39 @@ class PlaylistRepository @Inject constructor(
      * server-side behind the unchanged /proxy/ts/stream/<uuid> URL; the caller
      * re-primes that URL afterwards so playback pulls the new source.
      */
-    suspend fun switchDispatcharrStream(channelUuid: String, streamId: Int) {
+    /** Switch the channel's upstream. Returns the resolved upstream URL the server
+     *  swapped to (for the client re-prime gate), or null if the response omitted it. */
+    suspend fun switchDispatcharrStream(channelUuid: String, streamId: Int): String? {
         val playlist = activePlaylist() ?: error("No active playlist for stream switch")
         val base = effectiveBaseUrl(playlist)
-        dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+        return dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
             dispatcharrClient.changeStream(base, key, channelUuid, streamId)
         }
+    }
+
+    /** The currently-active stream pk for a Dispatcharr channel (Switch Stream
+     *  sheet radio mark), from /proxy/ts/status. null when unknown / not playing. */
+    suspend fun currentDispatcharrStreamId(channelUuid: String): Int? {
+        val playlist = activePlaylist() ?: return null
+        val base = effectiveBaseUrl(playlist)
+        return runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.getCurrentStreamId(base, key, channelUuid)
+            }
+        }.getOrNull()
+    }
+
+    /** The currently-active upstream URL for a Dispatcharr channel, from
+     *  /proxy/ts/status. Used to confirm a stream switch landed (reliable on both
+     *  the owner-direct and event-apply paths, unlike stream_id). */
+    suspend fun currentDispatcharrStreamUrl(channelUuid: String): String? {
+        val playlist = activePlaylist() ?: return null
+        val base = effectiveBaseUrl(playlist)
+        return runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.getCurrentStreamUrl(base, key, channelUuid)
+            }
+        }.getOrNull()
     }
 
     suspend fun clear() {
