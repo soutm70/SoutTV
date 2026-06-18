@@ -130,6 +130,16 @@ fun PlaylistEntity.isDispatcharrDirectConnect(): Boolean =
         sourceType == SourceType.DispatcharrUserPass.name
 
 /**
+ * True when this playlist is a Dispatcharr Direct Connect ADMIN account
+ * (user_level >= 10). POST /proxy/ts/change_stream is IsAdmin on the server, so
+ * only admin accounts can actually switch streams; the player's Switch Stream
+ * option gates on this so a standard sub-account never sees an option that would
+ * 403. Same admin bar as server-side recording (see [canRecordToServer]).
+ */
+fun PlaylistEntity.isDispatcharrAdmin(): Boolean =
+    isDispatcharrDirectConnect() && dispatcharrUserLevel >= 10
+
+/**
  * User-facing label for this playlist's source type. Single source of truth
  * for the Type row on Playlist Detail AND the playlist-row subtitle on the
  * Settings root, so the two never drift apart.

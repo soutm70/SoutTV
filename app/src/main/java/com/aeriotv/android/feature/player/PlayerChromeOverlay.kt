@@ -86,7 +86,7 @@ import coil3.request.ImageRequest
 import coil3.size.Size
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.ui.LocalCanRecordToServer
-import com.aeriotv.android.ui.LocalIsDispatcharrDirectConnect
+import com.aeriotv.android.ui.LocalIsDispatcharrAdmin
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.toInfoTarget
@@ -187,13 +187,14 @@ fun PlayerChromeOverlay(
     // builds a target from live EPG, falling back to a generic 60-minute
     // window when EPG isn't loaded (Dispatcharr playlists often lack it).
     val canRecord = channel?.dispatcharrChannelId != null && LocalCanRecordToServer.current
-    // Switch Stream is Dispatcharr Direct Connect-only (the streams list +
-    // change_stream live behind it). Gate on BOTH the playlist source type
-    // (LocalIsDispatcharrDirectConnect) AND the per-channel int PK, so it is
-    // explicitly hidden for XC / M3U playlists (which have one URL per channel
-    // and no streams API) rather than relying on a single coupled signal.
+    // Switch Stream needs a Dispatcharr Direct Connect ADMIN account: the streams
+    // list + change_stream live behind it, and change_stream is IsAdmin on the
+    // server. Gate on the admin signal (LocalIsDispatcharrAdmin, which implies
+    // Direct Connect) AND the per-channel int PK, so the option is hidden for
+    // XC / M3U playlists AND for standard (non-admin) Dispatcharr sub-accounts
+    // that would only get a 403 -- never show an option the user can't use.
     val canSwitchStream =
-        LocalIsDispatcharrDirectConnect.current && channel?.dispatcharrChannelId != null
+        LocalIsDispatcharrAdmin.current && channel?.dispatcharrChannelId != null
     val recordCurrent: () -> Unit = {
         val target = nowProgramme?.toInfoTarget(channel?.name.orEmpty(), channel?.dispatcharrChannelId)
             ?: channel?.let {

@@ -15,14 +15,15 @@ import androidx.compose.runtime.compositionLocalOf
 val LocalCanRecordToServer = compositionLocalOf { true }
 
 /**
- * Whether the active playlist is a Dispatcharr Direct Connect source (API key
- * or user/pass) -- the only source with the per-channel streams list +
- * change_stream endpoint behind the player's Switch Stream picker. Provided at
- * the Player surface from the active playlist; Switch Stream reads it (alongside
- * the per-channel dispatcharrChannelId) and stays hidden for XC / M3U sources,
- * which expose one URL per channel with nothing to switch between.
+ * Whether the active playlist is a Dispatcharr Direct Connect ADMIN account
+ * (user_level >= 10). POST /proxy/ts/change_stream is IsAdmin on the server, so
+ * only admin accounts can switch streams; the player's Switch Stream option
+ * gates on this (with the per-channel dispatcharrChannelId) so it is hidden for
+ * XC / M3U sources AND for standard (non-admin) Dispatcharr sub-accounts that
+ * would otherwise see an option that 403s. Admin implies Direct Connect.
  *
  * Defaults to true so a read outside any provider falls back to the per-channel
- * dispatcharrChannelId gate, which is itself only set for Direct Connect.
+ * dispatcharrChannelId gate (Direct-Connect-only); the Player surface supplies
+ * the real admin value.
  */
-val LocalIsDispatcharrDirectConnect = compositionLocalOf { true }
+val LocalIsDispatcharrAdmin = compositionLocalOf { true }
