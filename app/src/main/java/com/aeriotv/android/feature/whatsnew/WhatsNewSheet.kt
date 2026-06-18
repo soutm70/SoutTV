@@ -202,27 +202,37 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Leaving the app stops playback on TV",
-            body = "On Android TV, pressing Home or going to recent apps now " +
-                "stops playback instead of leaving audio running in the " +
-                "background at the launcher.",
+            title = "Switch Stream",
+            body = "On Dispatcharr Direct Connect, the player options menu now " +
+                "lists every stream behind a channel with its quality and the " +
+                "source playlist it comes from, so you can switch on the fly. " +
+                "AerioTV also follows along automatically when Dispatcharr " +
+                "changes the stream on the server.",
         ),
         WhatsNewItem(
-            title = "True fullscreen on phone",
-            body = "Watching on a phone now hides the status and navigation " +
-                "bars for a clean, edge-to-edge picture, in both landscape and " +
-                "portrait. Swipe from the edge to bring them back.",
+            title = "Smoother live playback",
+            body = "Broadcast audio (AC-3 and E-AC-3) now plays on devices that " +
+                "could not decode it before, and a new audio path stops the " +
+                "brief stutters some channels caused. The live buffer is also " +
+                "deeper, so streams ride out short network hiccups.",
         ),
         WhatsNewItem(
-            title = "Sound fixes",
-            body = "Fixed a case where some devices played a stream with no " +
-                "audio, and audio now pauses correctly when another app takes " +
-                "over the speakers.",
+            title = "Faster channel start",
+            body = "Channels start noticeably quicker, and a stream that sends " +
+                "no data now times out and reconnects instead of hanging on a " +
+                "black screen.",
         ),
         WhatsNewItem(
-            title = "Closing the floating window stops playback",
-            body = "Closing the floating mini-window with its X now stops the " +
-                "stream instead of leaving audio playing in the background.",
+            title = "Channel groups, your way",
+            body = "Reorder channel groups alphabetically or by hand, and the " +
+                "channel list now clusters by the order you choose.",
+        ),
+        WhatsNewItem(
+            title = "TV and phone polish",
+            body = "Fixed guide navigation lag and oversized focus rings on " +
+                "Android TV, added long-press BACK to bring the mini-player " +
+                "back to fullscreen, and on phones added a fullscreen button " +
+                "and fixed the player banner under the camera cutout.",
         ),
     )
 }
