@@ -119,6 +119,17 @@ fun PlaylistEntity.canRecordToServer(): Boolean =
         dispatcharrUserLevel >= 10
 
 /**
+ * True when this playlist is a Dispatcharr Direct Connect source (API key or
+ * user/pass) -- the only source type with the per-channel streams list +
+ * change_stream endpoint the player's Switch Stream picker needs. XC and M3U
+ * sources expose a single URL per channel with no streams API, so Switch Stream
+ * is hidden for them (there is nothing to switch to).
+ */
+fun PlaylistEntity.isDispatcharrDirectConnect(): Boolean =
+    sourceType == SourceType.DispatcharrApiKey.name ||
+        sourceType == SourceType.DispatcharrUserPass.name
+
+/**
  * User-facing label for this playlist's source type. Single source of truth
  * for the Type row on Playlist Detail AND the playlist-row subtitle on the
  * Settings root, so the two never drift apart.

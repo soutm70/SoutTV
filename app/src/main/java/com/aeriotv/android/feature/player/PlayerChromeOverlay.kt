@@ -86,6 +86,7 @@ import coil3.request.ImageRequest
 import coil3.size.Size
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.ui.LocalCanRecordToServer
+import com.aeriotv.android.ui.LocalIsDispatcharrDirectConnect
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.toInfoTarget
@@ -186,10 +187,13 @@ fun PlayerChromeOverlay(
     // builds a target from live EPG, falling back to a generic 60-minute
     // window when EPG isn't loaded (Dispatcharr playlists often lack it).
     val canRecord = channel?.dispatcharrChannelId != null && LocalCanRecordToServer.current
-    // Switch Stream is Dispatcharr Direct Connect-only too (the streams list +
-    // change_stream live behind it); the int channel PK is the gate, same as
-    // Record but without needing the record capability. Hidden for XC/M3U.
-    val canSwitchStream = channel?.dispatcharrChannelId != null
+    // Switch Stream is Dispatcharr Direct Connect-only (the streams list +
+    // change_stream live behind it). Gate on BOTH the playlist source type
+    // (LocalIsDispatcharrDirectConnect) AND the per-channel int PK, so it is
+    // explicitly hidden for XC / M3U playlists (which have one URL per channel
+    // and no streams API) rather than relying on a single coupled signal.
+    val canSwitchStream =
+        LocalIsDispatcharrDirectConnect.current && channel?.dispatcharrChannelId != null
     val recordCurrent: () -> Unit = {
         val target = nowProgramme?.toInfoTarget(channel?.name.orEmpty(), channel?.dispatcharrChannelId)
             ?: channel?.let {
