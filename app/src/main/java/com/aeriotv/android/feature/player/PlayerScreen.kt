@@ -8,8 +8,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
@@ -350,6 +357,12 @@ fun PlayerScreen(
 
     val streamUrl = currentChannel?.url.orEmpty()
 
+    // Dead-upstream net: the holder flips this true when a freshly-tuned live
+    // stream produced no data even after a reconnect (AerioExoPlayerHolder
+    // no-data watchdog). Drives the "Channel unavailable" overlay below instead
+    // of an endless black screen. A channel flip / re-tap clears it.
+    val streamUnavailable by exoHolder.streamUnavailable.collectAsStateWithLifecycle()
+
     // Returning to the foreground player must always restore video unless the
     // user explicitly chose Audio Only. A media-session controller (or the old
     // car-audio path) could have disabled the video track while we were
@@ -442,6 +455,35 @@ fun PlayerScreen(
                     )
                 },
         )
+
+        // Dead-upstream net: the holder's no-data watchdog reconnected once and
+        // still got zero bytes, so it flagged the channel unavailable + stopped.
+        // Show a clear message instead of an endless black screen. No focusable
+        // surface (no background pointer handler) so the chrome toggle + D-pad
+        // channel flip below still work; a flip / re-tap clears the flag.
+        if (streamUnavailable) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(32.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "Channel unavailable",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                )
+                Text(
+                    text = "This stream isn't responding right now. Press Back to exit, " +
+                        "or use the D-pad up/down to change channels.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.72f),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
 
         PlayerChromeOverlay(
             channel = currentChannel,

@@ -156,6 +156,22 @@ class AerioExoPlayerHolder @Inject constructor(
     // player 7.8s in, 200ms before the original 8s trigger). 5s keeps a wide
     // margin over normal startup while healing before the user gives up.
     private val noVideoFrameThresholdMs = 5_000L
+    // ---- cold-start no-data net (never-started stream) ----
+    // A dead Dispatcharr upstream / proxy locked on a dead stream delivers ZERO
+    // bytes, so the player never leaves STATE_BUFFERING, never reaches READY,
+    // and every heal above (all gated on hasReachedPlaybackRestart) stays
+    // disarmed -> black screen forever (field: 57s+ and counting). This is the
+    // Android analog of iOS's libmpv network-timeout=30. After this long with no
+    // bytes since prime we reconnect ONCE (a fresh GET to the same proxy url,
+    // which also lets Dispatcharr re-select a live stream), then surface
+    // "unavailable" instead of hanging.
+    private val noDataStartupThresholdMs = 15_000L
+    private var noDataHealAttempts = 0
+    private val _streamUnavailable = MutableStateFlow(false)
+    /** True when a freshly-tuned live stream produced no data even after a
+     *  reconnect, so the player UI can show "Channel unavailable" instead of an
+     *  endless black screen. Cleared on the next [playUrl]. */
+    val streamUnavailable: StateFlow<Boolean> = _streamUnavailable.asStateFlow()
 
     /** Arms the watchdog on first steady playback + recovers on a hard error. */
     private val watchdogListener = object : Player.Listener {
@@ -561,6 +577,36 @@ class AerioExoPlayerHolder @Inject constructor(
             while (isActive) {
                 delay(watchdogPollMs)
                 val p = player ?: continue
+                val now = SystemClock.elapsedRealtime()
+
+                // Cold-start NO-DATA net (never-started stream). Runs INDEPENDENT
+                // of hasReachedPlaybackRestart: a dead Dispatcharr proxy stream
+                // delivers zero bytes, never reaches READY, and would otherwise be
+                // invisible to every heal below and hang on black forever (field:
+                // 57s+). Android analog of iOS libmpv network-timeout=30. If we
+                // still intend to play, no frame has rendered, we have not reached
+                // steady playback, the player is still BUFFERING, and NOTHING has
+                // arrived since prime, then after the threshold (1) reconnect once
+                // -- a fresh GET to the same /proxy/ts/stream/<uuid> url, which also
+                // gives Dispatcharr a chance to re-select a live stream -- and (2)
+                // if still no bytes, surface "Channel unavailable" instead of black.
+                if (lastPlayUrl != null && p.playWhenReady && !hasReachedPlaybackRestart &&
+                    !videoFrameRendered && p.playbackState == Player.STATE_BUFFERING &&
+                    p.currentPosition <= 0L && p.bufferedPosition <= 0L &&
+                    now - streamPrimedAtMs >= noDataStartupThresholdMs
+                ) {
+                    val deadMs = now - streamPrimedAtMs
+                    when (noDataHealAttempts) {
+                        0 -> if (forceReload("startup-no-data=${deadMs}ms")) noDataHealAttempts = 1
+                        else -> {
+                            noDataHealAttempts = 2
+                            Log.w(TAG, "[NO-DATA] no bytes after reconnect ch=$currentChannelId (${deadMs}ms); surfacing unavailable")
+                            markStreamUnavailable()
+                        }
+                    }
+                    continue
+                }
+
                 // Only when we intend to play, have a url to reload, have reached
                 // steady playback at least once (skip cold-start probes + user
                 // pauses), and aren't at end-of-stream.
@@ -569,7 +615,6 @@ class AerioExoPlayerHolder @Inject constructor(
                 ) {
                     continue
                 }
-                val now = SystemClock.elapsedRealtime()
                 // Black-screen net. Runs before the position check because an
                 // advancing audio position is exactly what masks this failure.
                 // videoFormat != null excludes radio/audio-only feeds; the
@@ -633,6 +678,15 @@ class AerioExoPlayerHolder @Inject constructor(
         return true
     }
 
+    /** Terminal heal for a never-started live stream: the Dispatcharr proxy
+     *  produced no bytes even after a reconnect. Flag it so the player UI shows
+     *  "Channel unavailable" (instead of an endless black screen) and stop the
+     *  dead connection. A fresh [playUrl] (channel flip / re-tap) clears it. */
+    private fun markStreamUnavailable() {
+        _streamUnavailable.value = true
+        stop()
+    }
+
     /** Last-resort black-screen heal: full player teardown + rebuild + replay.
      *  A recreate gets a fresh video codec AND a fresh surface binding (the
      *  persistent window rebinds via the playerInstance flow), curing wedges
@@ -684,6 +738,8 @@ class AerioExoPlayerHolder @Inject constructor(
         lastPositionAdvanceAtMs = SystemClock.elapsedRealtime()
         videoFrameRendered = false
         noFrameHealAttempts = 0
+        noDataHealAttempts = 0
+        _streamUnavailable.value = false
         streamPrimedAtMs = lastPositionAdvanceAtMs
     }
 
