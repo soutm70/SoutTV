@@ -622,6 +622,27 @@ class PlaylistRepository @Inject constructor(
     }
 
     /**
+     * Map of Dispatcharr M3U account id -> source name, to label each alternate
+     * in the Switch Stream sheet with the M3U it comes from. Empty for
+     * non-Dispatcharr sources, no active playlist, or on any failure (the sheet
+     * then just omits the source label). AuthBroker-wrapped.
+     */
+    suspend fun dispatcharrM3uAccountNames(): Map<Int, String> {
+        val playlist = activePlaylist() ?: return emptyMap()
+        val sourceType = playlist.resolvedSourceType()
+        val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+            sourceType == SourceType.DispatcharrUserPass
+        if (!isDispatcharr) return emptyMap()
+        val base = effectiveBaseUrl(playlist)
+        return runCatching {
+            dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
+                dispatcharrClient.listM3uAccounts(base, key)
+            }.mapNotNull { acct -> acct.name?.takeIf { it.isNotBlank() }?.let { acct.id to it } }
+                .toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    /**
      * Switch a Dispatcharr channel's active upstream to [streamId] (a Stream pk
      * from [listDispatcharrChannelStreams]). [channelUuid] is the channel UUID
      * (M3UChannel.id minus the "disp:" prefix). Dispatcharr swaps the source

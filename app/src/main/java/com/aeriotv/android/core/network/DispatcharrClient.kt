@@ -932,6 +932,20 @@ class DispatcharrClient @Inject constructor() {
         )
 
     /**
+     * GET /api/m3u/accounts/ -- the playlist's M3U source accounts. Used to map
+     * a stream's m3u_account id to a human source name in the Switch Stream
+     * picker ("which M3U is this stream from"). Direct Connect only.
+     */
+    suspend fun listM3uAccounts(
+        baseUrl: String,
+        apiKey: String,
+    ): List<DispatcharrM3uAccount> =
+        fetchListOrResults(
+            "${baseUrl.trimEnd('/')}/api/m3u/accounts/",
+            apiKey,
+        )
+
+    /**
      * POST /proxy/ts/change_stream/{channelUuid} — switch the channel's active
      * upstream to [streamId] (a Stream pk from [listChannelStreams]). Dispatcharr
      * swaps the source server-side behind the same /proxy/ts/stream/<uuid> URL;
@@ -1151,10 +1165,21 @@ data class DispatcharrChannel(
  * Parsed as a JsonObject (not a typed class) so a number-vs-string probe field
  * can never crash deserialization.
  */
+/** One Dispatcharr M3U source account (GET /api/m3u/accounts/). [id] matches a
+ *  stream's m3u_account; [name] is the user-facing source name shown in Switch
+ *  Stream so the user knows which M3U each alternate comes from. */
+@Serializable
+data class DispatcharrM3uAccount(
+    val id: Int,
+    val name: String? = null,
+)
+
 @Serializable
 data class DispatcharrChannelStream(
     val id: Int,
     val name: String? = null,
+    @SerialName("m3u_account")
+    val m3uAccount: Int? = null,
     @SerialName("stream_stats")
     val streamStats: JsonObject? = null,
 ) {

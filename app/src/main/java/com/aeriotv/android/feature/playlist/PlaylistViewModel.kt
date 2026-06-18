@@ -1136,6 +1136,11 @@ class PlaylistViewModel @Inject constructor(
         runCatching { repository.listDispatcharrChannelStreams(channelIntPk) }
             .getOrDefault(emptyList())
 
+    /** M3U account id -> source name, to label Switch Stream rows with their M3U.
+     *  Empty on failure / non-Dispatcharr (the source label is then omitted). */
+    suspend fun loadM3uAccountNames(): Map<Int, String> =
+        runCatching { repository.dispatcharrM3uAccountNames() }.getOrDefault(emptyMap())
+
     /**
      * Player "Switch Stream": ask Dispatcharr to switch the channel's active
      * upstream to [streamId] (a Stream pk). [channelUuid] is M3UChannel.id minus

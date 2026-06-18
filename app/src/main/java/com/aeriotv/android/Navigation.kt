@@ -579,6 +579,10 @@ fun AerioTVNavHost(
                     // list the channel's member streams + their quality, then ask
                     // Dispatcharr to switch the active upstream.
                     onLoadChannelStreams = { channelIntPk ->
+                        // Resolve each stream's m3u_account id -> source name so the
+                        // sheet shows which M3U each alternate comes from (most users
+                        // keep several). One small accounts fetch per sheet open.
+                        val m3uNames = vm.loadM3uAccountNames()
                         vm.loadChannelStreams(channelIntPk).map { s ->
                             com.aeriotv.android.feature.player.StreamOption(
                                 id = s.id,
@@ -588,6 +592,7 @@ fun AerioTVNavHost(
                                 bitrateKbps = s.outputBitrateKbps,
                                 videoCodec = s.videoCodec,
                                 audioCodec = s.audioCodec,
+                                sourceName = s.m3uAccount?.let { m3uNames[it] },
                             )
                         }
                     },

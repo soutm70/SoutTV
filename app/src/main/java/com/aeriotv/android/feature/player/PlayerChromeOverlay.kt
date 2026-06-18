@@ -1251,12 +1251,18 @@ data class StreamOption(
     val bitrateKbps: Double?,
     val videoCodec: String?,
     val audioCodec: String?,
+    /** Name of the source M3U in Dispatcharr (resolved from the stream's
+     *  m3u_account), so the user can tell which provider each alternate is from. */
+    val sourceName: String? = null,
 ) {
-    /** Human row, e.g. "FOX 28  ·  1080p  ·  60fps  ·  8.2 Mbps  ·  H.264". */
+    /** Human row, e.g. "FOX 28  ·  Provider A  ·  1080p  ·  60fps  ·  8.2 Mbps  ·  H.264".
+     *  The M3U source leads the meta so it is easy to scan which provider a
+     *  stream comes from; quality params follow. */
     val label: String
         get() = buildString {
             append(name.ifBlank { "Stream $id" })
             val meta = buildList {
+                sourceName?.takeIf { it.isNotBlank() }?.let { add(it) }
                 resolution?.let { add(prettyResolution(it)) }
                 fps?.let { add("${it.toInt()}fps") }
                 bitrateKbps?.let { add(prettyBitrate(it)) }
