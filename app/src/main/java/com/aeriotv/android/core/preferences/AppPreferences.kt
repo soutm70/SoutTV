@@ -794,6 +794,55 @@ class AppPreferences @Inject constructor(
         store.data.first()[KEY_DVR_CUSTOM_FOLDER_URI].orEmpty()
 
     /**
+     * Persisted genre/category strings keyed by recording id (e.g.
+     * "server-79"). Dispatcharr does NOT reliably expose a completed
+     * recording's genre after its EPG programme ages out of the live cache
+     * (the /api/epg/programs list strips categories and ignores tvg_id
+     * filtering, the recording object carries no category, and program ids
+     * are inconsistent). So the DVR ViewModel persists each category the
+     * moment it IS resolvable (while the recording is airing or recent and
+     * its programme is still in the cache) and seeds it back on later loads,
+     * so completed rows keep their pill. Mirrors how iOS effectively retains
+     * the category. Stored as a single JSON object (id -> category) so the
+     * map stays atomic and category values can contain commas/slashes.
+     * Device-local; deliberately NOT part of the Drive sync snapshot (it is
+     * a per-install cache, the recordings themselves are server state).
+     */
+    val recordingCategories: Flow<Map<String, String>> = store.data.map { prefs ->
+        decodeRecordingCategories(prefs[KEY_DVR_RECORDING_CATEGORIES])
+    }
+
+    /** One-shot read of the whole persisted recordingId -> category map. */
+    suspend fun recordingCategoriesOnce(): Map<String, String> =
+        decodeRecordingCategories(store.data.first()[KEY_DVR_RECORDING_CATEGORIES])
+
+    /**
+     * Persist a resolved category for a single recording id. No-op for a
+     * blank id or a blank category (we never store blanks, an absent key
+     * already means "unknown"), and a no-op when the stored value already
+     * matches so we don't churn the DataStore on every 30s refresh. Suspends
+     * on the DataStore IO dispatcher, safe to fire-and-forget from a
+     * background coroutine.
+     */
+    suspend fun setRecordingCategory(id: String, category: String) {
+        val cleanId = id.trim()
+        val cleanCat = category.trim()
+        if (cleanId.isBlank() || cleanCat.isBlank()) return
+        store.edit { prefs ->
+            val current = decodeRecordingCategories(prefs[KEY_DVR_RECORDING_CATEGORIES])
+            if (current[cleanId] == cleanCat) return@edit
+            val updated = current.toMutableMap().apply { this[cleanId] = cleanCat }
+            prefs[KEY_DVR_RECORDING_CATEGORIES] = Json.encodeToString(updated)
+        }
+    }
+
+    private fun decodeRecordingCategories(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching { Json.decodeFromString<Map<String, String>>(raw) }
+            .getOrDefault(emptyMap())
+    }
+
+    /**
      * iOS DVR Settings "Keep device awake during recording" toggle. Default
      * ON (iOS parity). When on, LocalRecordingService holds a partial
      * WakeLock for the duration of an active local recording so the CPU
@@ -863,6 +912,10 @@ class AppPreferences @Inject constructor(
         val KEY_DVR_DEFAULT_POST_ROLL = intPreferencesKey("dvr_default_post_roll_mins")
         val KEY_DVR_CUSTOM_FOLDER_URI = stringPreferencesKey("dvr_custom_folder_uri")
         val KEY_DVR_KEEP_AWAKE = booleanPreferencesKey("dvr_keep_awake_during_recording")
+        // JSON object {recordingId: category}. Device-local cache so completed
+        // recordings keep their genre pill after the programme leaves the EPG
+        // window; deliberately NOT in snapshotSyncablePreferences.
+        val KEY_DVR_RECORDING_CATEGORIES = stringPreferencesKey("dvr_recording_categories")
         val KEY_CATEGORY_MASTER_ENABLE = booleanPreferencesKey(CategoryPaletteState.MASTER_ENABLED_KEY)
         val KEY_CATEGORY_CUSTOM_JSON = stringPreferencesKey(CategoryPaletteState.CUSTOM_KEY)
         val KEY_SYNC_MASTER = booleanPreferencesKey("sync_master_enabled")

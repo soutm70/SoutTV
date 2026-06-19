@@ -11,6 +11,7 @@ import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrRecording
+import com.aeriotv.android.core.preferences.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.text.SimpleDateFormat
@@ -40,6 +41,7 @@ class DvrViewModel @Inject constructor(
     private val dispatcharrClient: DispatcharrClient,
     private val dispatcharrAuth: DispatcharrAuthBroker,
     private val localRecordingDao: LocalRecordingDao,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
 
     enum class Filter { Scheduled, Recording, Completed }
@@ -214,6 +216,12 @@ class DvrViewModel @Inject constructor(
             // network gets the reachable address (iOS resolves file_url
             // against server.effectiveBaseURL).
             val base = playlistRepository.effectiveBaseUrl(playlist)
+            // Persisted recordingId -> category map (DataStore). Read once per
+            // refresh off the main thread; seeds completed rows whose programme
+            // has aged out of every cache but WAS resolved while the recording
+            // was airing/recent on a prior session.
+            val persistedCategories = runCatching { appPreferences.recordingCategoriesOnce() }
+                .getOrDefault(emptyMap())
             runCatching {
                 dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
                     dispatcharrClient.listRecordings(playlist.urlString, key)
@@ -224,17 +232,27 @@ class DvrViewModel @Inject constructor(
                     // Fill in programme title/description (and any cached category)
                     // from the on-disk guide for rows the server left sparse. This
                     // is a fast LOCAL pass (Room reads only, no network), plus it
-                    // applies any category we already resolved on a prior refresh
-                    // from [categoryCache]. We update _state from THIS immediately
-                    // so the DVR tab + list paint instantly; network category
-                    // resolution happens afterward in a separate coroutine.
-                    val fromCache = hydrateRecordingsFromEpg(playlist.id, server)
-                        .map { r ->
-                            val cached = categoryCache[r.id]
-                            if (r.category.isBlank() && !cached.isNullOrBlank()) {
-                                r.copy(category = cached)
-                            } else r
-                        }
+                    // applies any category we already resolved -- first from the
+                    // persisted store (survives restarts), then from the in-memory
+                    // [categoryCache] (this-session network resolutions). We update
+                    // _state from THIS immediately so the DVR tab + list paint
+                    // instantly; network category resolution happens afterward in a
+                    // separate coroutine.
+                    val hydrated = hydrateRecordingsFromEpg(playlist.id, server)
+                    val fromCache = hydrated.map { r ->
+                        if (r.category.isNotBlank()) return@map r
+                        val seed = persistedCategories[r.id]?.takeIf { it.isNotBlank() }
+                            ?: categoryCache[r.id]?.takeIf { it.isNotBlank() }
+                        if (seed != null) r.copy(category = seed) else r
+                    }
+                    // Persist every row that NOW carries a non-blank category
+                    // (cache-hydrated airing/recent rows, the currently-recording
+                    // row, and any previously-seeded row). This captures the
+                    // category WHILE it is resolvable so the row keeps its pill
+                    // after it completes and its programme leaves the cache. Off
+                    // the main thread, fire-and-forget; setRecordingCategory
+                    // de-dups so an unchanged value won't churn the DataStore.
+                    persistResolvedCategories(fromCache, persistedCategories)
                     _state.update { st ->
                         val local = st.recordings.filter { it.source == Source.Local }
                         // Authoritative server list wins by id, so an
@@ -639,6 +657,10 @@ class DvrViewModel @Inject constructor(
                 val resolved = categoriesForProgram(programId) ?: continue
                 categoryCache[rec.id] = resolved
                 if (resolved.isBlank()) continue
+                // Persist this network-resolved category too, so a completed row
+                // whose programme later leaves the cache still seeds its pill on
+                // the next load. Fire-and-forget on the DataStore IO path.
+                runCatching { appPreferences.setRecordingCategory(rec.id, resolved) }
                 // Patch just this row into _state as its category lands, so the
                 // pill appears without re-rendering or re-sorting the whole list.
                 _state.update { st ->
@@ -648,6 +670,32 @@ class DvrViewModel @Inject constructor(
                     patched[idx] = patched[idx].copy(category = resolved)
                     st.copy(recordings = patched)
                 }
+            }
+        }
+    }
+
+    /**
+     * Persist every recording that currently carries a non-blank category to
+     * the DataStore (id -> category), skipping ids whose persisted value
+     * already matches so the 30s refresh loop does not churn the store. This
+     * is the load-bearing half of the "retain pill after Completed" fix: it
+     * captures the category WHILE the recording is airing/recent (its
+     * programme still in the cache, so [hydrateRecordingsFromEpg] stamped it),
+     * including the currently-recording row. Fire-and-forget on a background
+     * coroutine so it never touches the main thread or the first _state
+     * update. [already] is the snapshot read at the top of refresh(), used to
+     * avoid an IO write when nothing changed.
+     */
+    private fun persistResolvedCategories(
+        recordings: List<Recording>,
+        already: Map<String, String>,
+    ) {
+        val toPersist = recordings
+            .filter { it.category.isNotBlank() && already[it.id] != it.category }
+        if (toPersist.isEmpty()) return
+        viewModelScope.launch {
+            for (rec in toPersist) {
+                runCatching { appPreferences.setRecordingCategory(rec.id, rec.category) }
             }
         }
     }
