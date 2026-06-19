@@ -379,6 +379,19 @@ private fun MoviesSubScreen(
                     (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L)
         }.take(8)
     }
+    // Keep the Continue Watching rail header (the first grid item) from being
+    // clipped on entry: if we are resting on the first item but a stale scroll
+    // offset pushed the rail header above the viewport, snap to the true top so
+    // the header is fully visible. Gated on being at item 0, so a user who
+    // scrolled deep into the grid is never yanked back.
+    LaunchedEffect(continueWatching.isNotEmpty()) {
+        if (continueWatching.isNotEmpty() &&
+            gridState.firstVisibleItemIndex == 0 &&
+            gridState.firstVisibleItemScrollOffset != 0
+        ) {
+            gridState.scrollToItem(0)
+        }
+    }
     val movieByUuid = remember(state.movies) { state.movies.associateBy { it.uuid } }
 
     // Apply the hide filter once at this point in the pipeline; everything
@@ -614,6 +627,18 @@ private fun SeriesSubScreen(
     // binge keeps surfacing the next episode (iOS Issue #19).
     val continueWatchingEpisodes = remember(recentProgress) {
         recentProgress.filter { it.vodType == "episode" && !it.isFinished }.take(8)
+    }
+    // Keep the Continue Watching rail header (the first grid item) from being
+    // clipped on entry: if resting on the first item but a stale scroll offset
+    // pushed the rail header above the viewport, snap to the true top. Gated on
+    // being at item 0, so a user scrolled deep into the grid is never yanked back.
+    LaunchedEffect(continueWatchingEpisodes.isNotEmpty()) {
+        if (continueWatchingEpisodes.isNotEmpty() &&
+            gridState.firstVisibleItemIndex == 0 &&
+            gridState.firstVisibleItemScrollOffset != 0
+        ) {
+            gridState.scrollToItem(0)
+        }
     }
 
     if (state.unsupportedSource) {
