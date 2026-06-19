@@ -407,15 +407,12 @@ fun ChannelListScreen(
         // Audit task #51 (partial): pull-to-refresh on the Live TV list.
         // Drags the spinner from the top of the LazyColumn and invokes
         // PlaylistViewModel.refreshPlaylist(), which re-fetches the channel
-        // list and the EPG. The spinner stays visible while
-        // state.isLoading is true. PullToRefreshBox lets the inner
-        // LazyColumn handle its own vertical scroll; we don't lose the
-        // sticky chips above.
-        PullToRefreshBox(
-            isRefreshing = state.isLoading,
-            onRefresh = { viewModel.refreshPlaylist() },
-            modifier = Modifier.fillMaxSize(),
-        ) {
+        // list and the EPG. The spinner stays visible while state.isLoading
+        // is true. Pull-to-refresh is a TOUCH idiom, so on Android TV it is
+        // skipped entirely (no pull gesture, and the indicator otherwise hangs
+        // stuck mid-screen while loading); TV renders the list bare. Phone /
+        // tablet keep the swipe-to-refresh affordance.
+        val channelList: @Composable () -> Unit = {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
@@ -445,6 +442,17 @@ fun ChannelListScreen(
                         showLogo = showChannelLogos,
                     )
                 }
+            }
+        }
+        if (isTv) {
+            channelList()
+        } else {
+            PullToRefreshBox(
+                isRefreshing = state.isLoading,
+                onRefresh = { viewModel.refreshPlaylist() },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                channelList()
             }
         }
     }
