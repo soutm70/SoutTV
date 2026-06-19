@@ -383,10 +383,18 @@ fun VODPlayerScreen(
                                 lastInteractionAt = now
                             }
                             TvVodFocusZone.Rewind -> {
+                                // Drop any stale scrub preview so its debounce
+                                // can't override this discrete seek (see DOWN).
+                                scrubTargetMs = null
+                                scrubAccelCount = 0
+                                scrubLastDirection = 0
                                 val target = max(0L, positionMs - 10_000L)
                                 exoPlayer?.seekTo(target); positionMs = target; reveal()
                             }
                             TvVodFocusZone.Forward -> {
+                                scrubTargetMs = null
+                                scrubAccelCount = 0
+                                scrubLastDirection = 0
                                 val maxPos = if (durationMs > 0L) {
                                     if (isDvr) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
                                 } else Long.MAX_VALUE
@@ -425,7 +433,15 @@ fun VODPlayerScreen(
                     // (Play/Pause); from the control row it just keeps chrome up.
                     Key.DirectionDown -> {
                         reveal()
-                        if (tvFocusZone == TvVodFocusZone.Scrubber) tvFocusZone = TvVodFocusZone.PlayPause
+                        if (tvFocusZone == TvVodFocusZone.Scrubber) {
+                            // Cancel any pending scrub preview when leaving the
+                            // scrubber so its ~650ms debounce can't later fire a
+                            // stale seekTo over a Rewind/Forward/PlayPause action.
+                            scrubTargetMs = null
+                            scrubAccelCount = 0
+                            scrubLastDirection = 0
+                            tvFocusZone = TvVodFocusZone.PlayPause
+                        }
                     }
                 }
                 true
@@ -678,10 +694,22 @@ fun VODPlayerScreen(
                 delay(100)
                 runCatching { playbackFocus.requestFocus() }
             }
-            // Reset the transport zone when chrome hides so the next reveal
-            // always lands back on Play/Pause (Archie spec default focus).
+            // Drive the default transport zone off chrome visibility (Archie
+            // spec default focus). When chrome SHOWS (initial 4s auto-reveal or
+            // a tap toggle false->true), land focus on Play/Pause if no zone is
+            // active yet, so the first OK reveals nothing-new and OK lands on a
+            // highlighted Play/Pause instead of blindly toggling play/pause.
+            // When chrome HIDES, clear the zone so the next reveal re-defaults.
+            // An in-flight LEFT/RIGHT/UP transition (already a non-None zone) is
+            // left untouched.
             LaunchedEffect(chromeVisible) {
-                if (!chromeVisible) tvFocusZone = TvVodFocusZone.None
+                tvFocusZone = if (!chromeVisible) {
+                    TvVodFocusZone.None
+                } else if (tvFocusZone == TvVodFocusZone.None) {
+                    TvVodFocusZone.PlayPause
+                } else {
+                    tvFocusZone
+                }
             }
         }
 
@@ -933,6 +961,7 @@ private fun BottomChrome(
                 contentDescription = "Back 10 seconds",
                 onClick = onSkipBack,
                 focused = isTvForm && tvFocusZone == TvVodFocusZone.Rewind,
+                isTvForm = isTvForm,
             )
             Spacer(Modifier.width(8.dp))
             val ppFocused = isTvForm && tvFocusZone == TvVodFocusZone.PlayPause
@@ -960,6 +989,7 @@ private fun BottomChrome(
                 contentDescription = "Forward 10 seconds",
                 onClick = onSkipForward,
                 focused = isTvForm && tvFocusZone == TvVodFocusZone.Forward,
+                isTvForm = isTvForm,
             )
             Spacer(Modifier.weight(1f))
             if (isDvr) {
@@ -1024,11 +1054,26 @@ private fun TransportIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     focused: Boolean,
+    isTvForm: Boolean,
 ) {
-    // Touch: plain IconButton. TV: white-fill + grow focus visual matching
-    // PlayerPill so the targeted skip button reads as selected under the
-    // app-owned D-pad zone model (focus is driven by the root key handler,
-    // not Compose traversal, so this is purely a visual treatment).
+    // Touch (phone): a Material IconButton so the skip controls keep the 48dp
+    // minimum touch target, the Material ripple, and the Role.Button semantics
+    // they had before the IconButton -> TransportIconButton swap.
+    if (!isTvForm) {
+        IconButton(onClick = onClick) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        return
+    }
+    // TV: white-fill + grow focus visual matching PlayerPill so the targeted
+    // skip button reads as selected under the app-owned D-pad zone model (focus
+    // is driven by the root key handler, not Compose traversal, so this is
+    // purely a visual treatment).
     Box(
         modifier = Modifier
             .tvFocusScale(focused)
