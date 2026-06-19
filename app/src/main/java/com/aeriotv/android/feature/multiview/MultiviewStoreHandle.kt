@@ -19,18 +19,20 @@ import kotlinx.coroutines.flow.StateFlow
 class MultiviewStoreHandleVm @Inject constructor(
     private val store: MultiviewStore,
 ) : ViewModel() {
-    val selected: StateFlow<List<M3UChannel>> get() = store.selected
+    val selected: StateFlow<List<MultiviewTile>> get() = store.selected
     val audioFocusedIndex: StateFlow<Int> get() = store.audioFocusedIndex
     val maxTiles: Int get() = store.maxTiles
     fun toggle(channel: M3UChannel) = store.toggle(channel)
     fun isSelected(channel: M3UChannel): Boolean = store.isSelected(channel)
+    fun addTile(tile: MultiviewTile): Boolean = store.addTile(tile)
+    fun removeTile(tileId: String) = store.removeTile(tileId)
     fun setAudioFocus(index: Int) = store.setAudioFocus(index)
     fun swap(from: Int, to: Int) = store.swap(from, to)
     fun move(from: Int, to: Int) = store.move(from, to)
     fun removeAt(index: Int) = store.removeAt(index)
     fun clear() = store.clear()
     fun seedCurrent(channel: M3UChannel) = store.seedCurrent(channel)
-    fun restore(snapshot: List<M3UChannel>, audioFocus: Int) = store.restore(snapshot, audioFocus)
+    fun restore(snapshot: List<MultiviewTile>, audioFocus: Int) = store.restore(snapshot, audioFocus)
 }
 
 /**
@@ -39,17 +41,19 @@ class MultiviewStoreHandleVm @Inject constructor(
  * each. Equivalent to iOS's `@EnvironmentObject var multiviewStore`.
  */
 class MultiviewStoreHandle(
-    val selected: StateFlow<List<M3UChannel>>,
+    val selected: StateFlow<List<MultiviewTile>>,
     val audioFocusedIndex: StateFlow<Int>,
     val maxTiles: Int,
     val toggle: (M3UChannel) -> Unit,
+    val addTile: (MultiviewTile) -> Boolean,
+    val removeTile: (String) -> Unit,
     val setAudioFocus: (Int) -> Unit,
     val swap: (Int, Int) -> Unit,
     val move: (Int, Int) -> Unit,
     val removeAt: (Int) -> Unit,
     val clear: () -> Unit,
     val seedCurrent: (M3UChannel) -> Unit,
-    val restore: (List<M3UChannel>, Int) -> Unit,
+    val restore: (List<MultiviewTile>, Int) -> Unit,
 )
 
 @Composable
@@ -61,6 +65,8 @@ fun rememberMultiviewStoreHandle(
         audioFocusedIndex = vm.audioFocusedIndex,
         maxTiles = vm.maxTiles,
         toggle = vm::toggle,
+        addTile = vm::addTile,
+        removeTile = vm::removeTile,
         setAudioFocus = vm::setAudioFocus,
         swap = vm::swap,
         move = vm::move,

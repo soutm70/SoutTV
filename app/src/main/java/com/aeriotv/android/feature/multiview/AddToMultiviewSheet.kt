@@ -21,9 +21,12 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -43,11 +46,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,10 +64,15 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.aeriotv.android.core.data.M3UChannel
+import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.guideMatchKey
+import com.aeriotv.android.feature.dvr.DvrViewModel
+import com.aeriotv.android.feature.ondemand.OnDemandViewModel
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.SettingsViewModel
+import com.aeriotv.android.feature.watchprogress.WatchProgressViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Bottom sheet to pick channels for the multiview tile grid. Mirrors iOS
@@ -97,15 +107,44 @@ fun AddToMultiviewSheet(
     multiviewStore: MultiviewStoreHandle = rememberMultiviewStoreHandle(),
     playlistVm: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
+    onDemandVm: OnDemandViewModel = hiltViewModel(),
+    dvrVm: DvrViewModel = hiltViewModel(),
+    watchVm: WatchProgressViewModel = hiltViewModel(),
 ) {
     // Phone/tablet container: the native ModalBottomSheet with its natural
     // swipe-to-dismiss. (TV uses a Dialog panel instead -- see the form-factor
     // split below -- so a bottom sheet's gesture model never reaches a D-pad.)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val state by playlistVm.state.collectAsStateWithLifecycle()
+    val onDemandState by onDemandVm.state.collectAsStateWithLifecycle()
+    val dvrState by dvrVm.state.collectAsStateWithLifecycle()
     val selected by multiviewStore.selected.collectAsState()
     val recentIds by settingsVm.recentChannelIds.collectAsStateWithLifecycle(initialValue = emptyList())
     val selectedIds = selected.map { it.id }.toSet()
+    val scope = rememberCoroutineScope()
+
+    // Source switcher (Phase 2). Channels keeps the existing channel picker;
+    // Movies / Series / Recordings draw from the On Demand + DVR view models so
+    // a multiview grid can mix live channels with VOD/episode/recording tiles
+    // (iOS PickerSource). drillSeriesId is the series whose episodes are listed
+    // (null = the series grid); resolving tracks per-row URL-resolve spinners.
+    var pickerSource by remember { mutableStateOf(PickerSource.Channels) }
+    var drillSeriesId by remember { mutableStateOf<Int?>(null) }
+    var resolving by remember { mutableStateOf(setOf<String>()) }
+
+    // Dispatcharr auth headers for VOD / recording tiles (Navigation.kt parity):
+    // X-API-Key + Authorization ApiKey, only for Dispatcharr-backed sources.
+    val vodHeaders = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
+        val pl = state.playlist
+        val key = pl?.apiKey?.takeIf { it.isNotBlank() }
+        val isDispatcharr = pl?.sourceType == SourceType.DispatcharrApiKey.name ||
+            pl?.sourceType == SourceType.DispatcharrUserPass.name
+        if (isDispatcharr && key != null) {
+            mapOf("X-API-Key" to key, "Authorization" to "ApiKey $key")
+        } else {
+            emptyMap()
+        }
+    }
 
     var selectedGroup by remember { mutableStateOf(PlaylistViewModel.ALL_GROUPS) }
     var query by remember { mutableStateOf("") }
@@ -198,70 +237,118 @@ fun AddToMultiviewSheet(
                 }
             }
 
-            // Control row: a search TOGGLE button to the LEFT of the "All"
-            // pill (Guide-chrome parity). Tapping it swaps the group-pill row
-            // for the search field IN PLACE; tapping it again (or its close)
-            // restores the pills and clears the query. No resting text field =
-            // the IME never auto-opens while the user scrolls the list.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                FilledTonalIconButton(
-                    onClick = {
-                        searchActive = !searchActive
-                        if (!searchActive) query = ""
-                    },
+            // Source switcher (Phase 2): Channels / Movies / Series / Recordings.
+            // Styled like the group-filter chips. Movies / Series / Recordings
+            // are only offered when the active source actually has them so the
+            // sheet never lands on an always-empty tab. Switching sources also
+            // resets the series drill so re-entering Series starts at the grid.
+            val hasVod = onDemandState.movies.isNotEmpty() ||
+                onDemandState.series.isNotEmpty()
+            val hasSeries = onDemandState.series.isNotEmpty()
+            val hasRecordings = dvrState.recordings.any {
+                val s = it.effectiveStatus()
+                (s == DvrViewModel.Recording.Status.Completed ||
+                    s == DvrViewModel.Recording.Status.Stopped) && it.playbackUrl != null
+            }
+            val availableSources = buildList {
+                add(PickerSource.Channels)
+                if (hasVod) add(PickerSource.Movies)
+                if (hasSeries) add(PickerSource.Series)
+                if (hasRecordings) add(PickerSource.Recordings)
+            }
+            if (availableSources.size > 1) {
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = if (searchActive) "Close search" else "Search channels",
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                if (searchActive) {
-                    // No FocusRequester / autofocus on purpose: the keyboard
-                    // opens only when the user taps (or D-pad-selects) the field.
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        placeholder = { Text("Search channels") },
-                        singleLine = true,
-                        trailingIcon = {
-                            if (query.isNotEmpty()) {
-                                IconButton(onClick = { query = "" }) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
-                                }
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                } else if (groups.size > 1) {
-                    LazyRow(
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(end = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        items(items = groups, key = { it }) { group ->
-                            FilterChip(
-                                selected = group == selectedGroup,
-                                onClick = { selectedGroup = group },
-                                label = { Text(group, maxLines = 1) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                    selectedLabelColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        }
+                    items(items = availableSources, key = { it.name }) { src ->
+                        FilterChip(
+                            selected = src == pickerSource,
+                            onClick = {
+                                pickerSource = src
+                                drillSeriesId = null
+                            },
+                            label = { Text(src.label, maxLines = 1) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                                selectedLabelColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
                     }
-                } else {
-                    Spacer(Modifier.weight(1f))
                 }
             }
 
+            // Control row (Channels only): a search TOGGLE button to the LEFT of
+            // the "All" pill (Guide-chrome parity). Tapping it swaps the
+            // group-pill row for the search field IN PLACE; tapping it again (or
+            // its close) restores the pills and clears the query. No resting text
+            // field = the IME never auto-opens while the user scrolls the list.
+            if (pickerSource == PickerSource.Channels) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FilledTonalIconButton(
+                        onClick = {
+                            searchActive = !searchActive
+                            if (!searchActive) query = ""
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = if (searchActive) "Close search" else "Search channels",
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (searchActive) {
+                        // No FocusRequester / autofocus on purpose: the keyboard
+                        // opens only when the user taps (or D-pad-selects) the field.
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            placeholder = { Text("Search channels") },
+                            singleLine = true,
+                            trailingIcon = {
+                                if (query.isNotEmpty()) {
+                                    IconButton(onClick = { query = "" }) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else if (groups.size > 1) {
+                        LazyRow(
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(end = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            items(items = groups, key = { it }) { group ->
+                                FilterChip(
+                                    selected = group == selectedGroup,
+                                    onClick = { selectedGroup = group },
+                                    label = { Text(group, maxLines = 1) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                                        selectedLabelColor = MaterialTheme.colorScheme.primary,
+                                    ),
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+
+            val atCapNow = selected.size >= multiviewStore.maxTiles
             LazyColumn(
                 // TV: fill the remaining Dialog-panel height (weight, inside the
                 // bounded-height panel Column). Phone: a fixed max height inside
@@ -271,45 +358,220 @@ fun AddToMultiviewSheet(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // The now-playing channel, pinned + non-interactive: it is
-                // Tile 1 (already seeded into the store + audio-focused). Shown
-                // so the user sees it WILL be included, and not offered as an
-                // "add" toggle (a stray tap must not deselect it).
-                if (currentChannel != null) {
-                    item(key = "tile1_now") {
-                        NowPlayingPinnedRow(
-                            channel = currentChannel,
-                            nowTitle = state.epgByChannel[currentChannel.guideMatchKey]
-                                ?.nowPlaying()?.title.orEmpty(),
-                        )
+                when (pickerSource) {
+                    PickerSource.Channels -> {
+                        // The now-playing channel, pinned + non-interactive: it is
+                        // Tile 1 (already seeded into the store + audio-focused).
+                        // Shown so the user sees it WILL be included, and not
+                        // offered as an "add" toggle (a stray tap must not
+                        // deselect it). Only under the Channels source.
+                        if (currentChannel != null) {
+                            item(key = "tile1_now") {
+                                NowPlayingPinnedRow(
+                                    channel = currentChannel,
+                                    nowTitle = state.epgByChannel[currentChannel.guideMatchKey]
+                                        ?.nowPlaying()?.title.orEmpty(),
+                                )
+                            }
+                        }
+                        if (showRecent) {
+                            item(key = "hdr_recent") { SectionHeader("Recent") }
+                            items(items = recentChannels, key = { "recent_${it.id}" }) { channel ->
+                                val isSel = channel.id in selectedIds
+                                val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
+                                ChannelPickerRow(
+                                    channel = channel,
+                                    nowTitle = now?.title.orEmpty(),
+                                    selected = isSel,
+                                    atCap = !isSel && atCapNow,
+                                    onToggle = { multiviewStore.toggle(channel) },
+                                )
+                            }
+                            item(key = "hdr_all") { SectionHeader("All Channels") }
+                        }
+                        items(items = filtered, key = { "all_${it.id}" }) { channel ->
+                            val isSel = channel.id in selectedIds
+                            val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
+                            ChannelPickerRow(
+                                channel = channel,
+                                nowTitle = now?.title.orEmpty(),
+                                selected = isSel,
+                                atCap = !isSel && atCapNow,
+                                onToggle = { multiviewStore.toggle(channel) },
+                            )
+                        }
                     }
-                }
-                if (showRecent) {
-                    item(key = "hdr_recent") { SectionHeader("Recent") }
-                    items(items = recentChannels, key = { "recent_${it.id}" }) { channel ->
-                        val isSel = channel.id in selectedIds
-                        val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
-                        ChannelPickerRow(
-                            channel = channel,
-                            nowTitle = now?.title.orEmpty(),
-                            selected = isSel,
-                            atCap = !isSel && selected.size >= multiviewStore.maxTiles,
-                            onToggle = { multiviewStore.toggle(channel) },
-                        )
-                    }
-                    item(key = "hdr_all") { SectionHeader("All Channels") }
-                }
 
-                items(items = filtered, key = { "all_${it.id}" }) { channel ->
-                    val isSel = channel.id in selectedIds
-                    val now = state.epgByChannel[channel.guideMatchKey]?.nowPlaying()
-                    ChannelPickerRow(
-                        channel = channel,
-                        nowTitle = now?.title.orEmpty(),
-                        selected = isSel,
-                        atCap = !isSel && selected.size >= multiviewStore.maxTiles,
-                        onToggle = { multiviewStore.toggle(channel) },
-                    )
+                    PickerSource.Movies -> {
+                        items(items = onDemandState.visible, key = { "mv_${it.uuid}" }) { movie ->
+                            val tileId = "vod-${movie.uuid}"
+                            val isSel = tileId in selectedIds
+                            VodPickerRow(
+                                title = movie.displayName,
+                                subtitle = movie.year?.let { "Movie · $it" } ?: "Movie",
+                                posterUrl = movie.posterUrl,
+                                selected = isSel,
+                                resolving = movie.uuid in resolving,
+                                atCap = !isSel && atCapNow,
+                                onPick = {
+                                    if (isSel) return@VodPickerRow
+                                    scope.launch {
+                                        resolving = resolving + movie.uuid
+                                        onDemandVm.resolveMovieUrl(movie.uuid).onSuccess { url ->
+                                            val resume = watchVm.get(movie.uuid)?.positionMs ?: 0L
+                                            multiviewStore.addTile(
+                                                MultiviewTile(
+                                                    id = tileId,
+                                                    kind = TileKind.Vod,
+                                                    displayName = movie.displayName,
+                                                    resolvedUrl = url,
+                                                    httpHeaders = vodHeaders,
+                                                    vodId = movie.uuid,
+                                                    vodType = "movie",
+                                                    posterUrl = movie.posterUrl,
+                                                    resumePositionMs = resume,
+                                                ),
+                                            )
+                                        }
+                                        resolving = resolving - movie.uuid
+                                    }
+                                },
+                            )
+                        }
+                    }
+
+                    PickerSource.Series -> {
+                        val drillId = drillSeriesId
+                        if (drillId == null) {
+                            items(items = onDemandState.visibleSeries, key = { "sr_${it.id}" }) { series ->
+                                VodPickerRow(
+                                    title = series.displayName,
+                                    subtitle = "Series",
+                                    posterUrl = series.posterUrl,
+                                    selected = false,
+                                    resolving = false,
+                                    atCap = false,
+                                    chevron = true,
+                                    onPick = {
+                                        drillSeriesId = series.id
+                                        onDemandVm.loadEpisodes(series.id)
+                                    },
+                                )
+                            }
+                        } else {
+                            item(key = "sr_back") {
+                                BackRow(onClick = { drillSeriesId = null })
+                            }
+                            onDemandState.episodesErrorFor[drillId]?.let { err ->
+                                item(key = "sr_err") {
+                                    Text(
+                                        text = "Couldn't load episodes: $err",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    )
+                                }
+                            }
+                            if (drillId in onDemandState.episodesLoadingFor) {
+                                item(key = "sr_loading") {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) { CircularProgressIndicator() }
+                                }
+                            }
+                            val episodes = onDemandState.episodesBySeries[drillId].orEmpty()
+                                .sortedWith(
+                                    compareBy(
+                                        { it.seasonNumber ?: 0 },
+                                        { it.episodeNumber ?: 0 },
+                                    ),
+                                )
+                            items(items = episodes, key = { "ep_${it.uuid}" }) { ep ->
+                                val tileId = "vod-${ep.uuid}"
+                                val isSel = tileId in selectedIds
+                                val s = ep.seasonNumber ?: 0
+                                val e = ep.episodeNumber ?: 0
+                                VodPickerRow(
+                                    title = ep.displayName.ifBlank { "Episode $e" },
+                                    subtitle = "S${s} E${e}",
+                                    posterUrl = ep.stillImageUrl,
+                                    selected = isSel,
+                                    resolving = ep.uuid in resolving,
+                                    atCap = !isSel && atCapNow,
+                                    onPick = {
+                                        if (isSel) return@VodPickerRow
+                                        scope.launch {
+                                            resolving = resolving + ep.uuid
+                                            onDemandVm.resolveEpisodeUrl(ep.uuid, ep.firstStreamId)
+                                                .onSuccess { url ->
+                                                    val resume = watchVm.get(ep.uuid)?.positionMs ?: 0L
+                                                    multiviewStore.addTile(
+                                                        MultiviewTile(
+                                                            id = tileId,
+                                                            kind = TileKind.Vod,
+                                                            displayName = ep.displayName.ifBlank { "Episode $e" },
+                                                            resolvedUrl = url,
+                                                            httpHeaders = vodHeaders,
+                                                            vodId = ep.uuid,
+                                                            vodType = "episode",
+                                                            seriesId = drillId.toString(),
+                                                            seasonNumber = s,
+                                                            episodeNumber = e,
+                                                            posterUrl = ep.stillImageUrl,
+                                                            resumePositionMs = resume,
+                                                        ),
+                                                    )
+                                                }
+                                            resolving = resolving - ep.uuid
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    PickerSource.Recordings -> {
+                        // Completed / Stopped server + local recordings that have a
+                        // finalized playable URL. They play as VOD tiles (no
+                        // continue-watching id). file:// recordings play headerless
+                        // (Navigation.kt parity); http(s) ones carry the auth
+                        // headers.
+                        val playableRecordings = dvrState.recordings.filter {
+                            val st = it.effectiveStatus()
+                            (st == DvrViewModel.Recording.Status.Completed ||
+                                st == DvrViewModel.Recording.Status.Stopped) &&
+                                it.playbackUrl != null
+                        }
+                        items(items = playableRecordings, key = { "rec_${it.id}" }) { rec ->
+                            val tileId = "dvr-${rec.id}"
+                            val isSel = tileId in selectedIds
+                            val playUrl = rec.playbackUrl.orEmpty()
+                            val remote = playUrl.startsWith("http://", ignoreCase = true) ||
+                                playUrl.startsWith("https://", ignoreCase = true)
+                            VodPickerRow(
+                                title = rec.title,
+                                subtitle = "Recording",
+                                posterUrl = null,
+                                selected = isSel,
+                                resolving = false,
+                                atCap = !isSel && atCapNow,
+                                onPick = {
+                                    if (isSel) return@VodPickerRow
+                                    multiviewStore.addTile(
+                                        MultiviewTile(
+                                            id = tileId,
+                                            kind = TileKind.Vod,
+                                            displayName = rec.title,
+                                            resolvedUrl = playUrl,
+                                            httpHeaders = if (remote) vodHeaders else emptyMap(),
+                                            vodId = null,
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                    }
                 }
             }
     }
@@ -527,5 +789,146 @@ private fun ChannelPickerRow(
                 )
             }
         }
+    }
+}
+
+/** Multiview picker content source. Mirrors iOS PickerSource. */
+private enum class PickerSource(val label: String) {
+    Channels("Channels"),
+    Movies("Movies"),
+    Series("Series"),
+    Recordings("Recordings"),
+}
+
+/**
+ * Picker row for a Movie / Episode / Series / Recording. Mirrors
+ * [ChannelPickerRow] visually (logo box, title, subtitle, trailing add/check)
+ * but works off arbitrary VOD metadata. [resolving] swaps the trailing icon for
+ * a spinner while the play URL resolves; [chevron] is used for the Series grid
+ * (drill into episodes) instead of an add toggle.
+ */
+@Composable
+private fun VodPickerRow(
+    title: String,
+    subtitle: String,
+    posterUrl: String?,
+    selected: Boolean,
+    resolving: Boolean,
+    atCap: Boolean,
+    onPick: () -> Unit,
+    chevron: Boolean = false,
+) {
+    val baseColor = if (selected)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+    else
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(baseColor)
+            .clickable(enabled = !atCap && !resolving, onClick = onPick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!posterUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = posterUrl,
+                    contentDescription = null,
+                    modifier = Modifier.size(36.dp).clip(RoundedCornerShape(6.dp)),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.Movie,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                resolving -> CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+                chevron -> Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Open",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                selected -> Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                else -> Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "Add",
+                    tint = if (atCap)
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    else
+                        MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+/** "Back to series" row shown above the episode list when drilled into a series. */
+@Composable
+private fun BackRow(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Back",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "All Series",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }

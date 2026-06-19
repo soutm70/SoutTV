@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.OpenWith
@@ -73,7 +74,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.R
-import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.core.tv.rememberTvMenuGuard
@@ -83,6 +83,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -125,6 +126,7 @@ fun MultiviewScreen(
     httpHeaders: Map<String, String> = emptyMap(),
     storeHandle: MultiviewStoreHandle = rememberMultiviewStoreHandle(),
     settingsVm: SettingsViewModel = hiltViewModel(),
+    watchVm: com.aeriotv.android.feature.watchprogress.WatchProgressViewModel = hiltViewModel(),
 ) {
     // Keep the screen on while multiview is active. Same reason as
     // PlayerScreen -- watching 2-9 live streams without the screen
@@ -176,6 +178,21 @@ fun MultiviewScreen(
     // instance keeps its index for life). Registered by ExoTile's factory,
     // unregistered in onRelease.
     val tilePlayers = remember { mutableStateMapOf<Int, ExoPlayer>() }
+    // VOD tiles that have reached end-of-file (Phase 3 Finished overlay). Keyed
+    // by tile POSITION (same as tilePlayers). The overlay renders the checkmark
+    // + title + Replay/Remove only on a Vod tile in this set. iOS parity:
+    // MultiviewTile.isFinished + the "Finished" card.
+    var finishedTiles by remember { mutableStateOf(setOf<Int>()) }
+    // EOF handler. iOS reassignAudioIfFinishedTileWasAudio: when the audio tile
+    // finishes, audio promotes to the newest remaining tile (the removeAt
+    // newest-tile rule) so sound never goes silent on the grid.
+    val onTileFinished: (Int) -> Unit = { idx ->
+        finishedTiles = finishedTiles + idx
+        if (idx == focused && selected.size > 1) {
+            val newest = selected.indices.last { it != idx }
+            storeHandle.setAudioFocus(newest)
+        }
+    }
     // For the themeFading mode: track the last time audio focus changed so the
     // accent border can auto-hide after 5s. Resets when the user taps a new tile.
     var focusActivityAt by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -223,6 +240,10 @@ fun MultiviewScreen(
         if ((subtitleTileIndex ?: -1) >= selected.size) subtitleTileIndex = null
         if ((audioTrackTileIndex ?: -1) >= selected.size) audioTrackTileIndex = null
         if ((tileMenuIndex ?: -1) >= selected.size) tileMenuIndex = null
+        // Drop Finished overlays for tile positions that no longer exist (a
+        // removal shifted the grid), so a stale checkmark never paints over a
+        // different tile that slid into the slot.
+        finishedTiles = finishedTiles.filter { it < selected.size }.toSet()
     }
 
     if (selected.isEmpty()) {
@@ -264,6 +285,18 @@ fun MultiviewScreen(
             tileRounded = tileRounded,
             chromeVisible = chromeVisible,
             focusFadedOut = focusFadedOut,
+            watchVm = watchVm,
+            finishedTiles = finishedTiles,
+            onTileFinished = onTileFinished,
+            onReplayTile = { idx ->
+                finishedTiles = finishedTiles - idx
+                tilePlayers[idx]?.let { p -> p.seekTo(0L); p.playWhenReady = true }
+            },
+            onRemoveTile = { idx ->
+                if (spotlightId == selected.getOrNull(idx)?.id) spotlightId = null
+                relocatingIndex = null
+                storeHandle.removeAt(idx)
+            },
             onTileFocused = {
                 // D-pad moved onto a tile: re-show the channel names + count
                 // chip and re-arm the auto-hide so they stay up while the
@@ -396,23 +429,23 @@ fun MultiviewScreen(
     // tile; only reachable from the grid (the key handler is gated off in
     // fullscreen), so no "Exit Full-Screen" row is needed -- BACK exits.
     val menuIdx = tileMenuIndex
-    val menuChannel = menuIdx?.let { selected.getOrNull(it) }
-    if (menuIdx != null && menuChannel != null) {
-        val isSpotlit = spotlightId == menuChannel.id
+    val menuTile = menuIdx?.let { selected.getOrNull(it) }
+    if (menuIdx != null && menuTile != null) {
+        val isSpotlit = spotlightId == menuTile.id
         // Track lists evaluated at menu-open, the same way tvOS hides the
         // rows when the tile reports nothing.
         val menuPlayer = tilePlayers[menuIdx]
-        val menuSubtitleTracks = remember(menuIdx, menuChannel.id) {
+        val menuSubtitleTracks = remember(menuIdx, menuTile.id) {
             menuPlayer?.readSubtitleTracks().orEmpty()
         }
-        val menuAudioTracks = remember(menuIdx, menuChannel.id) {
+        val menuAudioTracks = remember(menuIdx, menuTile.id) {
             // Selecting audio on a non-focused tile is moot (its audio track
             // type is disabled by the budget gate), so only the audio tile
             // offers the row.
             if (menuIdx == focused) menuPlayer?.readAudioTracks().orEmpty() else emptyList()
         }
         TvActionMenuDialog(
-            title = menuChannel.name,
+            title = menuTile.displayName,
             actions = buildList {
                 if (menuIdx != focused) {
                     add(
@@ -445,7 +478,7 @@ fun MultiviewScreen(
                             if (isSpotlit) {
                                 spotlightId = null
                             } else {
-                                spotlightId = menuChannel.id
+                                spotlightId = menuTile.id
                                 // Mutually exclusive with fullscreen, tvOS
                                 // parity (MultiviewTileView 452-455).
                                 fullscreenIndex = null
@@ -492,7 +525,7 @@ fun MultiviewScreen(
                             // tile). Spotlight/relocate that pointed at the
                             // removed tile are cleared here.
                             val removingLast = selected.size <= 1
-                            if (spotlightId == menuChannel.id) spotlightId = null
+                            if (spotlightId == menuTile.id) spotlightId = null
                             relocatingIndex = null
                             storeHandle.removeAt(menuIdx)
                             if (removingLast) onClose()
@@ -586,7 +619,7 @@ private fun gridShapeFor(count: Int): Pair<Int, Int> = when {
 
 @Composable
 private fun TileGrid(
-    tiles: List<M3UChannel>,
+    tiles: List<MultiviewTile>,
     focusedIndex: Int,
     relocatingIndex: Int?,
     fullscreenIndex: Int?,
@@ -598,6 +631,11 @@ private fun TileGrid(
     tileRounded: Boolean,
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
+    watchVm: com.aeriotv.android.feature.watchprogress.WatchProgressViewModel,
+    finishedTiles: Set<Int>,
+    onTileFinished: (Int) -> Unit,
+    onReplayTile: (Int) -> Unit,
+    onRemoveTile: (Int) -> Unit,
     onTileFocused: () -> Unit,
     onTileTap: (Int) -> Unit,
     onTileLongPress: (Int) -> Unit,
@@ -769,7 +807,7 @@ private fun TileGrid(
         // the grid; fullscreen promotes the focused tile to the whole viewport
         // (zIndex on top) and parks the rest just off the right edge, paused.
         val spotIdx = spotlightIndex
-        tiles.forEachIndexed { index, channel ->
+        tiles.forEachIndexed { index, tile ->
             val isFull = fullscreenIndex == index
             val col = index % cols
             val row = index / cols
@@ -848,23 +886,110 @@ private fun TileGrid(
                     ),
             ) {
                 Tile(
-                    channel = channel,
+                    tile = tile,
                     isAudioFocused = index == focusedIndex,
                     isRelocating = index == relocatingIndex || index == dragSource,
                     isDropTarget = hoverIndex == index && dragSource != index,
                     paused = anyFullscreen && !isFull,
-                    httpHeaders = httpHeaders,
+                    gridHeaders = httpHeaders,
                     cachingMs = cachingMs,
                     audioFocusStyle = audioFocusStyle,
                     tileRounded = if (isFull) false else tileRounded,
                     chromeVisible = chromeVisible,
                     focusFadedOut = focusFadedOut,
+                    watchVm = watchVm,
                     // D-pad selection ring (TV only): the tile the remote is
                     // currently on. Suppressed in fullscreen (single tile).
                     isDpadFocused = isTv && !anyFullscreen && index == dpadIndex,
                     onTap = { onTileTap(index) },
                     onDoubleTap = { onTileDoubleTap(index) },
                     onPlayer = { player -> onTilePlayer(index, player) },
+                    onFinished = { onTileFinished(index) },
+                )
+                // Finished overlay (Phase 3). Sibling of the Tile so its
+                // Replay / Remove targets sit ON TOP of the video and take real
+                // taps / focus. iOS parity: the "Finished" card with a
+                // checkmark, the title, and Replay + Remove.
+                if (index in finishedTiles && tile.kind == TileKind.Vod) {
+                    TileFinishedOverlay(
+                        title = tile.displayName,
+                        onReplay = { onReplayTile(index) },
+                        onRemove = { onRemoveTile(index) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Black scrim shown over a VOD tile that reached end-of-file. Mirrors iOS's
+ * "Finished" card: a checkmark, the title, and Replay (restart this tile) +
+ * Remove (drop it from the grid). Rendered as a sibling of the tile's video so
+ * the buttons receive real taps / D-pad focus.
+ */
+@Composable
+private fun BoxScope.TileFinishedOverlay(
+    title: String,
+    onReplay: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .matchParentSize()
+            .background(Color.Black.copy(alpha = 0.82f)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(40.dp),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Finished",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.85f),
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(onClick = onReplay)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = "Replay",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.15f))
+                    .clickable(onClick = onRemove)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = "Remove",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
@@ -874,21 +999,25 @@ private fun TileGrid(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Tile(
-    channel: M3UChannel,
+    tile: MultiviewTile,
     isAudioFocused: Boolean,
     isRelocating: Boolean,
     isDropTarget: Boolean,
     paused: Boolean,
-    httpHeaders: Map<String, String>,
+    // Grid-level Dispatcharr auth headers; live tiles use these, VOD/DVR tiles
+    // use their own per-tile headers (see ExoTile).
+    gridHeaders: Map<String, String>,
     cachingMs: Int,
     audioFocusStyle: String,
     tileRounded: Boolean,
     chromeVisible: Boolean,
     focusFadedOut: Boolean,
+    watchVm: com.aeriotv.android.feature.watchprogress.WatchProgressViewModel,
     isDpadFocused: Boolean,
     onTap: () -> Unit,
     onDoubleTap: () -> Unit,
     onPlayer: (ExoPlayer?) -> Unit,
+    onFinished: () -> Unit,
     // Same activity-scoped Settings VM the screen already uses; the tile
     // only needs the passthrough flag at player-build time.
     settingsVm: SettingsViewModel = hiltViewModel(),
@@ -958,14 +1087,15 @@ private fun Tile(
             ),
     ) {
         ExoTile(
-            url = channel.url,
-            channelName = channel.name,
-            httpHeaders = httpHeaders,
+            tile = tile,
+            gridHeaders = gridHeaders,
             cachingMs = cachingMs,
             isAudioFocused = isAudioFocused,
             paused = paused,
             onPlayer = onPlayer,
             audioPassthrough = audioPassthrough,
+            watchVm = watchVm,
+            onFinished = onFinished,
         )
         // Channel-name overlay (top-left). Fades with the chrome: it's up
         // on launch + whenever the user interacts (tap toggles chrome,
@@ -986,7 +1116,7 @@ private fun Tile(
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
                 Text(
-                    text = channel.name,
+                    text = tile.displayName,
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold,
@@ -1034,9 +1164,9 @@ private fun Tile(
 @OptIn(UnstableApi::class)
 @Composable
 private fun ExoTile(
-    url: String,
-    channelName: String,
-    httpHeaders: Map<String, String>,
+    tile: MultiviewTile,
+    // Grid-level headers used by LIVE tiles; VOD/DVR tiles carry their own.
+    gridHeaders: Map<String, String>,
     cachingMs: Int,
     isAudioFocused: Boolean,
     paused: Boolean,
@@ -1045,32 +1175,61 @@ private fun ExoTile(
     onPlayer: (ExoPlayer?) -> Unit,
     // Dolby passthrough pref at player-build time (see aerioRenderersFactory).
     audioPassthrough: Boolean,
+    // Phase 3: VOD-tile periodic save (same store as the single VOD player).
+    watchVm: com.aeriotv.android.feature.watchprogress.WatchProgressViewModel,
+    // Phase 3: fired once a VOD tile reaches end-of-file.
+    onFinished: () -> Unit,
 ) {
+    val url = tile.resolvedUrl
+    val channelName = tile.displayName
+    // Live tiles use the grid's headers; VOD/DVR carry their own per-tile auth.
+    val headers = if (tile.kind == TileKind.Live) gridHeaders else tile.httpHeaders
+    val isVod = tile.kind == TileKind.Vod
     val currentUrlRef = remember { mutableStateOf("") }
     val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
+    // Once-only resume seek guard (first STATE_READY for a VOD tile).
+    val didResumeRef = remember(tile.id) { mutableStateOf(false) }
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
-            // Live-stream tuning. minBuffer honors the Settings stream-buffer
-            // choice with a 5s floor; the old 500ms resume threshold made a
-            // tile that dipped stall again immediately once N tiles shared
-            // bandwidth (periodic brief freezes).
-            val minBufferMs = maxOf(5_000, cachingMs)
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(minBufferMs, maxOf(15_000, minBufferMs), 1_000, 3_000)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-            val dataSourceFactory = DefaultHttpDataSource.Factory()
+            // LoadControl by kind. LIVE keeps the 5s-floor live control (a
+            // tile that dipped used to stall again immediately once N tiles
+            // shared bandwidth). VOD/DVR use the single VOD player's shape
+            // (VODPlayerScreen.kt: 15s/50s/2s/5s) for smoother seeking and
+            // fewer rebuffers across a long title.
+            val loadControl = if (isVod) {
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15_000, 50_000, 2_000, 5_000)
+                    .build()
+            } else {
+                val minBufferMs = maxOf(5_000, cachingMs)
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(minBufferMs, maxOf(15_000, minBufferMs), 1_000, 3_000)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            }
+            val httpFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(30_000)
                 .setReadTimeoutMs(30_000)
-            if (httpHeaders.isNotEmpty()) {
-                dataSourceFactory.setDefaultRequestProperties(httpHeaders)
-                httpHeaders.entries
+            if (headers.isNotEmpty()) {
+                httpFactory.setDefaultRequestProperties(headers)
+                headers.entries
                     .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
                     ?.value
-                    ?.let(dataSourceFactory::setUserAgent)
+                    ?.let(httpFactory::setUserAgent)
             }
+            // VOD/DVR: wrap the header-aware HTTP factory in
+            // DefaultDataSource.Factory so a completed-recording file:// URL
+            // resolves through FileDataSource (a bare HTTP factory cannot open
+            // file://, cf VODPlayerScreen.kt). LIVE keeps the bare HTTP factory
+            // + TsExtractor routing.
+            val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
+                if (isVod || tile.kind == TileKind.Dvr) {
+                    DefaultDataSource.Factory(ctx, httpFactory)
+                } else {
+                    httpFactory
+                }
             val renderersFactory =
                 com.aeriotv.android.core.playback.aerioRenderersFactory(ctx, audioPassthrough)
             // Route raw .ts / /proxy/ts via TsExtractor like the Live
@@ -1118,13 +1277,25 @@ private fun ExoTile(
             // of AerioExoPlayerHolder.forceReload (5s cooldown, 3 attempts,
             // counter reset on recovery). Without it a tile hitting an HTTP
             // error or MediaCodec INSUFFICIENT_RESOURCE freezes silently for
-            // the rest of the session.
+            // the rest of the session. STATE_READY (VOD) also drives the
+            // one-shot resume seek; STATE_ENDED on a VOD tile fires onFinished.
             player.addListener(object : Player.Listener {
                 private var lastRetryAtMs = 0L
                 private var consecutiveRetries = 0
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_READY) consecutiveRetries = 0
+                    if (playbackState == Player.STATE_READY) {
+                        consecutiveRetries = 0
+                        // Resume from the pre-resolved position (Phase 2 picker
+                        // looked it up via WatchProgressDao), once per tile.
+                        if (isVod && !didResumeRef.value) {
+                            didResumeRef.value = true
+                            val resume = tile.resumePositionMs ?: 0L
+                            if (resume > 0L) player.seekTo(resume)
+                        }
+                    } else if (playbackState == Player.STATE_ENDED && isVod) {
+                        onFinished()
+                    }
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -1168,19 +1339,26 @@ private fun ExoTile(
                 setPlayer(player)
             }
         },
-        update = { _ ->
+        update = { view ->
             val player = playerRef.value ?: return@AndroidView
             // In-place stream swap: the positional Tile sees a new
             // channel (via MultiviewStore.swap or replaceTile). Don't
             // teardown -- hand the new URL to the same player.
             if (url.isNotBlank() && currentUrlRef.value != url) {
                 Log.i(TAG, "Tile ExoPlayer swap: ${currentUrlRef.value} -> $url")
-                val dataSourceFactory = DefaultHttpDataSource.Factory()
+                val swapHttp = DefaultHttpDataSource.Factory()
                     .setAllowCrossProtocolRedirects(true)
-                if (httpHeaders.isNotEmpty()) {
-                    dataSourceFactory.setDefaultRequestProperties(httpHeaders)
+                if (headers.isNotEmpty()) {
+                    swapHttp.setDefaultRequestProperties(headers)
                 }
-                player.setMediaSource(buildTileMediaSource(url, dataSourceFactory))
+                // Same file://-capable wrap as the factory path for VOD/DVR.
+                val swapFactory: androidx.media3.datasource.DataSource.Factory =
+                    if (isVod || tile.kind == TileKind.Dvr) {
+                        DefaultDataSource.Factory(view.context, swapHttp)
+                    } else {
+                        swapHttp
+                    }
+                player.setMediaSource(buildTileMediaSource(url, swapFactory))
                 player.prepare()
                 currentUrlRef.value = url
             }
@@ -1202,6 +1380,33 @@ private fun ExoTile(
             playerRef.value = null
         },
     )
+
+    // Periodic save for VOD tiles with a continue-watching id. Reuses the SAME
+    // save() the single VOD player calls (VODPlayerScreen.kt), so the
+    // 5-min-from-end isFinished heuristic + advanceUpNext fire for free.
+    if (isVod && tile.vodId != null) {
+        val player = playerRef.value
+        LaunchedEffect(player, tile.id) {
+            if (player == null) return@LaunchedEffect
+            while (true) {
+                kotlinx.coroutines.delay(10_000L)
+                val pos = player.currentPosition
+                val dur = player.duration.coerceAtLeast(0L)
+                if (pos <= 0L || dur <= 0L) continue
+                watchVm.save(
+                    videoId = tile.vodId,
+                    title = tile.displayName,
+                    posterUrl = tile.posterUrl,
+                    positionMs = pos,
+                    durationMs = dur,
+                    vodType = tile.vodType,
+                    seriesId = tile.seriesId,
+                    seasonNumber = tile.seasonNumber,
+                    episodeNumber = tile.episodeNumber,
+                )
+            }
+        }
+    }
 }
 
 @OptIn(UnstableApi::class)

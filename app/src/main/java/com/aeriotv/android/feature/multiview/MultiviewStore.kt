@@ -23,14 +23,18 @@ class MultiviewStore @Inject constructor() {
     /** iOS hard cap: 9 tiles. The picker enforces this. */
     val maxTiles: Int = 9
 
-    private val _selected = MutableStateFlow<List<M3UChannel>>(emptyList())
-    val selected: StateFlow<List<M3UChannel>> = _selected.asStateFlow()
+    private val _selected = MutableStateFlow<List<MultiviewTile>>(emptyList())
+    val selected: StateFlow<List<MultiviewTile>> = _selected.asStateFlow()
 
     private val _audioFocusedIndex = MutableStateFlow(0)
     val audioFocusedIndex: StateFlow<Int> = _audioFocusedIndex.asStateFlow()
 
     fun isSelected(channel: M3UChannel): Boolean =
         _selected.value.any { it.id == channel.id }
+
+    /** Id-based selection check for the mixed picker (VOD/Series/DVR tiles). */
+    fun isSelected(tileId: String): Boolean =
+        _selected.value.any { it.id == tileId }
 
     fun toggle(channel: M3UChannel) {
         val current = _selected.value
@@ -42,8 +46,28 @@ class MultiviewStore @Inject constructor() {
                 _audioFocusedIndex.value = (_selected.value.size - 1).coerceAtLeast(0)
             }
         } else if (current.size < maxTiles) {
-            _selected.value = current + channel
+            _selected.value = current + MultiviewTile.live(channel)
         }
+    }
+
+    /**
+     * General picker add path (Phase 2: VOD / Series / DVR tiles). Returns true
+     * if the tile is present after the call (already-added is treated as
+     * success), false only when the grid is at [maxTiles]. Id-deduped so a
+     * double-tap never stacks the same title.
+     */
+    fun addTile(tile: MultiviewTile): Boolean {
+        val current = _selected.value
+        if (current.any { it.id == tile.id }) return true
+        if (current.size >= maxTiles) return false
+        _selected.value = current + tile
+        return true
+    }
+
+    /** Remove a tile by id (mixed picker counterpart of [removeAt]). */
+    fun removeTile(tileId: String) {
+        val index = _selected.value.indexOfFirst { it.id == tileId }
+        if (index >= 0) removeAt(index)
     }
 
     fun clear() {
@@ -87,7 +111,7 @@ class MultiviewStore @Inject constructor() {
     fun seedCurrent(channel: M3UChannel) {
         val current = _selected.value
         val without = current.filterNot { it.id == channel.id }
-        _selected.value = (listOf(channel) + without).take(maxTiles)
+        _selected.value = (listOf(MultiviewTile.live(channel)) + without).take(maxTiles)
         _audioFocusedIndex.value = 0
     }
 
@@ -98,7 +122,7 @@ class MultiviewStore @Inject constructor() {
      * store to precisely what it held before -- protecting a Guide-staged
      * set instead of blanket-clearing it.
      */
-    fun restore(snapshot: List<M3UChannel>, audioFocus: Int) {
+    fun restore(snapshot: List<MultiviewTile>, audioFocus: Int) {
         val clamped = snapshot.take(maxTiles)
         _selected.value = clamped
         _audioFocusedIndex.value = audioFocus.coerceIn(0, (clamped.size - 1).coerceAtLeast(0))
@@ -160,12 +184,12 @@ class MultiviewStore @Inject constructor() {
      * which routes through `mpv_command loadfile` (default replace mode).
      * No tile teardown, no black flash on channel-flip.
      */
-    fun replaceTile(index: Int, newChannel: M3UChannel) {
+    fun replaceTile(index: Int, newTile: MultiviewTile) {
         val current = _selected.value
         if (index !in current.indices) return
-        if (current[index].id == newChannel.id) return
+        if (current[index].id == newTile.id) return
         val mutable = current.toMutableList()
-        mutable[index] = newChannel
+        mutable[index] = newTile
         _selected.value = mutable
     }
 
@@ -201,7 +225,7 @@ class MultiviewStore @Inject constructor() {
         _audioFocusedIndex.value = 0
         android.util.Log.w(
             "MultiviewStore",
-            "memory pressure (level=$level): shed ${current.size - 1} of ${current.size} tiles, kept ${keep.name}",
+            "memory pressure (level=$level): shed ${current.size - 1} of ${current.size} tiles, kept ${keep.displayName}",
         )
     }
 }
