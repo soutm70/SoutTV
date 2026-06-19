@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -422,139 +421,144 @@ private fun MoviesSubScreen(
             },
         )
 
-        // The Continue Watching rail + count label + loading / empty / error
-        // states ALL render as full-span items INSIDE the single grid below.
-        // The grid is the always-rendered scrolling surface so the rail shows
-        // in every state (cold load, empty library, all groups hidden) without
-        // the bare-spinner/empty early-returns that hid it, and a single lazy
-        // layout still owns rail + posters so the grid can never be placed
-        // underneath the rail. ITEM #8 overlap fix + regression follow-up.
+        // The Continue Watching rail + count label are PINNED Column siblings
+        // ABOVE the grid so the Movies / TV Shows segment pills stay visible at
+        // the top. The parent collapses those pills once grid index 0 scrolls
+        // off; folding the rail INTO the grid made index 0 the rail, so the
+        // initial poster-focus restore scrolled the rail off and falsely
+        // collapsed the pills at rest. Keeping the rail a pinned sibling means
+        // grid index 0 is the first POSTER again (so `scrolled` is correct) and
+        // the rail still shows during cold load / empty library (preserving the
+        // cold-load fix). The grid then claims ONLY the remaining height via
+        // weight(1f) below -- THAT weighting is the real ITEM #8 overlap fix;
+        // a bare fillMaxSize grid as a direct Column child was the root cause.
+        if (continueWatching.isNotEmpty() && state.searchQuery.isBlank()) {
+            ContinueWatchingRail(
+                items = continueWatching,
+                // The stored row often has no posterUrl (Navigation captures
+                // movie?.posterUrl before the route-scoped library finishes
+                // loading, and many Dispatcharr rows carry no logo at all),
+                // so fall back to the loaded library's poster for the card.
+                posterFor = { row ->
+                    row.posterUrl?.takeIf { it.isNotBlank() }
+                        ?: movieByUuid[row.videoId]?.posterUrl
+                },
+                onItemClick = { progress ->
+                    movieByUuid[progress.videoId]?.let { movie ->
+                        returnFocus.arm("cw:${progress.videoId}")
+                        onMovieClick(movie)
+                    }
+                },
+                onRemove = { watchVm.delete(it.videoId) },
+                focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
+            )
+        }
+        val phoneCountLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
+            "${visibleFiltered.size} / $total"
+        }
+        if (phoneCountLabel != null && !isTv && visibleFiltered.isNotEmpty()) {
+            Text(
+                text = phoneCountLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
 
         // TV: deadband spec kills the horizontal-move vertical jump (see
         // com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec). Phone keeps the inherited default.
         val bringIntoViewSpec =
             if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
             else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
-        CompositionLocalProvider(
-            androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
-        ) {
-        LazyVerticalGrid(
-            // Larger posters + overscan-safe padding on the 10-foot TV; phone
-            // keeps the compact grid whose 104dp bottom clears the bottom
-            // NavigationBar (TV has top tabs, so it needs far less bottom inset).
-            columns = GridCells.Adaptive(minSize = if (isTv) 128.dp else 120.dp),
-            modifier = Modifier.fillMaxSize(),
-            state = gridState,
-            contentPadding = PaddingValues(
-                start = if (isTv) 48.dp else 12.dp,
-                end = if (isTv) 48.dp else 12.dp,
-                top = if (isTv) 16.dp else 8.dp,
-                bottom = if (isTv) 32.dp else 104.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
-        ) {
-            if (continueWatching.isNotEmpty() && state.searchQuery.isBlank()) {
-                item(key = "cw-rail", span = { GridItemSpan(maxLineSpan) }) {
-                    ContinueWatchingRail(
-                        items = continueWatching,
-                        // The stored row often has no posterUrl (Navigation captures
-                        // movie?.posterUrl before the route-scoped library finishes
-                        // loading, and many Dispatcharr rows carry no logo at all),
-                        // so fall back to the loaded library's poster for the card.
-                        posterFor = { row ->
-                            row.posterUrl?.takeIf { it.isNotBlank() }
-                                ?: movieByUuid[row.videoId]?.posterUrl
-                        },
-                        onItemClick = { progress ->
-                            movieByUuid[progress.videoId]?.let { movie ->
-                                returnFocus.arm("cw:${progress.videoId}")
-                                onMovieClick(movie)
-                            }
-                        },
-                        onRemove = { watchVm.delete(it.videoId) },
-                        focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
-                    )
-                }
-            }
-            val phoneCountLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
-                "${visibleFiltered.size} / $total"
-            }
-            if (phoneCountLabel != null && !isTv && visibleFiltered.isNotEmpty()) {
-                item(key = "cw-count", span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = phoneCountLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-            // Loading / error / empty states render as a full-span body item
-            // BELOW the rail when there are no posters, so the rail above stays
-            // visible. Only one of these branches is ever taken.
+        // The grid takes ONLY the leftover height below the pinned rail /
+        // header / count via weight(1f). Loading / error / empty states center
+        // inside the same weighted Box so the rail above stays visible in every
+        // state. Only one of the when{} branches is ever taken.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val movieError = state.error
             if (visibleFiltered.isEmpty()) {
-                item(key = "vod-state", span = { GridItemSpan(maxLineSpan) }) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                        contentAlignment = Alignment.Center,
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(top = 48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        state.isLoading && state.movies.isEmpty() ->
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        movieError != null && state.movies.isEmpty() ->
+                            Text(
+                                text = "Couldn't load movies: $movieError",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(24.dp),
+                            )
+                        else ->
+                            EmptyState(
+                                title = when {
+                                    state.searchQuery.isNotBlank() -> "No matches"
+                                    hiddenMovieGroups.isNotEmpty() -> "Everything's hidden"
+                                    else -> "No movies"
+                                },
+                                body = when {
+                                    state.searchQuery.isNotBlank() -> "Try a different search term."
+                                    hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Use the filter button to show some again."
+                                    else -> "Dispatcharr returned an empty Movies library. Confirm VOD is enabled on the server."
+                                },
+                            )
+                    }
+                }
+            } else {
+                CompositionLocalProvider(
+                    androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
+                ) {
+                    LazyVerticalGrid(
+                        // Larger posters + overscan-safe padding on the 10-foot
+                        // TV; phone keeps the compact grid whose 104dp bottom
+                        // clears the bottom NavigationBar (TV has top tabs, so
+                        // it needs far less bottom inset).
+                        columns = GridCells.Adaptive(minSize = if (isTv) 128.dp else 120.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        state = gridState,
+                        contentPadding = PaddingValues(
+                            start = if (isTv) 48.dp else 12.dp,
+                            end = if (isTv) 48.dp else 12.dp,
+                            top = if (isTv) 16.dp else 8.dp,
+                            bottom = if (isTv) 32.dp else 104.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
                     ) {
-                        when {
-                            state.isLoading && state.movies.isEmpty() ->
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                            movieError != null && state.movies.isEmpty() ->
-                                Text(
-                                    text = "Couldn't load movies: $movieError",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(24.dp),
-                                )
-                            else ->
-                                EmptyState(
-                                    title = when {
-                                        state.searchQuery.isNotBlank() -> "No matches"
-                                        hiddenMovieGroups.isNotEmpty() -> "Everything's hidden"
-                                        else -> "No movies"
-                                    },
-                                    body = when {
-                                        state.searchQuery.isNotBlank() -> "Try a different search term."
-                                        hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Use the filter button to show some again."
-                                        else -> "Dispatcharr returned an empty Movies library. Confirm VOD is enabled on the server."
-                                    },
-                                )
+                        itemsIndexed(items = visibleFiltered, key = { _, it -> it.id }) { index, movie ->
+                            // Prefetch the next page as the user nears the end
+                            // of what's loaded. Browse only -- search results
+                            // aren't paginated here, and the cursor guard stops
+                            // once the library is fully walked.
+                            if (state.moviesNextCursor != null &&
+                                state.searchQuery.isBlank() &&
+                                index >= visibleFiltered.size - 8
+                            ) {
+                                LaunchedEffect(visibleFiltered.size) { viewModel.loadMoreMovies() }
+                            }
+                            MoviePoster(
+                                movie = movie,
+                                isTv = isTv,
+                                focusRequester = returnFocus.requesterFor("movie:${movie.uuid}"),
+                                // Index 0 additionally carries the BACK-to-top
+                                // requester; a separate hook so it never
+                                // disturbs VodReturnFocusState.
+                                modifier = if (isTv && index == 0) {
+                                    Modifier.focusRequester(firstPosterFocus)
+                                } else {
+                                    Modifier
+                                },
+                                onClick = {
+                                    returnFocus.arm("movie:${movie.uuid}")
+                                    onMovieClick(movie)
+                                },
+                            )
                         }
                     }
                 }
             }
-            itemsIndexed(items = visibleFiltered, key = { _, it -> it.id }) { index, movie ->
-                // Prefetch the next page as the user nears the end of what's
-                // loaded. Browse only -- search results aren't paginated here,
-                // and the cursor guard stops once the library is fully walked.
-                if (state.moviesNextCursor != null &&
-                    state.searchQuery.isBlank() &&
-                    index >= visibleFiltered.size - 8
-                ) {
-                    LaunchedEffect(visibleFiltered.size) { viewModel.loadMoreMovies() }
-                }
-                MoviePoster(
-                    movie = movie,
-                    isTv = isTv,
-                    focusRequester = returnFocus.requesterFor("movie:${movie.uuid}"),
-                    // Index 0 additionally carries the BACK-to-top requester;
-                    // a separate hook so it never disturbs VodReturnFocusState.
-                    modifier = if (isTv && index == 0) {
-                        Modifier.focusRequester(firstPosterFocus)
-                    } else {
-                        Modifier
-                    },
-                    onClick = {
-                        returnFocus.arm("movie:${movie.uuid}")
-                        onMovieClick(movie)
-                    },
-                )
-            }
-        }
         }
     }
 
@@ -662,128 +666,128 @@ private fun SeriesSubScreen(
             },
         )
 
-        // The Continue Watching rail + count label + loading / empty / error
-        // states ALL render as full-span items INSIDE the single grid below, so
-        // the rail shows in every state (cold load, empty library, all groups
-        // hidden) and a single lazy layout still owns rail + posters so the
-        // grid can never be placed underneath the rail. ITEM #8 overlap fix +
-        // regression follow-up. Mirrors MoviesSubScreen above.
+        // The Continue Watching rail + count label are PINNED Column siblings
+        // ABOVE the grid so the Movies / TV Shows segment pills stay visible at
+        // the top (grid index 0 is the first POSTER again, so the parent's
+        // `scrolled` collapse stays correct). The rail stays a pinned sibling
+        // so it still shows during cold load / empty library, and the grid
+        // claims ONLY the remaining height via weight(1f) below -- that
+        // weighting is the real ITEM #8 overlap fix. Mirrors MoviesSubScreen.
+        if (continueWatchingEpisodes.isNotEmpty() && state.seriesSearchQuery.isBlank()) {
+            SeriesContinueWatchingRail(
+                items = continueWatchingEpisodes,
+                seriesById = seriesById,
+                onItemClick = { row ->
+                    returnFocus.arm("cw:${row.videoId}")
+                    onEpisodeResume(row.videoId)
+                },
+                onRemove = { watchVm.delete(it.videoId) },
+                onOpenSeries = { row ->
+                    row.seriesId?.toIntOrNull()?.let { id ->
+                        seriesById[id]?.let(onSeriesClick)
+                    }
+                },
+                focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
+            )
+        }
+        val phoneCountLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
+            "${visibleSeriesFiltered.size} / $total"
+        }
+        if (phoneCountLabel != null && !isTv && visibleSeriesFiltered.isNotEmpty()) {
+            Text(
+                text = phoneCountLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
 
         // TV: same deadband spec as the Movies grid (com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec).
         val bringIntoViewSpec =
             if (isTv) com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec
             else androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
-        CompositionLocalProvider(
-            androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
-        ) {
-        LazyVerticalGrid(
-            // Series tab matches the Movies tab's TV / phone grid metrics.
-            columns = GridCells.Adaptive(minSize = if (isTv) 128.dp else 120.dp),
-            modifier = Modifier.fillMaxSize(),
-            state = gridState,
-            contentPadding = PaddingValues(
-                start = if (isTv) 48.dp else 12.dp,
-                end = if (isTv) 48.dp else 12.dp,
-                top = if (isTv) 16.dp else 8.dp,
-                bottom = if (isTv) 32.dp else 104.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
-        ) {
-            if (continueWatchingEpisodes.isNotEmpty() && state.seriesSearchQuery.isBlank()) {
-                item(key = "cw-rail", span = { GridItemSpan(maxLineSpan) }) {
-                    SeriesContinueWatchingRail(
-                        items = continueWatchingEpisodes,
-                        seriesById = seriesById,
-                        onItemClick = { row ->
-                            returnFocus.arm("cw:${row.videoId}")
-                            onEpisodeResume(row.videoId)
-                        },
-                        onRemove = { watchVm.delete(it.videoId) },
-                        onOpenSeries = { row ->
-                            row.seriesId?.toIntOrNull()?.let { id ->
-                                seriesById[id]?.let(onSeriesClick)
-                            }
-                        },
-                        focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
-                    )
-                }
-            }
-            val phoneCountLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
-                "${visibleSeriesFiltered.size} / $total"
-            }
-            if (phoneCountLabel != null && !isTv && visibleSeriesFiltered.isNotEmpty()) {
-                item(key = "cw-count", span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = phoneCountLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-            // Loading / error / empty states render as a full-span body item
-            // BELOW the rail when there are no posters, so the rail above stays
-            // visible. Only one of these branches is ever taken.
+        // The grid takes ONLY the leftover height below the pinned rail /
+        // header / count via weight(1f). Loading / error / empty states center
+        // inside the same weighted Box so the rail above stays visible in every
+        // state. Only one of the when{} branches is ever taken.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val seriesErr = state.seriesError
             if (visibleSeriesFiltered.isEmpty()) {
-                item(key = "vod-state", span = { GridItemSpan(maxLineSpan) }) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                        contentAlignment = Alignment.Center,
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(top = 48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        state.isLoadingSeries && state.series.isEmpty() ->
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        seriesErr != null && state.series.isEmpty() ->
+                            Text(
+                                text = "Couldn't load series: $seriesErr",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(24.dp),
+                            )
+                        else ->
+                            EmptyState(
+                                title = when {
+                                    state.seriesSearchQuery.isNotBlank() -> "No matches"
+                                    hiddenSeriesGroups.isNotEmpty() -> "Everything's hidden"
+                                    else -> "No series"
+                                },
+                                body = when {
+                                    state.seriesSearchQuery.isNotBlank() -> "Try a different search term."
+                                    hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Use the filter button to show some again."
+                                    else -> "Dispatcharr returned an empty Series library. Confirm VOD is enabled on the server."
+                                },
+                            )
+                    }
+                }
+            } else {
+                CompositionLocalProvider(
+                    androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides bringIntoViewSpec,
+                ) {
+                    LazyVerticalGrid(
+                        // Series tab matches the Movies tab's TV / phone grid metrics.
+                        columns = GridCells.Adaptive(minSize = if (isTv) 128.dp else 120.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        state = gridState,
+                        contentPadding = PaddingValues(
+                            start = if (isTv) 48.dp else 12.dp,
+                            end = if (isTv) 48.dp else 12.dp,
+                            top = if (isTv) 16.dp else 8.dp,
+                            bottom = if (isTv) 32.dp else 104.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
                     ) {
-                        when {
-                            state.isLoadingSeries && state.series.isEmpty() ->
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                            seriesErr != null && state.series.isEmpty() ->
-                                Text(
-                                    text = "Couldn't load series: $seriesErr",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(24.dp),
-                                )
-                            else ->
-                                EmptyState(
-                                    title = when {
-                                        state.seriesSearchQuery.isNotBlank() -> "No matches"
-                                        hiddenSeriesGroups.isNotEmpty() -> "Everything's hidden"
-                                        else -> "No series"
-                                    },
-                                    body = when {
-                                        state.seriesSearchQuery.isNotBlank() -> "Try a different search term."
-                                        hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Use the filter button to show some again."
-                                        else -> "Dispatcharr returned an empty Series library. Confirm VOD is enabled on the server."
-                                    },
-                                )
+                        itemsIndexed(items = visibleSeriesFiltered, key = { _, it -> it.id }) { index, series ->
+                            if (state.seriesNextCursor != null &&
+                                state.seriesSearchQuery.isBlank() &&
+                                index >= visibleSeriesFiltered.size - 8
+                            ) {
+                                LaunchedEffect(visibleSeriesFiltered.size) { viewModel.loadMoreSeries() }
+                            }
+                            SeriesPoster(
+                                series = series,
+                                isTv = isTv,
+                                focusRequester = returnFocus.requesterFor("series:${series.id}"),
+                                // Index 0 additionally carries the BACK-to-top
+                                // requester; a separate hook so it never
+                                // disturbs VodReturnFocusState.
+                                modifier = if (isTv && index == 0) {
+                                    Modifier.focusRequester(firstPosterFocus)
+                                } else {
+                                    Modifier
+                                },
+                                onClick = {
+                                    returnFocus.arm("series:${series.id}")
+                                    onSeriesClick(series)
+                                },
+                            )
                         }
                     }
                 }
             }
-            itemsIndexed(items = visibleSeriesFiltered, key = { _, it -> it.id }) { index, series ->
-                if (state.seriesNextCursor != null &&
-                    state.seriesSearchQuery.isBlank() &&
-                    index >= visibleSeriesFiltered.size - 8
-                ) {
-                    LaunchedEffect(visibleSeriesFiltered.size) { viewModel.loadMoreSeries() }
-                }
-                SeriesPoster(
-                    series = series,
-                    isTv = isTv,
-                    focusRequester = returnFocus.requesterFor("series:${series.id}"),
-                    // Index 0 additionally carries the BACK-to-top requester;
-                    // a separate hook so it never disturbs VodReturnFocusState.
-                    modifier = if (isTv && index == 0) {
-                        Modifier.focusRequester(firstPosterFocus)
-                    } else {
-                        Modifier
-                    },
-                    onClick = {
-                        returnFocus.arm("series:${series.id}")
-                        onSeriesClick(series)
-                    },
-                )
-            }
-        }
         }
     }
 
