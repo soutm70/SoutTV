@@ -422,41 +422,13 @@ private fun MoviesSubScreen(
             },
         )
 
-        // CW rail + count label render as full-span grid header items below
-        // (ITEM #8 overlap fix; same treatment as SeriesSubScreen).
-
-        if (state.isLoading && state.movies.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-            }
-            return@Column
-        }
-        state.error?.let { err ->
-            if (state.movies.isEmpty()) {
-                Text(
-                    text = "Couldn't load movies: $err",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(24.dp),
-                )
-                return@Column
-            }
-        }
-        if (visibleFiltered.isEmpty()) {
-            EmptyState(
-                title = when {
-                    state.searchQuery.isNotBlank() -> "No matches"
-                    hiddenMovieGroups.isNotEmpty() -> "Everything's hidden"
-                    else -> "No movies"
-                },
-                body = when {
-                    state.searchQuery.isNotBlank() -> "Try a different search term."
-                    hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Use the filter button to show some again."
-                    else -> "Dispatcharr returned an empty Movies library. Confirm VOD is enabled on the server."
-                },
-            )
-            return@Column
-        }
+        // The Continue Watching rail + count label + loading / empty / error
+        // states ALL render as full-span items INSIDE the single grid below.
+        // The grid is the always-rendered scrolling surface so the rail shows
+        // in every state (cold load, empty library, all groups hidden) without
+        // the bare-spinner/empty early-returns that hid it, and a single lazy
+        // layout still owns rail + posters so the grid can never be placed
+        // underneath the rail. ITEM #8 overlap fix + regression follow-up.
 
         // TV: deadband spec kills the horizontal-move vertical jump (see
         // com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec). Phone keeps the inherited default.
@@ -508,7 +480,7 @@ private fun MoviesSubScreen(
             val phoneCountLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
                 "${visibleFiltered.size} / $total"
             }
-            if (phoneCountLabel != null && !isTv) {
+            if (phoneCountLabel != null && !isTv && visibleFiltered.isNotEmpty()) {
                 item(key = "cw-count", span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         text = phoneCountLabel,
@@ -516,6 +488,43 @@ private fun MoviesSubScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     )
+                }
+            }
+            // Loading / error / empty states render as a full-span body item
+            // BELOW the rail when there are no posters, so the rail above stays
+            // visible. Only one of these branches is ever taken.
+            val movieError = state.error
+            if (visibleFiltered.isEmpty()) {
+                item(key = "vod-state", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when {
+                            state.isLoading && state.movies.isEmpty() ->
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            movieError != null && state.movies.isEmpty() ->
+                                Text(
+                                    text = "Couldn't load movies: $movieError",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(24.dp),
+                                )
+                            else ->
+                                EmptyState(
+                                    title = when {
+                                        state.searchQuery.isNotBlank() -> "No matches"
+                                        hiddenMovieGroups.isNotEmpty() -> "Everything's hidden"
+                                        else -> "No movies"
+                                    },
+                                    body = when {
+                                        state.searchQuery.isNotBlank() -> "Try a different search term."
+                                        hiddenMovieGroups.isNotEmpty() -> "All ${hiddenMovieGroups.size} group${if (hiddenMovieGroups.size == 1) "" else "s"} you chose to hide accounts for every movie in this library. Use the filter button to show some again."
+                                        else -> "Dispatcharr returned an empty Movies library. Confirm VOD is enabled on the server."
+                                    },
+                                )
+                        }
+                    }
                 }
             }
             itemsIndexed(items = visibleFiltered, key = { _, it -> it.id }) { index, movie ->
@@ -653,43 +662,12 @@ private fun SeriesSubScreen(
             },
         )
 
-        // Continue Watching rail + count label now render as full-span header
-        // items INSIDE the grid below, so a single lazy layout owns rail +
-        // posters and the grid can no longer be placed underneath the rail.
-        // ITEM #8 overlap fix.
-
-        if (state.isLoadingSeries && state.series.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-            }
-            return@Column
-        }
-        state.seriesError?.let { err ->
-            if (state.series.isEmpty()) {
-                Text(
-                    text = "Couldn't load series: $err",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(24.dp),
-                )
-                return@Column
-            }
-        }
-        if (visibleSeriesFiltered.isEmpty()) {
-            EmptyState(
-                title = when {
-                    state.seriesSearchQuery.isNotBlank() -> "No matches"
-                    hiddenSeriesGroups.isNotEmpty() -> "Everything's hidden"
-                    else -> "No series"
-                },
-                body = when {
-                    state.seriesSearchQuery.isNotBlank() -> "Try a different search term."
-                    hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Use the filter button to show some again."
-                    else -> "Dispatcharr returned an empty Series library. Confirm VOD is enabled on the server."
-                },
-            )
-            return@Column
-        }
+        // The Continue Watching rail + count label + loading / empty / error
+        // states ALL render as full-span items INSIDE the single grid below, so
+        // the rail shows in every state (cold load, empty library, all groups
+        // hidden) and a single lazy layout still owns rail + posters so the
+        // grid can never be placed underneath the rail. ITEM #8 overlap fix +
+        // regression follow-up. Mirrors MoviesSubScreen above.
 
         // TV: same deadband spec as the Movies grid (com.aeriotv.android.ui.tv.TvLargeCardBringIntoViewSpec).
         val bringIntoViewSpec =
@@ -734,7 +712,7 @@ private fun SeriesSubScreen(
             val phoneCountLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
                 "${visibleSeriesFiltered.size} / $total"
             }
-            if (phoneCountLabel != null && !isTv) {
+            if (phoneCountLabel != null && !isTv && visibleSeriesFiltered.isNotEmpty()) {
                 item(key = "cw-count", span = { GridItemSpan(maxLineSpan) }) {
                     Text(
                         text = phoneCountLabel,
@@ -742,6 +720,43 @@ private fun SeriesSubScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     )
+                }
+            }
+            // Loading / error / empty states render as a full-span body item
+            // BELOW the rail when there are no posters, so the rail above stays
+            // visible. Only one of these branches is ever taken.
+            val seriesErr = state.seriesError
+            if (visibleSeriesFiltered.isEmpty()) {
+                item(key = "vod-state", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when {
+                            state.isLoadingSeries && state.series.isEmpty() ->
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            seriesErr != null && state.series.isEmpty() ->
+                                Text(
+                                    text = "Couldn't load series: $seriesErr",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(24.dp),
+                                )
+                            else ->
+                                EmptyState(
+                                    title = when {
+                                        state.seriesSearchQuery.isNotBlank() -> "No matches"
+                                        hiddenSeriesGroups.isNotEmpty() -> "Everything's hidden"
+                                        else -> "No series"
+                                    },
+                                    body = when {
+                                        state.seriesSearchQuery.isNotBlank() -> "Try a different search term."
+                                        hiddenSeriesGroups.isNotEmpty() -> "All ${hiddenSeriesGroups.size} group${if (hiddenSeriesGroups.size == 1) "" else "s"} you chose to hide accounts for every series in this library. Use the filter button to show some again."
+                                        else -> "Dispatcharr returned an empty Series library. Confirm VOD is enabled on the server."
+                                    },
+                                )
+                        }
+                    }
                 }
             }
             itemsIndexed(items = visibleSeriesFiltered, key = { _, it -> it.id }) { index, series ->
