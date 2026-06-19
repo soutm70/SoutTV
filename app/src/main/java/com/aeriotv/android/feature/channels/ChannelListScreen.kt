@@ -89,7 +89,6 @@ import com.aeriotv.android.core.tv.TvMenuAction
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.livetv.LiveTVViewMode
-import com.aeriotv.android.ui.tv.tvFocusScale
 import com.aeriotv.android.feature.livetv.ManageGroupsSheet
 import com.aeriotv.android.feature.livetv.ProgramInfoSheet
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
@@ -659,7 +658,9 @@ internal fun ChannelRow(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .tvFocusScale(focused)
+            // No focus pop-out on TV: the channel row keeps its size and shows
+            // focus via the primary border below (a scaled-up list row reads as
+            // jumpy at 10 feet). Phone rows never focus, so this was a no-op there.
             .clip(RoundedCornerShape(12.dp))
             .background(cardBrush)
             .then(
