@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -131,6 +132,8 @@ fun VODPlayerScreen(
     loadingMessage: String? = null,
     videoId: String? = null,
     posterUrl: String? = null,
+    isDvr: Boolean = false,
+    startAtLiveEdge: Boolean = true,
 ) {
     // Keep the screen on during VOD playback. Matches PlayerScreen for the
     // same reason: system screen-timeout would otherwise dim/sleep the panel
@@ -261,9 +264,14 @@ fun VODPlayerScreen(
         scrubLastStepAt = now
         val mult = minOf(12, 1 + scrubAccelCount / 2)
         val base = scrubTargetMs ?: positionMs
-        // Unknown duration (in-progress recording): allow forward stepping
-        // unclamped, same as the touch onSkipForward below.
-        val maxPos = if (durationMs > 0L) durationMs else Long.MAX_VALUE
+        // Clamp a DVR scrub a few seconds behind the live edge so a forward
+        // sweep can't overrun the growing window and stall; plain VOD clamps
+        // at the duration; unknown duration steps unclamped.
+        val maxPos = if (durationMs > 0L) {
+            if (isDvr) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
+        } else {
+            Long.MAX_VALUE
+        }
         scrubTargetMs = (base + dir * 10_000L * mult).coerceIn(0L, maxPos)
         chromeVisible = true
         lastInteractionAt = now
@@ -497,6 +505,9 @@ fun VODPlayerScreen(
         // parsed and contentDuration arrives.
         LaunchedEffect(exoPlayer, savedPositionMs) {
             val player = exoPlayer ?: return@LaunchedEffect
+            // A DVR recording is not VOD: never restore a saved VOD position;
+            // the DVR catch-up effect below owns the start position.
+            if (isDvr) return@LaunchedEffect
             val pos = savedPositionMs ?: return@LaunchedEffect
             if (pos <= 0L) return@LaunchedEffect
             // Spin until the player has parsed duration. Bail out after
@@ -511,6 +522,21 @@ fun VODPlayerScreen(
                 player.seekTo(pos)
                 Log.i(TAG, "Resumed from ${pos}ms")
             }
+        }
+
+        // DVR catch-up seek. Media3 auto-starts a live HLS at the live edge,
+        // so 'Watch Live' (startAtLiveEdge=true) needs nothing. For 'Watch
+        // from Beginning' seek to window start once the timeline is known.
+        LaunchedEffect(exoPlayer, isDvr) {
+            if (!isDvr || startAtLiveEdge) return@LaunchedEffect
+            val player = exoPlayer ?: return@LaunchedEffect
+            var waited = 0L
+            while (player.currentTimeline.isEmpty && waited < 6_000L) {
+                delay(200L)
+                waited += 200L
+            }
+            runCatching { player.seekTo(player.currentMediaItemIndex, 0L) }
+            Log.i(TAG, "DVR catch-up: seeking to window start")
         }
 
         // Periodic save. Mirrors iOS NowPlayingManager.currentWatchProgress's
@@ -551,11 +577,25 @@ fun VODPlayerScreen(
         // frame, and only runs while VOD is mounted.
         LaunchedEffect(exoPlayer) {
             val player = exoPlayer ?: return@LaunchedEffect
+            val window = androidx.media3.common.Timeline.Window()
             while (true) {
                 delay(500L)
                 if (isDragging) continue
                 positionMs = player.contentPosition.coerceAtLeast(0L)
-                durationMs = player.contentDuration.coerceAtLeast(0L)
+                durationMs = if (isDvr) {
+                    // Live HLS window: contentDuration is C.TIME_UNSET. Derive
+                    // an effective right edge from the seekable window length,
+                    // floored at positionMs (iOS PlayerView.timelineEndMs).
+                    val tl = player.currentTimeline
+                    val winLen = if (!tl.isEmpty) {
+                        tl.getWindow(player.currentMediaItemIndex, window).durationMs
+                    } else {
+                        androidx.media3.common.C.TIME_UNSET
+                    }
+                    maxOf(if (winLen > 0L) winLen else 0L, positionMs)
+                } else {
+                    player.contentDuration.coerceAtLeast(0L)
+                }
                 isPaused = !player.playWhenReady
             }
         }
@@ -721,10 +761,20 @@ fun VODPlayerScreen(
                     },
                     onSkipForward = {
                         val player = exoPlayer ?: return@BottomChrome
-                        val maxPos = if (durationMs > 0) durationMs else Long.MAX_VALUE
+                        val maxPos = if (durationMs > 0) {
+                            if (isDvr) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
+                        } else {
+                            Long.MAX_VALUE
+                        }
                         val target = min(maxPos, positionMs + 10_000L)
                         player.seekTo(target)
                         positionMs = target
+                    },
+                    isDvr = isDvr,
+                    onSeekToLive = {
+                        val p = exoPlayer ?: return@BottomChrome
+                        p.seekToDefaultPosition()
+                        positionMs = durationMs
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -767,6 +817,8 @@ private fun BottomChrome(
     onTogglePlay: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
+    isDvr: Boolean = false,
+    onSeekToLive: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var thumbCenterPx by remember { mutableFloatStateOf(0f) }
@@ -845,11 +897,46 @@ private fun BottomChrome(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Text(
-                text = formatTime(durationMs),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
-            )
+            if (isDvr) {
+                // LIVE pill (iOS PlayerView): filled red within 15s of the
+                // live edge, hollow/gray when scrubbed back. Tapping it
+                // jumps to the live edge.
+                val atLive = durationMs > 0L && displayMs >= durationMs - 15_000L
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onSeekToLive,
+                        )
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (atLive) Color(0xFFFF3B30)
+                                else Color.White.copy(alpha = 0.4f),
+                            ),
+                    )
+                    Text(
+                        text = "LIVE",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (atLive) Color.White else Color.White.copy(alpha = 0.55f),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            } else {
+                Text(
+                    text = formatTime(durationMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                )
+            }
             }
         }
         // Floating scrub-readout bubble (iOS PlayerView.scrubReadout parity,

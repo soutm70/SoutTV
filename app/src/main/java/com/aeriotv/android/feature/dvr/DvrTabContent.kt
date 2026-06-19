@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
@@ -91,7 +92,8 @@ import java.util.Date
 fun DvrTabContent(
     modifier: Modifier = Modifier,
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
-    onWatchLive: (Int) -> Unit = {},
+    onWatchLive: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    onWatchFromBeginning: (String, String, Boolean) -> Unit = { _, _, _ -> },
     viewModel: DvrViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -300,10 +302,13 @@ fun DvrTabContent(
                     onEdit = { pendingEdit = rec },
                     onDelete = { pendingDelete = rec },
                     onWatchLive = {
-                        // Audit task #50 watch-live: only Server + Recording
-                        // rows that carry a dispatcharrChannelId offer this
-                        // action via the menu, so a non-null is expected.
-                        rec.dispatcharrChannelId?.let { onWatchLive(it) }
+                        // Audit #50 / iOS v1.6.22: in-progress server rows that
+                        // carry a server-reported URL offer Watch Live. Routes
+                        // to the recording player at the live edge.
+                        rec.inProgressUrl?.let { onWatchLive(it, rec.title, rec.isDvr) }
+                    },
+                    onWatchFromBeginning = {
+                        rec.inProgressUrl?.let { onWatchFromBeginning(it, rec.title, rec.isDvr) }
                     },
                     onPlay = {
                         // Audit task #43: both local (file://) and Dispatcharr
@@ -613,6 +618,7 @@ private fun RecordingRow(
     onDelete: () -> Unit,
     onPlay: () -> Unit,
     onWatchLive: () -> Unit,
+    onWatchFromBeginning: () -> Unit,
     onSaveToDevice: () -> Unit,
     onRemoveCommercials: () -> Unit,
     onStopRecording: () -> Unit,
@@ -665,7 +671,17 @@ private fun RecordingRow(
                     // tvGuard: the OK RELEASE after a TV long-press is
                     // delivered as a click (to this row or to the menu's
                     // first item); arm/wrap swallows it.
-                    onClick = tvGuard.wrap { if (!rec.playbackUrl.isNullOrBlank()) onPlay() },
+                    // Single tap plays a finalized recording; an in-progress
+                    // server row with a server URL tap-plays at the live edge
+                    // (iOS playIfCompleted parity). Other rows no-op and use
+                    // the long-press menu.
+                    onClick = tvGuard.wrap {
+                        when {
+                            !rec.playbackUrl.isNullOrBlank() -> onPlay()
+                            rec.status == DvrViewModel.Recording.Status.Recording &&
+                                rec.inProgressUrl != null -> onWatchLive()
+                        }
+                    },
                     onLongClick = { menuOpen = true; tvGuard.arm() },
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -741,6 +757,7 @@ private fun RecordingRow(
             onEdit = onEdit,
             onDelete = onDelete,
             onWatchLive = onWatchLive,
+            onWatchFromBeginning = onWatchFromBeginning,
             onSaveToDevice = onSaveToDevice,
             onRemoveCommercials = onRemoveCommercials,
             onStopRecording = onStopRecording,
@@ -812,6 +829,7 @@ private fun RecordingActionMenu(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onWatchLive: () -> Unit,
+    onWatchFromBeginning: () -> Unit,
     onSaveToDevice: () -> Unit,
     onRemoveCommercials: () -> Unit,
     onStopRecording: () -> Unit,
@@ -832,8 +850,13 @@ private fun RecordingActionMenu(
             add(TvMenuAction("Remove Commercials", Icons.Outlined.ContentCut) { onRemoveCommercials() })
         }
         if (isInProgress && isServer) {
-            if (rec.dispatcharrChannelId != null) {
+            // iOS MyRecordingsView 345-370: an in-progress server row with a
+            // server-reported URL offers Watch Live (live edge) + Watch from
+            // Beginning (window start). Gate on inProgressUrl, not the channel
+            // id -- the recording carries its own playback URL.
+            if (rec.inProgressUrl != null) {
                 add(TvMenuAction("Watch Live", Icons.Outlined.PlayArrow) { onWatchLive() })
+                add(TvMenuAction("Watch from Beginning", Icons.Outlined.SkipPrevious) { onWatchFromBeginning() })
             }
             add(TvMenuAction("Stop Recording", Icons.Outlined.Stop) { onStopRecording() })
         }

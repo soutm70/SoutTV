@@ -129,7 +129,8 @@ fun MainScaffold(
     onEpisodeResume: (String) -> Unit = {},
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
     onLaunchMultiview: () -> Unit = {},
-    onWatchLive: (Int) -> Unit = {},
+    onWatchLive: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    onWatchFromBeginning: (String, String, Boolean) -> Unit = { _, _, _ -> },
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -386,6 +387,7 @@ fun MainScaffold(
                     onPlayRecording = onPlayRecording,
                     onLaunchMultiview = onLaunchMultiview,
                     onWatchLive = onWatchLive,
+                    onWatchFromBeginning = onWatchFromBeginning,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -501,6 +503,7 @@ fun MainScaffold(
                 onPlayRecording = onPlayRecording,
                 onLaunchMultiview = onLaunchMultiview,
                 onWatchLive = onWatchLive,
+                onWatchFromBeginning = onWatchFromBeginning,
                 modifier = Modifier.fillMaxSize(),
             )
             // iOS "Syncing" pill, top-left over content (below the status bar).
@@ -532,7 +535,8 @@ private fun MainTabContent(
     onEpisodeResume: (String) -> Unit,
     onPlayRecording: (String, String) -> Unit,
     onLaunchMultiview: () -> Unit,
-    onWatchLive: (Int) -> Unit,
+    onWatchLive: (String, String, Boolean) -> Unit,
+    onWatchFromBeginning: (String, String, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -545,6 +549,7 @@ private fun MainTabContent(
             AppTab.DVR -> DvrTabContent(
                 onPlayRecording = onPlayRecording,
                 onWatchLive = onWatchLive,
+                onWatchFromBeginning = onWatchFromBeginning,
             )
             AppTab.OnDemand -> OnDemandTabContent(
                 onMovieClick = { movie -> onMovieClick(movie.uuid) },

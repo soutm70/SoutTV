@@ -78,6 +78,26 @@ class DvrViewModel @Inject constructor(
          * Recording (in-progress) and this id is non-null.
          */
         val dispatcharrChannelId: Int? = null,
+        /**
+         * Server-provided playback URL for an IN-PROGRESS server recording.
+         * Mirrors iOS Recording.dispatcharrFileURL (Models.swift 718): the
+         * resolved custom_properties.output_file_url/file_url. For
+         * Dispatcharr's DVR pipeline this is the growing HLS playlist
+         * (.../recordings/<id>/hls/index.m3u8); on older builds it's the raw
+         * /file/ partial. Null when the server emits neither. Distinct from
+         * playbackUrl, which is only populated for finalized Completed/Stopped
+         * rows.
+         */
+        val inProgressUrl: String? = null,
+        /**
+         * True when inProgressUrl is an HLS playlist (.m3u8): the player
+         * treats the stream as a growing seekable live window (live-edge
+         * clamp + LIVE pill + seek-at-EOF). Mirrors iOS
+         * `isDVR = rec.isInProgress && urlSource == server-hls`
+         * (MyRecordingsView.swift 628). A raw /file/ partial plays as plain
+         * VOD (isDvr=false).
+         */
+        val isDvr: Boolean = false,
     ) {
         enum class Status { Scheduled, Recording, Completed, Failed, Stopped, Unknown }
 
@@ -507,6 +527,15 @@ private fun DispatcharrRecording.toRecording(
             resolveRecordingUrl(fileUrl, baseUrl) ?: client.recordingPlaybackUrl(baseUrl, id)
         else -> null
     }
+    // In-progress catch-up / watch-live (audit #50, iOS v1.6.22 + #29).
+    // Mirror iOS playServerRecording: prefer the server-reported file_url
+    // (HLS for in-progress on the new DVR pipeline), else the legacy
+    // /file/ partial. Only the .m3u8 case is a true growing DVR window;
+    // the raw partial plays as fixed VOD.
+    val inProgress: String? = if (status == DvrViewModel.Recording.Status.Recording) {
+        resolveRecordingUrl(fileUrl, baseUrl) ?: client.recordingPlaybackUrl(baseUrl, id)
+    } else null
+    val dvr = inProgress?.contains(".m3u8", ignoreCase = true) == true
     return DvrViewModel.Recording(
         id = "server-$id",
         source = DvrViewModel.Source.Server,
@@ -518,6 +547,8 @@ private fun DispatcharrRecording.toRecording(
         fileSizeBytes = fileSize ?: 0L,
         playbackUrl = playback,
         dispatcharrChannelId = channel,
+        inProgressUrl = inProgress,
+        isDvr = dvr,
     )
 }
 

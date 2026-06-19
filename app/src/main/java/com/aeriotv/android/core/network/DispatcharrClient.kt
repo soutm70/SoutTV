@@ -1132,10 +1132,14 @@ class DispatcharrClient @Inject constructor() {
     }
 
     /**
-     * Playback URL for a completed Dispatcharr recording. The endpoint is
-     * `AllowAny` on the server (no auth headers required), supports HTTP
-     * Range, and serves the raw media file — safe to hand straight to
-     * MPV. Mirrors iOS recordingPlaybackURL (StreamingAPIs.swift line 2444).
+     * Constructed playback URL for a Dispatcharr recording's raw media file.
+     * The endpoint is `AllowAny` on the server (no auth headers required),
+     * supports HTTP Range, and serves the raw media file. For a COMPLETED
+     * recording this is the finalized file; for an IN-PROGRESS recording it
+     * serves the partial captured so far (plain VOD, not a seekable DVR
+     * window). Used as the fallback when the server doesn't report
+     * custom_properties.file_url/output_file_url. Mirrors iOS
+     * recordingPlaybackURL (StreamingAPIs.swift line 2444).
      */
     fun recordingPlaybackUrl(baseUrl: String, recordingId: Int): String =
         "${baseUrl.trimEnd('/')}/api/channels/recordings/$recordingId/file/"

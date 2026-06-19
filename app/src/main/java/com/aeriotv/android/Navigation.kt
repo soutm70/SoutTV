@@ -83,7 +83,7 @@ object Routes {
     const val SERIES_DETAIL = "series_detail/{seriesId}"
     const val VOD_EPISODE_PLAYER = "vod_episode_player/{episodeUuid}"
     const val MULTIVIEW = "multiview"
-    const val RECORDING_PLAYER = "recording_player/{playbackUrl}/{title}"
+    const val RECORDING_PLAYER = "recording_player/{playbackUrl}/{title}?isDvr={isDvr}&fromStart={fromStart}"
 
     fun configure(type: SourceType) = "configure/${type.name}"
     fun player(channelId: String) = "player/${Uri.encode(channelId)}"
@@ -91,8 +91,8 @@ object Routes {
     fun movieDetail(movieUuid: String) = "movie_detail/${Uri.encode(movieUuid)}"
     fun seriesDetail(seriesId: Int) = "series_detail/$seriesId"
     fun vodEpisodePlayer(episodeUuid: String) = "vod_episode_player/${Uri.encode(episodeUuid)}"
-    fun recordingPlayer(playbackUrl: String, title: String) =
-        "recording_player/${Uri.encode(playbackUrl)}/${Uri.encode(title)}"
+    fun recordingPlayer(playbackUrl: String, title: String, isDvr: Boolean = false, fromStart: Boolean = false) =
+        "recording_player/${Uri.encode(playbackUrl)}/${Uri.encode(title)}?isDvr=$isDvr&fromStart=$fromStart"
 }
 
 @Composable
@@ -509,20 +509,24 @@ fun AerioTVNavHost(
                             launchSingleTop = true
                         }
                     },
-                    onWatchLive = { dispatcharrChannelId ->
-                        // Audit task #50 watch-live: the DVR tab only fires
-                        // this on a server-side Recording row whose dispatcharr
-                        // channel id maps to a row in the active playlist's
-                        // channels (the M3U mapper attaches the int id). When
-                        // the lookup misses (e.g. user switched playlists and
-                        // recordings refer to channels no longer in the
-                        // current source), silently drop.
-                        val ch = state.channels.firstOrNull {
-                            it.dispatcharrChannelId == dispatcharrChannelId &&
-                                it.url.isNotBlank()
+                    onWatchLive = { recordingUrl, recTitle, recIsDvr ->
+                        // Audit #50 / iOS v1.6.22: watch the in-progress server
+                        // recording at the LIVE EDGE via the recording player
+                        // (X-API-Key headers). Was wrongly opening the live
+                        // channel via Routes.player(ch.id).
+                        if (recordingUrl.isNotBlank()) {
+                            navController.navigate(
+                                Routes.recordingPlayer(recordingUrl, recTitle, isDvr = recIsDvr, fromStart = false)
+                            )
                         }
-                        if (ch != null) {
-                            navController.navigate(Routes.player(ch.id))
+                    },
+                    onWatchFromBeginning = { recordingUrl, recTitle, recIsDvr ->
+                        // iOS Issue #29 'Watch from Beginning': same URL, start
+                        // at window start instead of the live edge.
+                        if (recordingUrl.isNotBlank()) {
+                            navController.navigate(
+                                Routes.recordingPlayer(recordingUrl, recTitle, isDvr = recIsDvr, fromStart = true)
+                            )
                         }
                     },
                     // Cold-launch perf fix (2026-06-05): pass the
@@ -842,10 +846,14 @@ fun AerioTVNavHost(
                 arguments = listOf(
                     navArgument("playbackUrl") { type = NavType.StringType },
                     navArgument("title") { type = NavType.StringType },
+                    navArgument("isDvr") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("fromStart") { type = NavType.BoolType; defaultValue = false },
                 ),
             ) { entry ->
                 val playbackUrl = Uri.decode(entry.arguments?.getString("playbackUrl").orEmpty())
                 val title = Uri.decode(entry.arguments?.getString("title").orEmpty())
+                val isDvr = entry.arguments?.getBoolean("isDvr") ?: false
+                val fromStart = entry.arguments?.getBoolean("fromStart") ?: false
                 // A recording is either a local file:// capture (no auth) or a
                 // Dispatcharr server URL that needs the active source's
                 // X-API-Key. Resolve the playlist's auth headers like the VOD
@@ -882,6 +890,8 @@ fun AerioTVNavHost(
                     loadingMessage = null,
                     videoId = playbackUrl,
                     posterUrl = null,
+                    isDvr = isDvr,
+                    startAtLiveEdge = isDvr && !fromStart,
                 )
             }
         }
