@@ -379,11 +379,12 @@ private fun MoviesSubScreen(
                     (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L)
         }.take(8)
     }
-    // Keep the Continue Watching rail header (the first grid item) from being
-    // clipped on entry: if we are resting on the first item but a stale scroll
-    // offset pushed the rail header above the viewport, snap to the true top so
-    // the header is fully visible. Gated on being at item 0, so a user who
-    // scrolled deep into the grid is never yanked back.
+    // The "Continue Watching" label is now pinned above the grid (see
+    // ContinueWatchingHeader below), so it can't be clipped. This snap still
+    // resets a stale scroll offset on entry so the rail's first card row rests
+    // flush under the pinned header, and so railHeaderVisible (gated on
+    // firstVisibleItemIndex == 0) stays true on entry. Gated on being at item
+    // 0, so a user who scrolled deep into the grid is never yanked back.
     LaunchedEffect(continueWatching.isNotEmpty()) {
         if (continueWatching.isNotEmpty() &&
             gridState.firstVisibleItemIndex == 0 &&
@@ -402,6 +403,21 @@ private fun MoviesSubScreen(
         else state.visible.filter { (it.categoryName ?: UNCATEGORIZED) !in hiddenMovieGroups }
     }
 
+    // The "Continue Watching" label is pinned here, ABOVE the scrolling grid,
+    // not rendered inside the rail's grid item: on TV focus lands on the first
+    // rail card on entry and its bringIntoView scroll pushed the in-grid label
+    // off the top of the viewport (it was rendered but above the visible area).
+    // Pinning it next to the count/search row keeps it un-clippable, while the
+    // cards stay in the grid (no rail/grid overlap). It is shown only while the
+    // rail is present and the grid is resting on its first item, so it vanishes
+    // as the user scrolls down into the poster grid.
+    val railHeaderVisible by remember(gridState) {
+        derivedStateOf { gridState.firstVisibleItemIndex == 0 }
+    }
+    val showRailHeader = continueWatching.isNotEmpty() &&
+        state.searchQuery.isBlank() &&
+        railHeaderVisible
+
     Column(modifier = Modifier.fillMaxSize()) {
         VodHeaderRow(
             searchField = {
@@ -419,6 +435,10 @@ private fun MoviesSubScreen(
                 "${visibleFiltered.size} / $total"
             },
         )
+
+        if (showRailHeader) {
+            ContinueWatchingHeader(isTv = isTv)
+        }
 
         // The Continue Watching rail + count label + loading / empty / error
         // states ALL render as full-span items INSIDE the single grid below.
@@ -472,6 +492,9 @@ private fun MoviesSubScreen(
                         },
                         onRemove = { watchVm.delete(it.videoId) },
                         focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
+                        // Header is pinned above the grid (un-clippable); the
+                        // grid item carries only the rail's cards.
+                        showHeader = false,
                     )
                 }
             }
@@ -628,10 +651,11 @@ private fun SeriesSubScreen(
     val continueWatchingEpisodes = remember(recentProgress) {
         recentProgress.filter { it.vodType == "episode" && !it.isFinished }.take(8)
     }
-    // Keep the Continue Watching rail header (the first grid item) from being
-    // clipped on entry: if resting on the first item but a stale scroll offset
-    // pushed the rail header above the viewport, snap to the true top. Gated on
-    // being at item 0, so a user scrolled deep into the grid is never yanked back.
+    // The "Continue Watching" label is pinned above the grid now (see
+    // ContinueWatchingHeader), so it can't be clipped. This snap resets a stale
+    // scroll offset on entry so the rail's first card row rests flush under the
+    // pinned header and railHeaderVisible stays true. Gated on item 0, so a user
+    // scrolled deep into the grid is never yanked back.
     LaunchedEffect(continueWatchingEpisodes.isNotEmpty()) {
         if (continueWatchingEpisodes.isNotEmpty() &&
             gridState.firstVisibleItemIndex == 0 &&
@@ -654,6 +678,17 @@ private fun SeriesSubScreen(
         else state.visibleSeries.filter { (it.categoryName ?: UNCATEGORIZED) !in hiddenSeriesGroups }
     }
 
+    // Pinned "Continue Watching" label, mirrors MoviesSubScreen above: kept out
+    // of the rail's grid item so the focus-driven bringIntoView scroll of the
+    // first card can never clip it on TV. Shown only while the rail is present
+    // and the grid rests on its first item.
+    val railHeaderVisible by remember(gridState) {
+        derivedStateOf { gridState.firstVisibleItemIndex == 0 }
+    }
+    val showRailHeader = continueWatchingEpisodes.isNotEmpty() &&
+        state.seriesSearchQuery.isBlank() &&
+        railHeaderVisible
+
     Column(modifier = Modifier.fillMaxSize()) {
         VodHeaderRow(
             searchField = {
@@ -671,6 +706,10 @@ private fun SeriesSubScreen(
                 "${visibleSeriesFiltered.size} / $total"
             },
         )
+
+        if (showRailHeader) {
+            ContinueWatchingHeader(isTv = isTv)
+        }
 
         // The Continue Watching rail + count label + loading / empty / error
         // states ALL render as full-span items INSIDE the single grid below, so
@@ -716,6 +755,9 @@ private fun SeriesSubScreen(
                             }
                         },
                         focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
+                        // Header is pinned above the grid (un-clippable); the
+                        // grid item carries only the rail's cards.
+                        showHeader = false,
                     )
                 }
             }
@@ -1073,6 +1115,29 @@ private fun SeriesPoster(
     }
 }
 
+/** The "Continue Watching" label, rendered as a pinned Column sibling ABOVE
+ *  the scrolling grid (next to the count/search row) so it can never be
+ *  clipped by the focus-driven bringIntoView scroll of the rail's first card.
+ *  The matching rail is rendered inside the grid with showHeader = false, so
+ *  only the cards live in the lazy layout. The caller gates visibility on the
+ *  rail being present AND the grid resting at item 0, so the label disappears
+ *  as soon as the user scrolls down into the poster grid. */
+@Composable
+private fun ContinueWatchingHeader(isTv: Boolean) {
+    Text(
+        text = "Continue Watching",
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(
+            start = if (isTv) 48.dp else 20.dp,
+            end = if (isTv) 48.dp else 20.dp,
+            top = 8.dp,
+            bottom = 4.dp,
+        ),
+    )
+}
+
 @Composable
 private fun ContinueWatchingRail(
     items: List<WatchProgressEntity>,
@@ -1082,18 +1147,26 @@ private fun ContinueWatchingRail(
     /** BACK-from-detail refocus hook: non-null only for the card the focus
      *  restore should land on (see VodReturnFocusState). */
     focusRequesterFor: (WatchProgressEntity) -> FocusRequester? = { null },
+    /** When false, the "Continue Watching" label is omitted so a pinned
+     *  sibling header (above the scrolling grid) can own it instead. The
+     *  in-grid header is what got clipped on TV: focus lands on the first
+     *  rail card and the bringIntoView scroll pushed the label (which lives
+     *  in the same grid item, above the card) off the top of the viewport. */
+    showHeader: Boolean = true,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-        Text(
-            text = "Continue Watching",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(
-                horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
-                vertical = 8.dp,
-            ),
-        )
+        if (showHeader) {
+            Text(
+                text = "Continue Watching",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(
+                    horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
+                    vertical = 8.dp,
+                ),
+            )
+        }
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(
@@ -1281,18 +1354,25 @@ private fun SeriesContinueWatchingRail(
     /** BACK-from-player refocus hook: non-null only for the card the focus
      *  restore should land on (see VodReturnFocusState). */
     focusRequesterFor: (WatchProgressEntity) -> FocusRequester? = { null },
+    /** When false, the "Continue Watching" label is omitted so a pinned
+     *  sibling header (above the scrolling grid) can own it instead. See the
+     *  matching note on ContinueWatchingRail for why the in-grid header
+     *  clipped on TV. */
+    showHeader: Boolean = true,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-        Text(
-            text = "Continue Watching",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(
-                horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
-                vertical = 8.dp,
-            ),
-        )
+        if (showHeader) {
+            Text(
+                text = "Continue Watching",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(
+                    horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
+                    vertical = 8.dp,
+                ),
+            )
+        }
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(
