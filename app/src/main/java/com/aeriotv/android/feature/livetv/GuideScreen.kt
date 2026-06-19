@@ -601,19 +601,61 @@ fun GuideScreen(
                 .padding(horizontal = if (isTv) 20.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // List / Guide view switcher.
+            // List / Guide view switcher, to the LEFT of Search. On TV it uses
+            // the same bare-glyph + white-focus-ring circle as the Search /
+            // Filter controls (parity with tvOS, which offers a List / Guide
+            // switch here); on phone / tablet it stays a plain tinted icon.
             if (canToggleViewMode) {
-                IconButton(
-                    onClick = onToggleViewMode,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = if (viewMode == LiveTVViewMode.Guide)
-                            Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
-                        contentDescription = if (viewMode == LiveTVViewMode.Guide) "Switch to List" else "Switch to Guide",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
+                val switchesToList = viewMode == LiveTVViewMode.Guide
+                val toggleIcon = if (switchesToList)
+                    Icons.Filled.ViewList else Icons.Filled.CalendarMonth
+                val toggleDesc = if (switchesToList) "Switch to List" else "Switch to Guide"
+                if (isTv) {
+                    val toggleInteraction = remember { MutableInteractionSource() }
+                    val toggleFocused by toggleInteraction.collectIsFocusedAsState()
+                    Box(
+                        modifier = Modifier.clickable(
+                            interactionSource = toggleInteraction,
+                            indication = null,
+                        ) { onToggleViewMode() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(controlCircle)
+                                .clip(CircleShape)
+                                .background(
+                                    if (toggleFocused) Color.White.copy(alpha = 0.15f)
+                                    else Color.Transparent,
+                                )
+                                .then(
+                                    if (toggleFocused)
+                                        Modifier.border(2.dp, Color.White, CircleShape)
+                                    else Modifier,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = toggleIcon,
+                                contentDescription = toggleDesc,
+                                modifier = Modifier.size(controlIcon),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                } else {
+                    IconButton(
+                        onClick = onToggleViewMode,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            imageVector = toggleIcon,
+                            contentDescription = toggleDesc,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
             // Search toggle: reveals an inline channel-name search field. On TV
