@@ -102,6 +102,24 @@ data class PlaylistEntity(
      */
     @ColumnInfo(defaultValue = "1")
     val vodEnabled: Boolean = true,
+
+    /**
+     * Child-safety: the Channel Profile id(s) ASSIGNED to the connected
+     * Dispatcharr account on the server (/api/accounts/users/me/
+     * `channel_profiles`), comma-joined ("", "44", "44,57"). Captured live on
+     * every load and self-healed. When non-empty the channel load keeps only
+     * channels in the UNION of these profiles' memberships -- a FAIL-CLOSED
+     * child-safety filter distinct from the user-chosen [dispatcharrProfileId]
+     * (fail-open). Empty ("") = no account profile = admin / non-Dispatcharr =
+     * show all (back-compat). Added in DB v17 (preserving migration). Mirrors
+     * iOS ServerConnection.dispatcharrChannelProfileIDs (commit 3eb4ae3d8).
+     *
+     * `@ColumnInfo(defaultValue = "")` MUST match the v17 migration's
+     * `DEFAULT ''` or Room rejects the post-upgrade schema on open (same rule
+     * as `dispatcharrUserLevel` / `vodEnabled` above).
+     */
+    @ColumnInfo(defaultValue = "")
+    val dispatcharrAccountProfileIds: String = "",
 )
 // TODO Phase 9 (Block Store): move apiKey + password out of Room into Google Play
 // Block Store / EncryptedSharedPreferences. Room cleartext storage is acceptable for
@@ -162,4 +180,16 @@ fun PlaylistEntity.sourceTypeDisplayLabel(): String = when (sourceType) {
     // Unknown enum NAME (shouldn't happen; future-proofing) falls back to raw.
     else -> sourceType
 }
+
+/**
+ * The connected account's assigned Channel Profile ids parsed from the
+ * comma-joined [PlaylistEntity.dispatcharrAccountProfileIds]. Empty list = no
+ * account filter (show all). Tolerant of blanks / non-integers so a malformed
+ * stored value can't crash the channel load. Mirrors iOS
+ * ServerConnection.dispatcharrProfileIDList.
+ */
+fun PlaylistEntity.dispatcharrAccountProfileIdList(): List<Int> =
+    dispatcharrAccountProfileIds
+        .split(',')
+        .mapNotNull { it.trim().toIntOrNull() }
 

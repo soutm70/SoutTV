@@ -262,6 +262,24 @@ class DispatcharrClient @Inject constructor() {
     }.getOrNull()
 
     /**
+     * Best-effort fetch of the connected account's ASSIGNED Channel Profile
+     * id(s) (/api/accounts/users/me/ `channel_profiles`). A non-empty result is
+     * a child-safety filter: the load path keeps only channels in the union of
+     * these profiles' memberships. Returns null on ANY failure (transport,
+     * non-2xx, decode) so the caller falls back to the persisted snapshot rather
+     * than treating a network blip as "no profile = show all" (that would defeat
+     * the fail-closed policy). An EMPTY list is a real result (account has no
+     * profile = admin = show all). Mirrors iOS 1cc51fc59 self-heal.
+     */
+    suspend fun fetchCurrentUserProfileIds(baseUrl: String, apiKey: String): List<Int>? = runCatching {
+        val url = "${baseUrl.trimEnd('/')}/api/accounts/users/me/"
+        val response = client.get(url) { applyAuth(apiKey) }
+        if (!response.status.isSuccess()) return@runCatching null
+        val me: MeResponse = response.body()
+        me.channelProfiles
+    }.getOrNull()
+
+    /**
      * Default User-Agent for every Dispatcharr API call. Mirrors iOS
      * DeviceInfo.defaultUserAgent format so the Dispatcharr admin Stats
      * panel can attribute traffic to AerioTV alongside the iOS app:
@@ -308,15 +326,43 @@ class DispatcharrClient @Inject constructor() {
      * admin-curated subsets of channels (e.g. "Plex", "Emby"). Each profile
      * object carries the full list of member channel ids under `channels`.
      *
-     * Dispatcharr exposes no server-side per-account default profile (the
-     * user's /api/accounts/users/me/ `channel_profiles` is empty for admins,
-     * and there is no implicit "All" row), so AerioTV lets the user pick a
-     * profile per playlist (Settings -> Edit Playlist -> Channel Profile) and
-     * resolves the membership against this list client-side. A null selection
-     * means "All Channels" (no filter).
+     * Dispatcharr DOES assign Channel Profiles per account (non-admin accounts
+     * return them under /api/accounts/users/me/ `channel_profiles`; see
+     * [fetchCurrentUserProfileIds]); admins typically have none. AerioTV applies
+     * BOTH: the account's assigned profiles (child-safety, FAIL-CLOSED) AND an
+     * optional user-chosen profile per playlist (Settings -> Edit Playlist ->
+     * Channel Profile, fail-open). This endpoint backs the user-chosen picker;
+     * membership is resolved per-id via [listProfiles] (fail-open, manual pick)
+     * and [fetchChannelProfileChannelIds] (fail-closed, account filter).
      */
     suspend fun listProfiles(baseUrl: String, apiKey: String): List<DispatcharrProfile> =
         fetchListOrResults("${baseUrl.trimEnd('/')}/api/channels/profiles/", apiKey)
+
+    /**
+     * Child-safety FAIL-CLOSED variant of profile-membership resolution. GET
+     * /api/channels/profiles/<id>/ and return its `channels` (enabled channel
+     * ids). Unlike [listProfiles] (fail-OPEN at its manual-pick call site), this
+     * THROWS on any transport/decode error so the account-profile filter caller
+     * can let the whole channel load fail rather than leak the full list.
+     * Reuses [DispatcharrProfile] (tolerates a missing `channels`). iOS 3eb4ae3d8.
+     */
+    suspend fun fetchChannelProfileChannelIds(baseUrl: String, apiKey: String, profileId: Int): List<Int> {
+        val url = "${baseUrl.trimEnd('/')}/api/channels/profiles/$profileId/"
+        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            throw DispatcharrError.Transport(
+                "Couldn't read channel profile $profileId: HTTP ${response.status.value}",
+            )
+        }
+        return try {
+            response.body<DispatcharrProfile>().channels
+        } catch (e: SerializationException) {
+            throw DispatcharrError.UnexpectedResponse(
+                "Server returned an unexpected channel-profile shape for id $profileId.",
+            )
+        }
+    }
 
     /**
      * GET /api/epg/epgdata/ - EPGData records (one per ingested XMLTV guide
@@ -1116,6 +1162,14 @@ data class MeResponse(
      *  servers without the field still parse. */
     @SerialName("user_level")
     val userLevel: Int? = null,
+    /** Child-safety: the Channel Profile id(s) ASSIGNED to this account on the
+     *  server (e.g. a "Kids" profile = [44]). /api/channels/channels/ ignores
+     *  this and returns EVERY channel, so the load path intersects against the
+     *  union of these profiles' memberships. Empty (admin, or older servers /
+     *  payloads that omit the key) = no account filter. Mirrors iOS 3eb4ae3d8
+     *  DispatcharrUser.channelProfiles (decodeIfPresent ?? []). */
+    @SerialName("channel_profiles")
+    val channelProfiles: List<Int> = emptyList(),
 )
 
 @Serializable

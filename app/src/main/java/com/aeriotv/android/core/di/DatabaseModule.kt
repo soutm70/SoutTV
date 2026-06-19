@@ -153,6 +153,32 @@ object DatabaseModule {
         }
     }
 
+    /**
+     * v16 -> v17: capture the connected Dispatcharr account's ASSIGNED Channel
+     * Profile id(s) per playlist (/api/accounts/users/me/ `channel_profiles`,
+     * comma-joined) for the FAIL-CLOSED child-safety channel filter (iOS commit
+     * 3eb4ae3d8). Additive ALTER (not destructive) so playlists / favorites /
+     * caches survive. TEXT NOT NULL DEFAULT '' = no account profile = show all,
+     * so every existing row keeps its current behaviour until its next load
+     * self-heals the real value. The `@ColumnInfo(defaultValue = "")` on
+     * PlaylistEntity MUST match the SQL `DEFAULT ''` here or Room rejects the
+     * post-upgrade schema on open (same rule as dispatcharrUserLevel / vodEnabled).
+     *
+     * Also clears the channel-snapshot cache: a pre-v17 snapshot was written
+     * UNFILTERED, so without this the first post-upgrade cold launch would paint
+     * the stale all-channels rail before the first whoami self-heals -- a brief
+     * but real child-safety leak on a kids device. Clearing it forces one fresh
+     * (filtered) load; the cache is rewritten filtered on that load.
+     */
+    private val MIGRATION_16_17 = object : Migration(16, 17) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `playlists` ADD COLUMN `dispatcharrAccountProfileIds` TEXT NOT NULL DEFAULT ''",
+            )
+            db.execSQL("DELETE FROM `channel_snapshot`")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AerioDatabase =
@@ -160,7 +186,7 @@ object DatabaseModule {
             // Preserve user data across known schema bumps where a clean ALTER
             // exists; fall back to a destructive rebuild only for un-mapped
             // version jumps (older dev builds).
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 

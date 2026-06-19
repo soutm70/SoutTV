@@ -9,6 +9,7 @@ import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.entity.ChannelSnapshotEntity
 import com.aeriotv.android.core.data.db.entity.EpgProgrammeEntity
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
+import com.aeriotv.android.core.data.db.entity.dispatcharrAccountProfileIdList
 import android.content.Context
 import android.util.Log
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
@@ -164,12 +165,28 @@ class PlaylistRepository @Inject constructor(
             else -> request.apiKey
         }
 
+        // Capture the connected account's assigned Channel Profile id(s) for the
+        // FAIL-CLOSED child-safety filter (iOS 3eb4ae3d8). Best-effort: a failed
+        // whoami returns null -> emptyList (no account filter) on first add; the
+        // value self-heals on every subsequent refresh.
+        val accountProfileIds: List<Int> =
+            if (sourceType == SourceType.DispatcharrApiKey ||
+                sourceType == SourceType.DispatcharrUserPass
+            ) {
+                resolvedApiKey?.takeIf { it.isNotBlank() }
+                    ?.let { dispatcharrClient.fetchCurrentUserProfileIds(normalisedBase, it) }
+                    ?: emptyList()
+            } else {
+                emptyList()
+            }
+
         val channels = fetchChannelsFor(
             sourceType = sourceType,
             base = normalisedBase,
             userEpgUrl = request.epgUrl,
             apiKey = resolvedApiKey,
             profileId = request.dispatcharrProfileId,
+            accountProfileIds = accountProfileIds,
             username = request.username,
             password = request.password,
         )
@@ -204,6 +221,7 @@ class PlaylistRepository @Inject constructor(
             isActive = true,
             dispatcharrProfileId = request.dispatcharrProfileId,
             dispatcharrUserLevel = dispatcharrUserLevel,
+            dispatcharrAccountProfileIds = accountProfileIds.joinToString(","),
             vodEnabled = request.vodEnabled,
         )
         // New / re-loaded playlist becomes the active one. Mirrors iOS commit
@@ -241,19 +259,43 @@ class PlaylistRepository @Inject constructor(
         // Dispatcharr branches go through the AuthBroker so a rotated api_key
         // gets silently rebootstrapped instead of surfacing a 401. M3U / Xtream
         // fall straight through to fetchChannelsFor.
+        // Self-heal the account's assigned Channel Profile id(s) on every load
+        // (the server-side assignment can change). A failed whoami (null) falls
+        // back to the persisted snapshot so a network blip never widens a kids
+        // account to all channels. iOS 1cc51fc59.
+        val liveAccountIds: List<Int>? =
+            if (sourceType == SourceType.DispatcharrApiKey ||
+                sourceType == SourceType.DispatcharrUserPass
+            ) {
+                playlist.apiKey?.takeIf { it.isNotBlank() }
+                    ?.let { dispatcharrClient.fetchCurrentUserProfileIds(base, it) }
+            } else {
+                null
+            }
+        val effectiveAccountIds = liveAccountIds ?: playlist.dispatcharrAccountProfileIdList()
         val channels = when (sourceType) {
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass ->
                 dispatcharrAuth.withApiKeyRetry(playlist.id) { key ->
-                    fetchChannelsFor(sourceType, base, playlist.epgUrl, key, playlist.dispatcharrProfileId)
+                    fetchChannelsFor(
+                        sourceType, base, playlist.epgUrl, key,
+                        playlist.dispatcharrProfileId, effectiveAccountIds,
+                    )
                 }
             else -> fetchChannelsFor(
-                sourceType, base, playlist.epgUrl, playlist.apiKey, playlist.dispatcharrProfileId,
+                sourceType, base, playlist.epgUrl, playlist.apiKey,
+                playlist.dispatcharrProfileId, emptyList(),
                 playlist.username, playlist.password,
             )
         }
         val refreshed = playlist.copy(
             channelCount = channels.size,
             lastRefreshedAt = System.currentTimeMillis(),
+            // Persist the self-healed snapshot ONLY when the live whoami
+            // succeeded (liveAccountIds != null); a transient failure must not
+            // clobber a good fail-closed snapshot via the fallback value.
+            dispatcharrAccountProfileIds =
+                if (liveAccountIds != null) liveAccountIds.joinToString(",")
+                else playlist.dispatcharrAccountProfileIds,
         )
         dao.update(refreshed)
         // Persist the freshly-fetched channels so the next cold launch repaints
@@ -717,10 +759,14 @@ class PlaylistRepository @Inject constructor(
         val channels = when (sourceType) {
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass ->
                 dispatcharrAuth.withApiKeyRetry(entity.id) { key ->
-                    fetchChannelsFor(sourceType, base, entity.epgUrl, key, entity.dispatcharrProfileId)
+                    fetchChannelsFor(
+                        sourceType, base, entity.epgUrl, key,
+                        entity.dispatcharrProfileId, entity.dispatcharrAccountProfileIdList(),
+                    )
                 }
             else -> fetchChannelsFor(
-                sourceType, base, entity.epgUrl, entity.apiKey, entity.dispatcharrProfileId,
+                sourceType, base, entity.epgUrl, entity.apiKey,
+                entity.dispatcharrProfileId, emptyList(),
                 entity.username, entity.password,
             )
         }
@@ -759,6 +805,7 @@ class PlaylistRepository @Inject constructor(
         userEpgUrl: String?,
         apiKey: String?,
         profileId: Int? = null,
+        accountProfileIds: List<Int> = emptyList(),
         username: String? = null,
         password: String? = null,
     ): List<M3UChannel> = when (sourceType) {
@@ -776,12 +823,28 @@ class PlaylistRepository @Inject constructor(
                 ?: throw IllegalArgumentException("Dispatcharr API key is required")
             val groups = dispatcharrClient.listGroups(base, key)
                 .associate { it.id to it.name }
-            // Channel-profile scoping. When the playlist is pinned to a profile,
-            // resolve that profile's member channel ids and keep only those.
+            // Layer A: child-safety account filter (FAIL-CLOSED). When the
+            // connected account is assigned Channel Profile(s), keep only
+            // channels in the UNION of their memberships. A membership fetch
+            // that throws propagates -> the whole load fails -> the caller keeps
+            // the prior channels instead of leaking the full list. An account
+            // profile that resolves to an empty set is respected literally
+            // (enables no channels). Mirrors iOS 3eb4ae3d8.
+            val accountAllowedIds: Set<Int>? =
+                if (accountProfileIds.isNotEmpty()) {
+                    val union = HashSet<Int>()
+                    for (pid in accountProfileIds) {
+                        union += dispatcharrClient.fetchChannelProfileChannelIds(base, key, pid)
+                    }
+                    union
+                } else {
+                    null
+                }
+            // Layer B: user-chosen per-playlist profile (FAIL-OPEN, unchanged).
             // A selected-but-now-deleted profile (firstOrNull == null) falls
-            // back to showing everything rather than a blank list. Skipped
-            // entirely (no extra request) when no profile is selected.
-            val allowedChannelIds: Set<Int>? = profileId?.let { pid ->
+            // back to no manual filter rather than a blank list. Skipped (no
+            // extra request) when no profile is selected.
+            val manualAllowedIds: Set<Int>? = profileId?.let { pid ->
                 runCatching {
                     dispatcharrClient.listProfiles(base, key).firstOrNull { it.id == pid }
                 }.getOrNull()?.channels?.toSet()
@@ -797,9 +860,8 @@ class PlaylistRepository @Inject constructor(
                     .toMap()
             }.getOrDefault(emptyMap())
             val channels = dispatcharrClient.listChannels(base, key)
-                .let { list ->
-                    if (allowedChannelIds != null) list.filter { it.id in allowedChannelIds } else list
-                }
+                .let { list -> if (accountAllowedIds != null) list.filter { it.id in accountAllowedIds } else list }
+                .let { list -> if (manualAllowedIds != null) list.filter { it.id in manualAllowedIds } else list }
             channels
                 .filter { !it.uuid.isNullOrBlank() }
                 .sortedWith(compareBy(

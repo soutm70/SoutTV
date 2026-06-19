@@ -32,6 +32,12 @@ data class PlaylistSnapshotEntry(
     val username: String? = null,
     val apiKey: String? = null,
     val lastUsedMillis: Long? = null,
+    /** Child-safety: the connected account's assigned Channel Profile id(s),
+     *  comma-joined ("", "44", "44,57"). Synced so a kids account locked to a
+     *  profile on one device gets the same fail-closed channel filter on every
+     *  device. Defaulted to "" so older snapshots (no key) decode and stay
+     *  unfiltered. Mirrors iOS SyncedServer.dispatcharrChannelProfileIDs. */
+    val dispatcharrAccountProfileIds: String = "",
 )
 
 @Serializable

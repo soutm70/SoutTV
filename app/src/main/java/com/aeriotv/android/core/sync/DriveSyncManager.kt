@@ -302,6 +302,7 @@ class DriveSyncManager @Inject constructor(
                     username = null,
                     apiKey = null,
                     lastUsedMillis = e.lastRefreshedAt,
+                    dispatcharrAccountProfileIds = e.dispatcharrAccountProfileIds,
                 )
             },
         )
@@ -379,6 +380,13 @@ class DriveSyncManager @Inject constructor(
                 // device already has instead of wiping it.
                 lanUrlString = entry.lanUrlString ?: current?.lanUrlString,
                 isActive = entry.id == snapshot.active,
+                // Adopt the synced child-safety account-profile filter. Empty
+                // from an older sender keeps this device's own value rather than
+                // wiping a good fail-closed snapshot; the next live load
+                // re-captures the real value regardless.
+                dispatcharrAccountProfileIds =
+                    entry.dispatcharrAccountProfileIds.takeIf { it.isNotBlank() }
+                        ?: current?.dispatcharrAccountProfileIds ?: "",
             )
             playlistDao.upsert(merged)
         }
