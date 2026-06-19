@@ -32,16 +32,33 @@ class ActivePlaylistCredentials @Inject constructor() {
     @Volatile private var prefixes: List<String> = emptyList()
     @Volatile private var key: String? = null
 
+    /** Hostnames (lowercased, no port) extracted from [prefixes]. Lets the
+     *  SSRF gate treat the user's own server as trusted even when it lives on
+     *  a private/LAN IP (192.168.x.x Dispatcharr is the common case). */
+    @Volatile private var hosts: Set<String> = emptySet()
+
     fun set(prefixes: List<String>, apiKey: String?) {
-        this.prefixes = prefixes
+        val cleaned = prefixes
             .map { it.trimEnd('/') }
             .filter { it.isNotBlank() }
+        this.prefixes = cleaned
+        this.hosts = cleaned
+            .mapNotNull { android.net.Uri.parse(it).host?.lowercase() }
+            .toSet()
         this.key = apiKey?.takeIf { it.isNotBlank() }
     }
 
     fun clear() {
         prefixes = emptyList()
+        hosts = emptySet()
         key = null
+    }
+
+    /** True when [host] (lowercased, no port) is one of the active server's
+     *  own hosts, so the SSRF gate trusts it even on a private/LAN IP. */
+    fun isActiveServerHost(host: String?): Boolean {
+        val h = host?.lowercase() ?: return false
+        return hosts.contains(h)
     }
 
     /**

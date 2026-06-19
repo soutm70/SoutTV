@@ -114,7 +114,7 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
                 // / etc. Playlist providers can put anything in `tvg-logo`
                 // and a few other text fields; this keeps Coil from
                 // honouring a hostile value.
-                add(SafeUrlInterceptor())
+                add(SafeUrlInterceptor(activeCredentials))
             }
             .crossfade(true)
             .build()
