@@ -1284,6 +1284,19 @@ class PlaylistViewModel @Inject constructor(
     /** Currently-active upstream URL (re-prime gate after a switch). */
     suspend fun loadCurrentStreamUrl(channelUuid: String): String? =
         runCatching { repository.currentDispatcharrStreamUrl(channelUuid) }.getOrNull()
+
+    /** LAN/WAN verdict-flip signal for the player's mid-stream re-tune failover. */
+    val lanVerdictFlips: kotlinx.coroutines.flow.SharedFlow<String> =
+        repository.lanVerdictFlips
+
+    /** Rebuild a Dispatcharr channel's live proxy URL from the current LAN/WAN
+     *  base (re-tune after a verdict flip). Null when not applicable. */
+    suspend fun rebuildLiveStreamUrl(channelUuid: String): String? =
+        runCatching { repository.rebuildLiveStreamUrl(channelUuid) }.getOrNull()
+
+    /** Force a fresh LAN/WAN probe (terminal-error failover path). */
+    suspend fun reprobeActiveBase(): String? =
+        runCatching { repository.reprobeActiveBase() }.getOrNull()
 }
 
 /** Find the programme containing `now` for a given channel. */

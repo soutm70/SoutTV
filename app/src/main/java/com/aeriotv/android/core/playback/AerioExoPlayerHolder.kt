@@ -121,6 +121,16 @@ class AerioExoPlayerHolder @Inject constructor(
      *  whether to skip the setMediaItem re-init. */
     var currentChannelId: String? = null
 
+    /** The URL the player is currently primed on (last [playUrl]); read by the
+     *  LAN/WAN re-tune effect to skip a flip that resolves to the same base. */
+    val currentPlayUrl: String? get() = lastPlayUrl
+
+    /** Optional failover hook: on a terminal player error the holder asks this
+     *  to re-probe LAN/WAN and return a fresh URL to reload instead of replaying
+     *  the (possibly dead-host) lastPlayUrl. Set by PlayerScreen on mount; null
+     *  elsewhere (Auto / background). iOS analog: PlayerSession.failoverRetryCurrent. */
+    @Volatile var onTerminalErrorRebuildUrl: (suspend () -> String?)? = null
+
     /** Currently-applied custom HTTP headers, replayed onto the
      *  DataSource.Factory each time we build a MediaSource. Dispatcharr
      *  API-key auth lives here. */
@@ -291,8 +301,28 @@ class AerioExoPlayerHolder @Inject constructor(
                 return
             }
             // Android companion to the frame-stall path: a terminal source/HTTP
-            // error. Re-prime under the same cooldown + reload cap.
-            if (lastPlayUrl != null) forceReload("error:${error.errorCodeName}")
+            // error. Re-prime under the same cooldown + reload cap. If a LAN/WAN
+            // failover hook is set (PlayerScreen mount), ask it to re-probe and
+            // hand back a fresh URL so we don't just replay a dead-host
+            // lastPlayUrl (iOS PlayerSession.failoverRetryCurrent).
+            if (lastPlayUrl != null) {
+                val hook = onTerminalErrorRebuildUrl
+                if (hook != null) {
+                    watchdogScope.launch {
+                        val fresh = runCatching { hook() }.getOrNull()
+                        if (!fresh.isNullOrBlank() && fresh != lastPlayUrl) {
+                            Log.w(TAG, "[RETUNE] terminal error; re-priming onto reprobed url $fresh")
+                            withContext(Dispatchers.Main) {
+                                playUrl(fresh, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) { forceReload("error:${error.errorCodeName}") }
+                        }
+                    }
+                } else {
+                    forceReload("error:${error.errorCodeName}")
+                }
+            }
         }
 
         override fun onRenderedFirstFrame() {

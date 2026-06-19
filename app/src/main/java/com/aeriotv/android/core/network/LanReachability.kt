@@ -3,6 +3,7 @@ package com.aeriotv.android.core.network
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.net.HttpURLConnection
@@ -15,6 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,12 +50,28 @@ class LanReachability @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var reprobeJob: Job? = null
 
+    // Captured at construction so probe() can read the active transport for the
+    // cellular fast path. registerDefaultNetworkCallback + getNetworkCapabilities
+    // need NO permission (ACCESS_NETWORK_STATE is not required for either).
+    private val connectivityManager =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+    // Emits the LAN URL key whose verdict just CHANGED VALUE (LAN<->WAN), so the
+    // player can re-tune a live Dispatcharr stream the instant the route flips
+    // (leaving-home-WiFi case). iOS analog: TVLANProbe.record(...) calling
+    // PlayerSession.retuneCurrentToActiveURL() on a flip (commit e6ca1d207).
+    private val _verdictFlips = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val verdictFlips: SharedFlow<String> = _verdictFlips.asSharedFlow()
+
     init {
         // Default-network callback: fires on WiFi<->cellular switches, VPN
         // up/down, and Ethernet plug events. Registration needs no permission.
         runCatching {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            connectivityManager?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = onNetworkChanged()
                 override fun onLost(network: Network) = onNetworkChanged()
             })
@@ -73,21 +93,30 @@ class LanReachability @Inject constructor(
     suspend fun refresh(lanUrl: String): Boolean {
         val key = lanUrl.trimEnd('/')
         // One probe at a time per process: concurrent first-routing calls for
-        // the same URL collapse onto a single network round-trip.
+        // the same URL serialise here so it is one extra cheap HEAD at worst.
         probeMutex.withLock {
-            verdicts[key]?.let { cached -> if (cached) return cached }
+            val prior = verdicts[key]
             val reachable = probe(key)
             verdicts[key] = reachable
             Log.i(TAG, "LAN probe $key -> ${if (reachable) "reachable (using LAN)" else "unreachable (using WAN)"}")
+            // Emit only on a genuine LAN<->WAN flip vs the previous KNOWN value
+            // (prior != null). A first-ever probe (prior == null) is the initial
+            // route resolution, not a flip, so it must not re-tune.
+            if (prior != null && prior != reachable) {
+                Log.i(TAG, "LAN verdict flipped for $key: $prior -> $reachable")
+                _verdictFlips.tryEmit(key)
+            }
             return reachable
         }
     }
 
     private fun onNetworkChanged() {
         val known = verdicts.keys.toList()
-        verdicts.clear()
         if (known.isEmpty()) return
-        // Small debounce: routing tables settle a beat after onAvailable.
+        // Do NOT clear here: refresh() needs the prior verdict in-place to detect
+        // a LAN<->WAN flip. refresh() overwrites each key with the fresh result
+        // and emits verdictFlips on a change. A short debounce lets routing
+        // tables settle after onAvailable.
         reprobeJob?.cancel()
         reprobeJob = scope.launch {
             delay(500)
@@ -96,6 +125,23 @@ class LanReachability @Inject constructor(
     }
 
     private suspend fun probe(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
+        // Cellular fast path (iOS commit e6ca1d207): if the active default
+        // network is cellular-only (no WiFi / Ethernet transport), every LAN
+        // URL (a private-subnet address) is unreachable by definition. Skip the
+        // HEAD so leaving home re-tunes to WAN near-instantly instead of eating
+        // the full PROBE_TIMEOUT_MS against a dead host. A TV box on Ethernet/WiFi
+        // (the common case) never trips this and falls through to the HEAD.
+        val caps = runCatching {
+            connectivityManager?.let { cm -> cm.getNetworkCapabilities(cm.activeNetwork) }
+        }.getOrNull()
+        if (caps != null &&
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        ) {
+            Log.i(TAG, "LAN probe $baseUrl -> cellular-only transport, skipping HEAD (WAN)")
+            return@withContext false
+        }
         try {
             val conn = URL(baseUrl).openConnection() as HttpURLConnection
             conn.requestMethod = "HEAD"

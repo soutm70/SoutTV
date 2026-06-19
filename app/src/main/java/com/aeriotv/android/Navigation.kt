@@ -617,6 +617,8 @@ fun AerioTVNavHost(
                     onLoadCurrentStreamUrl = { channelUuid ->
                         vm.loadCurrentStreamUrl(channelUuid)
                     },
+                    onVerdictFlips = vm.lanVerdictFlips,
+                    onRebuildLiveUrl = { channelUuid -> vm.rebuildLiveStreamUrl(channelUuid) },
                 )
                 }
             }

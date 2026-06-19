@@ -92,6 +92,11 @@ fun PlayerScreen(
     onSwitchChannelStream: suspend (String, Int) -> String? = { _, _ -> null },
     onLoadCurrentStreamId: suspend (String) -> Int? = { null },
     onLoadCurrentStreamUrl: suspend (String) -> String? = { null },
+    /** LAN/WAN verdict-flip signal (LAN URL key) for mid-stream re-tune. */
+    onVerdictFlips: kotlinx.coroutines.flow.SharedFlow<String> =
+        kotlinx.coroutines.flow.MutableSharedFlow(),
+    /** Rebuild this channel's live proxy URL from the current LAN/WAN base. */
+    onRebuildLiveUrl: suspend (String) -> String? = { null },
 ) {
     // Hold the screen awake while the fullscreen player is mounted. Without
     // this the system screen-timeout fires mid-stream after its idle window
@@ -171,11 +176,25 @@ fun PlayerScreen(
         // next channel tap.
         exoHolder.httpHeaders = httpHeaders
         exoWindowState.requestFullscreen()
+        // LAN/WAN terminal-error failover hook (iOS PlayerSession.failoverRetryCurrent):
+        // on a terminal player error the holder asks this to re-probe LAN/WAN and
+        // hand back a fresh /proxy/ts/stream/<uuid> URL instead of replaying a
+        // possibly dead-host lastPlayUrl. Only Dispatcharr-live channels qualify.
+        exoHolder.onTerminalErrorRebuildUrl = {
+            currentChannel?.id?.takeIf { it.startsWith("disp:") }
+                ?.let { onRebuildLiveUrl(it.removePrefix("disp:")) }
+        }
         // Bring up the MediaSessionService so the session is alive
         // before the first frame. Idempotent -- if it's already
         // running this is a no-op.
         com.aeriotv.android.core.playback.AerioMediaPlaybackService
             .startBackground(context)
+    }
+
+    // Clear the LAN/WAN failover hook when leaving the player so a backgrounded /
+    // Auto session never re-tunes through this screen's closed-over state.
+    DisposableEffect(Unit) {
+        onDispose { exoHolder.onTerminalErrorRebuildUrl = null }
     }
 
     // Channel-switch / first-mount setMediaItem: when the held Exo
@@ -399,6 +418,42 @@ fun PlayerScreen(
                     )
                     if (ran) baseline = statusUrl    // adopt new baseline only after a real re-prime
                 }
+            }
+        }
+    }
+
+    // Mid-stream LAN/WAN re-tune failover (iOS PlayerSession.retuneCurrentToActiveURL,
+    // commit e6ca1d207). When the reachability probe flips a verdict while a
+    // Dispatcharr-live channel is playing (the leaving-home-WiFi / WiFi-drop
+    // case), rebuild the /proxy/ts/stream/<uuid> URL from the now-reachable base
+    // and re-prime onto it (keepalive-held) instead of freezing on the dead host
+    // and waiting for the watchdog to replay the stale lastPlayUrl. Scoped to the
+    // RESUMED player; parked during a manual switch or any in-flight re-prime.
+    LaunchedEffect(currentChannel?.id, isDispatcharrLive) {
+        if (!isDispatcharrLive) return@LaunchedEffect
+        val ch = currentChannel ?: return@LaunchedEffect
+        val uuid = ch.id.removePrefix("disp:")
+        followLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            onVerdictFlips.collect {
+                if (currentChannel?.id != ch.id) return@collect
+                if (switchStream != null || exoHolder.isReprimeInFlight) return@collect
+                val newUrl = withContext(Dispatchers.IO) {
+                    runCatching { onRebuildLiveUrl(uuid) }.getOrNull()
+                } ?: return@collect
+                // Only re-prime when the base actually changed; a no-op flip
+                // (same host) costs nothing (mirrors iOS "primary != current" guard).
+                if (newUrl == exoHolder.currentPlayUrl) return@collect
+                if (currentChannel?.id != ch.id || switchStream != null ||
+                    exoHolder.isReprimeInFlight) return@collect
+                Log.w(TAG, "[RETUNE] LAN/WAN flip -> re-priming ch=${ch.id} onto $newUrl")
+                exoHolder.reprimeWithKeepalive(
+                    url = newUrl,
+                    title = ch.name,
+                    subtitle = nowProgramme?.title.orEmpty(),
+                    artworkUri = ch.tvgLogo.takeIf { it.isNotBlank() }
+                        ?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() },
+                    bypassCooldown = true,
+                )
             }
         }
     }

@@ -101,6 +101,42 @@ class PlaylistRepository @Inject constructor(
         return if (lanReachability.isReachable(lan)) lan else playlist.urlString
     }
 
+    /**
+     * The verdict-flip signal from [LanReachability] (LAN URL key that just
+     * flipped LAN<->WAN). The player collects this to re-tune a live Dispatcharr
+     * stream onto the now-reachable base. iOS analog: TVLANProbe -> PlayerSession
+     * .retuneCurrentToActiveURL() (commit e6ca1d207).
+     */
+    val lanVerdictFlips: kotlinx.coroutines.flow.SharedFlow<String> =
+        lanReachability.verdictFlips
+
+    /** Force a fresh LAN/WAN probe of the active playlist's LAN URL, returning
+     *  the resolved effective base afterward. Used by the player's terminal-
+     *  error failover (iOS failoverRetryCurrent: reprobeAndWait then re-tune). */
+    suspend fun reprobeActiveBase(): String? {
+        val pl = activePlaylist() ?: return null
+        pl.lanUrlString?.takeIf { it.isNotBlank() }?.let { lanReachability.refresh(it) }
+        return effectiveBaseUrl(pl)
+    }
+
+    /**
+     * Rebuild the canonical /proxy/ts/stream/<uuid> URL for a Dispatcharr
+     * channel from the active playlist's CURRENT effective base (LAN vs WAN),
+     * rather than trusting a cached channel.url baked at last fetch. Returns
+     * null when there is no active playlist, the source is not Dispatcharr, or
+     * the playlist has no LAN URL (nothing to flip). Mirrors the streamUrlFor
+     * idiom in AutoBrowseTree.kt and iOS ChannelStore.dispatcharrStreamURLs.
+     */
+    suspend fun rebuildLiveStreamUrl(channelUuid: String): String? {
+        val pl = activePlaylist() ?: return null
+        val sourceType = pl.resolvedSourceType()
+        val isDispatcharr = sourceType == SourceType.DispatcharrApiKey ||
+            sourceType == SourceType.DispatcharrUserPass
+        if (!isDispatcharr) return null
+        val base = effectiveBaseUrl(pl)
+        return dispatcharrClient.streamUrl(base, channelUuid)
+    }
+
     /** Inputs for creating or updating a playlist row. */
     data class SaveRequest(
         val sourceType: SourceType,
