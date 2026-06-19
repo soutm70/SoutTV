@@ -147,6 +147,18 @@ class DvrViewModel @Inject constructor(
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /**
+     * Resolved genre/category strings keyed by recording id (e.g.
+     * "server-42"). A COMPLETED recording's programme has rolled out of the
+     * on-disk EPG window, so its category can only come from a network lookup
+     * (`getProgramsByTvgId`). That call is comparatively expensive and the row
+     * never changes once finalized, so we memo the result here: each blank-
+     * category row is fetched at most once across the 30s refresh loop. A
+     * sentinel empty string marks "tried, server had no category" so we don't
+     * re-hit the network for a feed that genuinely carries no `<category>`.
+     */
+    private val categoryCache = mutableMapOf<String, String>()
+
     init {
         refresh()
         viewModelScope.launch {
@@ -193,7 +205,15 @@ class DvrViewModel @Inject constructor(
                     // rows the server left sparse, so scheduled / ongoing / completed
                     // recordings all show full EPG (suspend, so computed before the
                     // non-suspend state update).
-                    val hydrated = hydrateRecordingsFromEpg(playlist.id, server)
+                    val fromCache = hydrateRecordingsFromEpg(playlist.id, server)
+                    // Completed recordings whose programme already aged out of the
+                    // on-disk EPG window still have a blank category after the cache
+                    // pass; resolve those over the network (Streamer feedback #6).
+                    val hydrated = hydrateCompletedCategoriesFromNetwork(
+                        playlistId = playlist.id,
+                        baseUrl = playlist.urlString,
+                        recordings = fromCache,
+                    )
                     _state.update { st ->
                         val local = st.recordings.filter { it.source == Source.Local }
                         st.copy(
@@ -492,6 +512,96 @@ class DvrViewModel @Inject constructor(
             )
         }
     }
+
+    /**
+     * Resolve a genre/category for recordings whose programme has already
+     * rolled out of the on-disk EPG window (i.e. COMPLETED rows), which the
+     * cache pass [hydrateRecordingsFromEpg] can't reach. Fixes Streamer
+     * feedback #6: only the currently-airing recording showed pills because
+     * the cache only holds the live now-window; past programmes resolved
+     * blank so the pill gate hid them.
+     *
+     * Source of truth is the Dispatcharr programme list
+     * (`/api/epg/programs/?tvg_id=<id>`), which is NOT window-bounded and
+     * carries the per-programme `categories` array the bulk grid strips. We
+     * list the feed for each needy recording's channel, overlap-match the
+     * recording window to the programme, and read its categories.
+     *
+     * Throttled hard so it doesn't hammer the server every 30s:
+     *  - Only blank-category, channel-bearing rows are considered.
+     *  - Results (including a "server had none" empty sentinel) are memoised
+     *    in [categoryCache] by recording id, so each row is fetched at most
+     *    once for the app's lifetime.
+     *  - One list call per distinct tvg-id per refresh (de-duplicated), so a
+     *    burst of completed rows on the same channel costs a single request.
+     * Best-effort and offline-safe: a failed fetch leaves the row blank
+     * (pills stay hidden) rather than throwing.
+     */
+    private suspend fun hydrateCompletedCategoriesFromNetwork(
+        playlistId: String,
+        baseUrl: String,
+        recordings: List<Recording>,
+    ): List<Recording> {
+        // Apply anything we already resolved on a prior refresh first.
+        val seeded = recordings.map { r ->
+            val cached = categoryCache[r.id]
+            if (r.category.isBlank() && !cached.isNullOrBlank()) r.copy(category = cached) else r
+        }
+        val needy = seeded.filter {
+            it.category.isBlank() &&
+                it.dispatcharrChannelId != null &&
+                !categoryCache.containsKey(it.id)
+        }
+        if (needy.isEmpty()) return seeded
+        val tvgByChannelId = playlistRepository.loadCachedChannels(playlistId)
+            .mapNotNull { c -> c.dispatcharrChannelId?.let { id -> id to c.tvgID } }
+            .filter { it.second.isNotBlank() }
+            .toMap()
+        if (tvgByChannelId.isEmpty()) return seeded
+        // One feed fetch per distinct tvg-id this batch needs.
+        val tvgIds = needy.mapNotNull { tvgByChannelId[it.dispatcharrChannelId] }.toSet()
+        val programsByTvg = HashMap<String, List<DispatcharrProgramEntryLite>>()
+        for (tvg in tvgIds) {
+            val rows = runCatching {
+                dispatcharrAuth.withApiKeyRetry(playlistId) { k ->
+                    dispatcharrClient.getProgramsByTvgId(baseUrl, k, tvg)
+                }
+            }.getOrNull().orEmpty()
+            programsByTvg[tvg] = rows.map {
+                DispatcharrProgramEntryLite(
+                    startMillis = parseIsoMillis(it.startTime) ?: 0L,
+                    endMillis = parseIsoMillis(it.endTime) ?: 0L,
+                    categories = it.categories.orEmpty(),
+                )
+            }
+        }
+        return seeded.map { r ->
+            if (r.id !in needy.map { it.id }) return@map r
+            val tvg = tvgByChannelId[r.dispatcharrChannelId]
+            if (tvg == null) {
+                categoryCache[r.id] = ""
+                return@map r
+            }
+            val match = programsByTvg[tvg]
+                ?.maxByOrNull { overlapMillis(it.startMillis, it.endMillis, r.startMillis, r.endMillis) }
+                ?.takeIf { overlapMillis(it.startMillis, it.endMillis, r.startMillis, r.endMillis) > 0L }
+            val resolved = match?.categories
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.joinToString(", ")
+                .orEmpty()
+            // Memoise even the empty result so a feed without <category> isn't
+            // re-fetched every 30s.
+            categoryCache[r.id] = resolved
+            if (resolved.isNotBlank()) r.copy(category = resolved) else r
+        }
+    }
+
+    private data class DispatcharrProgramEntryLite(
+        val startMillis: Long,
+        val endMillis: Long,
+        val categories: List<String>,
+    )
 
     private fun overlapMillis(aStart: Long, aEnd: Long, bStart: Long, bEnd: Long): Long =
         (minOf(aEnd, bEnd) - maxOf(aStart, bStart)).coerceAtLeast(0L)

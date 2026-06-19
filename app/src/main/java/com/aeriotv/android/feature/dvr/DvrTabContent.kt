@@ -719,7 +719,17 @@ private fun RecordingRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                // Tokenize the resolved category on XMLTV separators. When the
+                // value has no separators (a single un-splittable genre like
+                // "Sports") the tokenizer already returns it as one token, so
+                // the ifEmpty fallback only fires when the raw string itself is
+                // blank -- which it no longer is for completed recordings now
+                // that DvrViewModel hydrates them from the programme list
+                // (Streamer feedback #6). The fallback is kept as a belt-and-
+                // suspenders: any non-blank rec.category renders at least one
+                // pill instead of being silently dropped.
                 val genreTokens = rec.category.categoryTokens()
+                    .ifEmpty { listOfNotNull(rec.category.trim().takeIf { it.isNotEmpty() }) }
                 if (genreTokens.isNotEmpty()) {
                     Spacer(Modifier.size(4.dp))
                     CategoryPillsFlow(

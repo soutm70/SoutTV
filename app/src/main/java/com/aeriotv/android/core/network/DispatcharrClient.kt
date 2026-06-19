@@ -409,6 +409,42 @@ class DispatcharrClient @Inject constructor() {
         return response.body()
     }
 
+    /**
+     * GET /api/epg/programs/?tvg_id=<id> -- every programme (past AND future)
+     * for one EPG feed, NOT bounded to the live now-window the way the cached
+     * grid is. Mirrors iOS getUpcomingPrograms' tvg_id query
+     * (StreamingAPIs.swift line 1818). Used to resolve a genre for a COMPLETED
+     * DVR recording whose programme already rolled out of the on-disk EPG
+     * window: the recording carries no programme id, but it does carry the
+     * channel's tvg-id + air window, so we list the feed and overlap-match.
+     *
+     * Unlike /api/epg/grid/ (which strips `<category>` for perf), this list
+     * endpoint carries the per-programme `categories` array, so a single call
+     * yields the genre offline-style without a second per-id detail fetch.
+     * Accepts both the DRF `{results:[...]}` envelope and a flat array.
+     */
+    suspend fun getProgramsByTvgId(
+        baseUrl: String,
+        apiKey: String,
+        tvgId: String,
+        pageSize: Int = 50,
+    ): List<DispatcharrEpgEntry> {
+        val encoded = java.net.URLEncoder.encode(tvgId, "UTF-8")
+        val url = "${baseUrl.trimEnd('/')}/api/epg/programs/?tvg_id=$encoded&page_size=$pageSize"
+        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
+        unauthorizedCheck(response, url)
+        if (!response.status.isSuccess()) {
+            throw DispatcharrError.Transport("Programs-by-tvg-id failed: HTTP ${response.status.value}")
+        }
+        val raw: JsonElement = response.body()
+        val rows: JsonArray = when {
+            raw is JsonArray -> raw
+            raw is JsonObject -> (raw["results"] as? JsonArray) ?: JsonArray(emptyList())
+            else -> JsonArray(emptyList())
+        }
+        return rows.map { json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it) }
+    }
+
     suspend fun getEpgGrid(baseUrl: String, apiKey: String): List<DispatcharrEpgEntry> {
         val url = "${baseUrl.trimEnd('/')}/api/epg/grid/"
         val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
