@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -219,6 +220,11 @@ fun MultiviewScreen(
     // Dialog window while it is up (same pattern as the guide exit dialog).
     var exitDialogOpen by remember { mutableStateOf(false) }
     val exitGuard = rememberTvMenuGuard()
+    // "Add streams" reopens the Add-to-Multiview picker OVER the live grid.
+    // The picker writes through the same @Singleton MultiviewStore the grid
+    // reads (toggle / addTile APPEND, never clear), so newly picked tiles grow
+    // the existing grid and BACK out of the picker keeps everything.
+    var addPickerOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = !exitDialogOpen) {
         when {
             relocatingIndex != null -> relocatingIndex = null
@@ -400,6 +406,13 @@ fun MultiviewScreen(
             title = "Leave Multiview?",
             actions = listOf(
                 TvMenuAction(
+                    label = "Add streams",
+                    icon = Icons.Filled.Add,
+                    // Reopen the picker over the running grid. Existing tiles
+                    // stay in the store and keep playing; the picker APPENDS.
+                    onClick = { addPickerOpen = true },
+                ),
+                TvMenuAction(
                     label = "Back to TV Guide",
                     icon = Icons.AutoMirrored.Outlined.ArrowBack,
                     onClick = { onClose() },
@@ -418,6 +431,21 @@ fun MultiviewScreen(
             ),
             guard = exitGuard,
             onDismiss = { exitDialogOpen = false },
+        )
+    }
+
+    // Re-entrant Add-to-Multiview picker (from the menu's "Add streams").
+    // currentChannel = null: there is no single "now playing" stream to seed
+    // or pin here, and nothing must be excluded -- the grid already holds the
+    // tiles. All dismissal paths just close the picker; the store keeps the
+    // appended tiles (no restore/clear), so the grid grows in place.
+    if (addPickerOpen) {
+        AddToMultiviewSheet(
+            currentChannel = null,
+            multiviewStore = storeHandle,
+            onLaunch = { addPickerOpen = false },
+            onCancel = { addPickerOpen = false },
+            onDismiss = { addPickerOpen = false },
         )
     }
 

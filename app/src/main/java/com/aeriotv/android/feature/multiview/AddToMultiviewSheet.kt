@@ -104,6 +104,13 @@ fun AddToMultiviewSheet(
     currentChannel: M3UChannel?,
     onLaunch: () -> Unit,
     onCancel: () -> Unit,
+    // BACK / swipe / tap-scrim: close the picker but KEEP whatever is in the
+    // store (the tiles the user just toggled/added stay). Distinct from
+    // [onCancel], which the explicit "Cancel" text button uses to REVERT to the
+    // pre-open snapshot (player flow only). Hosts that have no snapshot to
+    // revert to (the multiview grid's "Add streams") pass the same close lambda
+    // for both. Defaults to onCancel so existing call sites keep compiling.
+    onDismiss: () -> Unit = onCancel,
     multiviewStore: MultiviewStoreHandle = rememberMultiviewStoreHandle(),
     playlistVm: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
@@ -576,11 +583,18 @@ fun AddToMultiviewSheet(
             }
     }
 
+    // BACK keeps the user's picks: the now-staged tiles stay in the store and
+    // (for the grid "Add streams" path) keep playing; the player flow then
+    // relies on its Play button, not BACK, to commit. This is the BackHandler
+    // the header comment ("BACK to dismiss") always promised but never wired.
+    BackHandler(onBack = onDismiss)
     if (isTvDevice) {
         // Android TV: a centered Dialog panel. No drag/swipe semantics, so the
         // D-pad can scroll the list freely; Back / Cancel / Play dismiss it.
+        // onDismissRequest KEEPS selections (onDismiss); the "Cancel" text
+        // button is the only revert path (onCancel).
         Dialog(
-            onDismissRequest = onCancel,
+            onDismissRequest = onDismiss,
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
@@ -594,9 +608,10 @@ fun AddToMultiviewSheet(
             }
         }
     } else {
-        // Phone / tablet: native bottom sheet with its natural gestures.
+        // Phone / tablet: native bottom sheet. Swipe-to-dismiss KEEPS selections
+        // (onDismiss); the "Cancel" text button reverts (onCancel).
         ModalBottomSheet(
-            onDismissRequest = onCancel,
+            onDismissRequest = onDismiss,
             sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.background,
             content = body,
