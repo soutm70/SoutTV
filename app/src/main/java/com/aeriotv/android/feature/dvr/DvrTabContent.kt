@@ -60,8 +60,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import com.aeriotv.android.core.category.CategoryPaletteState
+import com.aeriotv.android.core.category.CategoryPillsFlow
+import com.aeriotv.android.core.category.categoryTokens
 import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
+import com.aeriotv.android.feature.settings.SettingsViewModel
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.settings.settingsRowCard
 import androidx.compose.ui.graphics.Color
@@ -89,8 +93,10 @@ fun DvrTabContent(
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
     onWatchLive: (Int) -> Unit = {},
     viewModel: DvrViewModel = hiltViewModel(),
+    settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val palette by settingsVm.categoryPalette.collectAsStateWithLifecycle(initialValue = CategoryPaletteState.Default)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -290,6 +296,7 @@ fun DvrTabContent(
             items(items = state.visible, key = { it.id }) { rec ->
                 RecordingRow(
                     rec = rec,
+                    palette = palette,
                     onEdit = { pendingEdit = rec },
                     onDelete = { pendingDelete = rec },
                     onWatchLive = {
@@ -601,6 +608,7 @@ private fun EmptyState(title: String, body: String) {
 @Composable
 private fun RecordingRow(
     rec: DvrViewModel.Recording,
+    palette: CategoryPaletteState,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onPlay: () -> Unit,
@@ -693,6 +701,14 @@ private fun RecordingRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val genreTokens = rec.category.categoryTokens()
+                if (genreTokens.isNotEmpty()) {
+                    Spacer(Modifier.size(4.dp))
+                    CategoryPillsFlow(
+                        tokens = genreTokens,
+                        palette = palette,
                     )
                 }
                 DestinationBadge(source = rec.source)

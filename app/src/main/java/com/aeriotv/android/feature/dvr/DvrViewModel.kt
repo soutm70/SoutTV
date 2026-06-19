@@ -50,6 +50,14 @@ class DvrViewModel @Inject constructor(
         val source: Source,
         val title: String,
         val description: String,
+        /**
+         * Genre/category string from the matched EPG programme (XMLTV
+         * <category>, comma/slash/semicolon-separated). Empty when the
+         * recording's programme isn't in the cache. Drives the genre pills
+         * under the row, tinted by the same CategoryPalette as the guide.
+         * Mirrors iOS RecordingRow.epgCategory (MyRecordingsView.swift:715).
+         */
+        val category: String = "",
         val startMillis: Long,
         val endMillis: Long,
         val status: Status,
@@ -72,6 +80,24 @@ class DvrViewModel @Inject constructor(
         val dispatcharrChannelId: Int? = null,
     ) {
         enum class Status { Scheduled, Recording, Completed, Failed, Stopped, Unknown }
+
+        private val isTerminal: Boolean
+            get() = status == Status.Completed || status == Status.Stopped ||
+                status == Status.Failed
+
+        /**
+         * Server-side status lags: when AerioTV POSTs a recording for an
+         * already-airing program, Dispatcharr returns status=="scheduled"
+         * for the first several seconds until its scheduler flips the job to
+         * "recording". Treat "now inside [start,end)" as actively recording
+         * so the row lands under Recording immediately. Mirrors iOS isAiringNow
+         * (MyRecordingsView.swift:84). Terminal states never reclassify.
+         */
+        fun isAiringNow(now: Long = System.currentTimeMillis()): Boolean =
+            !isTerminal && startMillis <= now && now < endMillis
+
+        fun effectiveStatus(now: Long = System.currentTimeMillis()): Status =
+            if (isAiringNow(now)) Status.Recording else status
     }
 
     data class UiState(
@@ -82,20 +108,18 @@ class DvrViewModel @Inject constructor(
         /** True when the active playlist is NOT Dispatcharr-backed (no DVR available). */
         val unsupportedSource: Boolean = false,
     ) {
-        val scheduledCount: Int get() = recordings.count { it.status == Recording.Status.Scheduled }
-        val recordingCount: Int get() = recordings.count { it.status == Recording.Status.Recording }
+        val scheduledCount: Int get() = recordings.count { it.effectiveStatus() == Recording.Status.Scheduled }
+        val recordingCount: Int get() = recordings.count { it.effectiveStatus() == Recording.Status.Recording }
         val completedCount: Int get() = recordings.count {
-            it.status == Recording.Status.Completed ||
-                    it.status == Recording.Status.Stopped ||
-                    it.status == Recording.Status.Failed
+            val s = it.effectiveStatus()
+            s == Recording.Status.Completed || s == Recording.Status.Stopped || s == Recording.Status.Failed
         }
         val visible: List<Recording> get() = when (filter) {
-            Filter.Scheduled -> recordings.filter { it.status == Recording.Status.Scheduled }
-            Filter.Recording -> recordings.filter { it.status == Recording.Status.Recording }
+            Filter.Scheduled -> recordings.filter { it.effectiveStatus() == Recording.Status.Scheduled }
+            Filter.Recording -> recordings.filter { it.effectiveStatus() == Recording.Status.Recording }
             Filter.Completed -> recordings.filter {
-                it.status == Recording.Status.Completed ||
-                        it.status == Recording.Status.Stopped ||
-                        it.status == Recording.Status.Failed
+                val s = it.effectiveStatus()
+                s == Recording.Status.Completed || s == Recording.Status.Stopped || s == Recording.Status.Failed
             }
         }
     }
@@ -417,7 +441,7 @@ class DvrViewModel @Inject constructor(
             if (r.dispatcharrChannelId == null) return false
             val rawId = r.id.removePrefix("server-")
             val genericTitle = r.title.isBlank() || r.title == "Recording $rawId"
-            return genericTitle || r.description.isBlank()
+            return genericTitle || r.description.isBlank() || r.category.isBlank()
         }
         val needy = recordings.filter(::needsHydration)
         if (needy.isEmpty()) return recordings
@@ -444,6 +468,7 @@ class DvrViewModel @Inject constructor(
             r.copy(
                 title = if (genericTitle && prog.title.isNotBlank()) prog.title else r.title,
                 description = if (r.description.isBlank()) prog.description else r.description,
+                category = if (r.category.isBlank()) prog.category else r.category,
             )
         }
     }

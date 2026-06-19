@@ -1,13 +1,10 @@
 package com.aeriotv.android.feature.livetv
 
 import android.content.res.Configuration
-import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -51,6 +48,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import coil3.compose.AsyncImage
+import com.aeriotv.android.core.category.CategoryPillsFlow
+import com.aeriotv.android.core.category.METADATA_TOKENS
+import com.aeriotv.android.core.category.categoryTokens
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
@@ -307,13 +307,13 @@ private fun ProgramInfoBody(
             Spacer(Modifier.height(sectionGap))
             SectionLabel("Metadata")
             Spacer(Modifier.height(8.dp))
-            PillsFlow(tokens = metadata)
+            CategoryPillsFlow(tokens = metadata)
         }
         if (genres.isNotEmpty()) {
             Spacer(Modifier.height(sectionGap))
             SectionLabel("Categories")
             Spacer(Modifier.height(8.dp))
-            PillsFlow(tokens = genres)
+            CategoryPillsFlow(tokens = genres)
         }
     }
 }
@@ -383,52 +383,10 @@ private fun LiveBadge() {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PillsFlow(tokens: List<String>) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        tokens.forEach { token -> CategoryPill(token = token) }
-    }
-}
-
-@Composable
-private fun CategoryPill(token: String) {
-    // Phase 8 (Appearance settings) introduces the per-category colour palette
-    // and custom hex overrides. Until then, every pill renders neutral - matches
-    // the iOS unresolved-token branch (ProgramInfoView.swift:575).
-    Box(
-        modifier = Modifier
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                shape = RoundedCornerShape(50),
-            )
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-    ) {
-        Text(
-            text = token,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
 private fun ProgramInfoTarget.isLiveNow(): Boolean {
     val now = System.currentTimeMillis()
     return startMillis <= now && endMillis > now
 }
-
-/** Same tokenizer the iOS sheet uses: split on comma / forward-slash /
- *  semicolon, trim, drop empties. Lifted off ProgramInfoTarget so the lazy
- *  category fetch can tokenize the upgraded string directly. */
-private fun String.categoryTokens(): List<String> =
-    split(',', '/', ';')
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
 
 /** Hilt EntryPoint so the sheet can reach the singleton Dispatcharr client +
  *  AuthBroker without injecting them through every call site. The sheet is a
@@ -451,14 +409,5 @@ private fun formatDuration(millis: Long): String {
     val mins = totalMinutes % 60
     return if (mins == 0) "$hours h" else "$hours h $mins min"
 }
-
-// Mirrors iOS `ProgramInfoView.metadataTokens` (ProgramInfoView.swift:180).
-private val METADATA_TOKENS = setOf(
-    "episode", "series", "movie", "film", "feature", "feature film",
-    "short", "short film", "special", "premiere", "season premiere",
-    "series premiere", "finale", "season finale", "series finale",
-    "rerun", "repeat", "live", "pilot", "made-for-tv movie",
-    "made for tv movie", "miniseries", "limited series",
-)
 
 private val LIVE_RED = Color(0xFFFF4757)
