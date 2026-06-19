@@ -384,9 +384,17 @@ fun AerioTVNavHost(
             }
 
             composable(Routes.CHOOSE_TYPE) { entry ->
+                val parent = remember(entry) {
+                    navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
+                }
+                val vm: PlaylistViewModel = hiltViewModel(parent)
                 ChooseSourceTypeScreen(
                     onBack = { navController.popBackStack() },
                     onChoose = { type ->
+                        // Start a FRESH draft so the add creates a NEW row and
+                        // never edits the active playlist (and so the form can't
+                        // carry over the active server's API key).
+                        vm.startNewSource(type)
                         navController.navigate(Routes.configure(type))
                     },
                 )
@@ -405,8 +413,12 @@ fun AerioTVNavHost(
                 val resolvedType = runCatching { SourceType.valueOf(typeName) }
                     .getOrElse { SourceType.M3uUrl }
 
-                LaunchedEffect(state.phase) {
-                    if (state.phase == PlaylistViewModel.Phase.ChannelsReady) {
+                LaunchedEffect(Unit) {
+                    // Navigate on a one-shot "configured" EVENT, not on
+                    // phase == ChannelsReady: when adding a second playlist the
+                    // phase is already ChannelsReady, so a phase-watcher never
+                    // re-fires and the add silently succeeds with no advance.
+                    vm.sourceConfigured.collect {
                         navController.navigate(Routes.MAIN) {
                             popUpTo(Routes.PLAYLIST_GRAPH) { inclusive = false }
                         }

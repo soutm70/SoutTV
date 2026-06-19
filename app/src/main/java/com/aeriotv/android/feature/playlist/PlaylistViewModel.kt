@@ -18,8 +18,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -67,6 +70,12 @@ class PlaylistViewModel @Inject constructor(
          *  through SaveRequest into PlaylistEntity.vodEnabled. */
         val vodEnabled: Boolean = true,
         val playlist: PlaylistEntity? = null,
+        /** Id of the row THIS add-draft created (null until its first successful
+         *  Test Connection). Used as the loadAndPersist existingId so a re-test
+         *  edits the same draft row instead of duplicating -- WITHOUT reusing the
+         *  active [playlist]'s id, which would edit the wrong playlist. Reset by
+         *  [startNewSource] when a new add begins. */
+        val draftPlaylistId: String? = null,
         val channels: List<M3UChannel> = emptyList(),
         val epgByChannel: Map<String, List<EPGProgramme>> = emptyMap(),
         val isEpgLoading: Boolean = false,
@@ -164,6 +173,39 @@ class PlaylistViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /** One-shot signal that a source was successfully configured (added). The
+     *  add flow navigates forward on THIS event, not on `phase == ChannelsReady`:
+     *  when adding a second playlist `phase` is already ChannelsReady, so a
+     *  phase-watcher never re-fires and the add silently succeeds with no advance. */
+    private val _sourceConfigured = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sourceConfigured: SharedFlow<Unit> = _sourceConfigured.asSharedFlow()
+
+    /** Begin adding a NEW source: clear the draft form + draft id so the add
+     *  creates a fresh row (existingId = null) and never edits the active
+     *  [UiState.playlist], and so the form can't carry over the active server's
+     *  API key (which would win over typed user/pass and re-add the old server).
+     *  Deliberately does NOT touch [UiState.playlist] / [UiState.channels] /
+     *  [UiState.phase], so cancelling the add leaves the active playlist intact. */
+    fun startNewSource(type: SourceType) {
+        _state.update {
+            it.copy(
+                sourceType = type,
+                name = "",
+                url = "",
+                lanUrl = "",
+                epgUrl = "",
+                apiKey = "",
+                username = "",
+                password = "",
+                vodEnabled = true,
+                draftPlaylistId = null,
+                availableProfiles = emptyList(),
+                isLoading = false,
+                error = null,
+            )
+        }
+    }
 
     init {
         bootstrap()
@@ -421,18 +463,25 @@ class PlaylistViewModel @Inject constructor(
                 password = s.password.ifBlank { null },
                 vodEnabled = s.vodEnabled,
             )
-            repository.loadAndPersist(request, existingId = s.playlist?.id).fold(
+            repository.loadAndPersist(request, existingId = s.draftPlaylistId).fold(
                 onSuccess = { (entity, channels) ->
                     _state.update {
                         it.copy(
                             phase = Phase.ChannelsReady,
                             playlist = entity,
+                            // Remember THIS draft's row so a re-test edits it
+                            // instead of duplicating; never the active playlist.
+                            draftPlaylistId = entity.id,
                             channels = channels,
                             isLoading = false,
                             error = if (channels.isEmpty()) "No channels found." else null,
                         )
                     }
                     loadEpgIfConfigured(entity)
+                    // One-shot: advance the add flow even when phase was already
+                    // ChannelsReady (second-playlist add). Skip on an empty result
+                    // so the "No channels found." error stays visible.
+                    if (channels.isNotEmpty()) _sourceConfigured.tryEmit(Unit)
                 },
                 onFailure = { t ->
                     _state.update {
