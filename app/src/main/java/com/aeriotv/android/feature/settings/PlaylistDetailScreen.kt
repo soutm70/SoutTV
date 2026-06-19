@@ -75,6 +75,7 @@ fun PlaylistDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val playlist = state.playlist
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmRefreshAll by remember { mutableStateOf(false) }
 
     // LAN/WAN route is a point-in-time probe (no NetworkCallback flow in the
     // app); re-check on entry and ON_RESUME, mirroring NetworkSettingsScreen's
@@ -282,6 +283,22 @@ fun PlaylistDetailScreen(
 
             item {
                 Section(
+                    header = "Full Refresh",
+                    footer = "Clears every cache (channels, guide data, and On Demand) and reloads this playlist from scratch. Use this if newly-added channels, guide data, or movies and shows are missing or stale after changes on the server.",
+                ) {
+                    ActionRow(
+                        icon = Icons.Filled.Refresh,
+                        label = "Refresh Everything",
+                        destructive = true,
+                        onClick = { confirmRefreshAll = true },
+                        running = state.refreshAllStatus is PlaylistViewModel.ActionStatus.Running,
+                        status = state.refreshAllStatus,
+                    )
+                }
+            }
+
+            item {
+                Section(
                     header = "Danger Zone",
                     footer = "Removes this playlist and its credentials from this device.",
                 ) {
@@ -320,6 +337,34 @@ fun PlaylistDetailScreen(
             },
             dismissButton = {
                 SettingsDialogTextButton(label = "Cancel", onClick = { confirmDelete = false })
+            },
+        )
+    }
+
+    if (confirmRefreshAll && playlist != null) {
+        AlertDialog(
+            onDismissRequest = { confirmRefreshAll = false },
+            title = { Text("Refresh Everything?") },
+            text = {
+                Text(
+                    "Clears all cached channels, guide data, and On Demand, then " +
+                        "reloads \"${playlist.name}\" from scratch. Use this if " +
+                        "channels or guide data are missing or stale. May take a " +
+                        "few minutes on large playlists.",
+                )
+            },
+            confirmButton = {
+                SettingsDialogTextButton(
+                    label = "Refresh",
+                    destructive = true,
+                    onClick = {
+                        confirmRefreshAll = false
+                        viewModel.refreshEverything()
+                    },
+                )
+            },
+            dismissButton = {
+                SettingsDialogTextButton(label = "Cancel", onClick = { confirmRefreshAll = false })
             },
         )
     }

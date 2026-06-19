@@ -14,6 +14,7 @@ import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.data.repository.ChannelProfileOption
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.debug.MemoryPressureBus
+import com.aeriotv.android.core.debug.VodResetBus
 import com.aeriotv.android.core.preferences.AppPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,7 @@ import javax.inject.Inject
 class PlaylistViewModel @Inject constructor(
     private val repository: PlaylistRepository,
     private val memoryPressureBus: MemoryPressureBus,
+    private val vodResetBus: VodResetBus,
     private val appPreferences: AppPreferences,
 ) : ViewModel() {
 
@@ -98,6 +100,7 @@ class PlaylistViewModel @Inject constructor(
         val testStatus: ActionStatus = ActionStatus.Idle,
         val playlistRefreshStatus: ActionStatus = ActionStatus.Idle,
         val epgRefreshStatus: ActionStatus = ActionStatus.Idle,
+        val refreshAllStatus: ActionStatus = ActionStatus.Idle,
         /** Which URL [PlaylistRepository.effectiveBaseUrl] resolves to right
          *  now (LAN vs WAN), for the Connection row. Null until probed. */
         val activeRoute: ActiveRoute? = null,
@@ -908,6 +911,70 @@ class PlaylistViewModel @Inject constructor(
     }
 
     /**
+     * "Refresh Everything" nuclear reset (iOS a039ba71a parity). Strictly
+     * more thorough than Refresh Playlist + Refresh EPG Data: it purges the
+     * per-playlist EPG cache AND drops the in-memory guide map AND re-fetches
+     * channels (so newly-added server channels appear; refresh() also rewrites
+     * the channel-snapshot cache) AND force-reloads the guide AND tells
+     * OnDemandViewModel to run its existing VOD nuclear reset for the CURRENT
+     * (unchanged) active id via [vodResetBus]. Confirmation-gated in the UI,
+     * and also auto-invoked by [switchToPlaylist] so every playlist switch
+     * gets the same from-scratch reload (maintainer requirement).
+     */
+    fun refreshEverything() {
+        viewModelScope.launch {
+            val active = repository.activePlaylist() ?: return@launch
+            Log.i(TAG, "refreshEverything: nuking all caches for ${active.name}")
+            _state.update {
+                it.copy(
+                    isLoading = true,
+                    error = null,
+                    refreshAllStatus = ActionStatus.Running,
+                )
+            }
+            // 1. Purge guide cache (disk) + drop in-memory map, like refreshEpg.
+            runCatching { repository.purgeEpgCache(active.id) }
+                .onFailure { Log.w(TAG, "refreshEverything: purgeEpgCache failed", it) }
+            _state.update { it.copy(epgByChannel = emptyMap()) }
+            // 2. Signal On Demand to run its nuclear reset (id unchanged, so the
+            //    observeActiveId collector won't fire; the bus is the bridge).
+            vodResetBus.requestReset()
+            // 3. Re-fetch channels (refresh() rewrites the snapshot cache too).
+            repository.refresh(active).fold(
+                onSuccess = { channels ->
+                    val updated = repository.activePlaylist()
+                    _state.update {
+                        it.copy(
+                            channels = channels,
+                            isLoading = false,
+                            playlist = updated ?: it.playlist,
+                            refreshAllStatus = ActionStatus.Success(
+                                "${channels.size} channels reloaded",
+                            ),
+                            error = if (channels.isEmpty()) "No channels found." else null,
+                        )
+                    }
+                    // 4. Force-reload the guide from scratch.
+                    loadEpgIfConfigured(active, forceRefresh = true)
+                },
+                onFailure = { t ->
+                    Log.w(TAG, "refreshEverything failed", t)
+                    _state.update {
+                        it.copy(
+                            isLoading = false,
+                            refreshAllStatus = ActionStatus.Failure(
+                                "Refresh failed: ${t.message ?: t::class.simpleName}",
+                            ),
+                            error = "Refresh failed: ${t.message ?: t::class.simpleName}",
+                        )
+                    }
+                },
+            )
+            refreshActiveRoute()
+        }
+    }
+
+    /**
      * iOS Issue #24: when the app returns to the foreground after a while,
      * refresh the guide if it has gone stale (cached fetch older than
      * [maxAgeMillis], default 30 min) AND nothing is already loading. EPG only
@@ -1078,6 +1145,7 @@ class PlaylistViewModel @Inject constructor(
                 testStatus = ActionStatus.Idle,
                 playlistRefreshStatus = ActionStatus.Idle,
                 epgRefreshStatus = ActionStatus.Idle,
+                refreshAllStatus = ActionStatus.Idle,
             )
         }
     }
@@ -1105,7 +1173,16 @@ class PlaylistViewModel @Inject constructor(
                             error = if (channels.isEmpty()) "No channels found." else null,
                         )
                     }
-                    loadEpgIfConfigured(entity)
+                    // Maintainer requirement: every playlist switch auto-runs the
+                    // full "Refresh Everything" nuclear reset on the now-active
+                    // playlist. refreshEverything() purges + force-reloads the
+                    // guide and signals the VOD bus, so a switch never paints a
+                    // stale cached guide / VOD from a fresh-cache short-circuit.
+                    // It operates on repository.activePlaylist(), which is now
+                    // `entity` after switchActive() above, so no arg is needed.
+                    // (loadEpgIfConfigured is folded into refreshEverything's
+                    // forceRefresh guide reload, so we don't call it separately.)
+                    refreshEverything()
                 },
                 onFailure = { t ->
                     Log.w(TAG, "switchToPlaylist failed", t)

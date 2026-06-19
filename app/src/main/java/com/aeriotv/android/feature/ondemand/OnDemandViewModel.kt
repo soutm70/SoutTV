@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aeriotv.android.core.data.SourceType
 import com.aeriotv.android.core.data.repository.PlaylistRepository
+import com.aeriotv.android.core.debug.VodResetBus
 import com.aeriotv.android.core.network.DispatcharrAuthBroker
 import com.aeriotv.android.core.network.DispatcharrClient
 import com.aeriotv.android.core.network.DispatcharrVODEpisode
@@ -53,6 +54,7 @@ class OnDemandViewModel @Inject constructor(
     private val xtreamApi: XtreamCodesApi,
     private val appPreferences: AppPreferences,
     private val tmdbService: TMDBService,
+    private val vodResetBus: VodResetBus,
 ) : ViewModel() {
 
     data class UiState(
@@ -145,6 +147,16 @@ class OnDemandViewModel @Inject constructor(
                     refresh()
                     refreshSeries()
                 }
+        }
+        // "Refresh Everything" (PlaylistViewModel.refreshEverything): the active
+        // id is UNCHANGED, so the observeActiveId().drop(1) collector above never
+        // fires. The VodResetBus bridges that gap and runs the same nuclear reset.
+        viewModelScope.launch {
+            vodResetBus.resets.collect {
+                resetVodState()
+                refresh()
+                refreshSeries()
+            }
         }
     }
 
