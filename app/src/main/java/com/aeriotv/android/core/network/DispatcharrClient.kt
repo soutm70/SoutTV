@@ -418,31 +418,59 @@ class DispatcharrClient @Inject constructor() {
      * window: the recording carries no programme id, but it does carry the
      * channel's tvg-id + air window, so we list the feed and overlap-match.
      *
-     * Unlike /api/epg/grid/ (which strips `<category>` for perf), this list
-     * endpoint carries the per-programme `categories` array, so a single call
-     * yields the genre offline-style without a second per-id detail fetch.
-     * Accepts both the DRF `{results:[...]}` envelope and a flat array.
+     * Pagination matters here. The endpoint is a DRF ListAPIView ordered by
+     * start_time ascending, so a busy channel's multi-day XMLTV feed runs to
+     * hundreds of rows and the FIRST page is the OLDEST programmes. A single
+     * 50-row page anchored at the feed start therefore routinely fails to
+     * reach a recently-completed programme (1-3 days ago), which is exactly
+     * how the completed-recording genre pills came up blank on-device. We
+     * follow the DRF `next` cursor up to [maxPages] so the recording's window
+     * is reachable regardless of where it falls in the ordering. Accepts both
+     * the DRF `{results:[...]}` envelope and a flat array (older builds).
+     *
+     * Note the bulk list serializer strips `<category>` for perf the same way
+     * the grid does, so the per-programme `categories` array is usually null
+     * on these rows; the caller resolves the genre via the per-id detail
+     * endpoint (`getProgramDetail`) using each row's `programIdInt`.
      */
     suspend fun getProgramsByTvgId(
         baseUrl: String,
         apiKey: String,
         tvgId: String,
-        pageSize: Int = 50,
+        pageSize: Int = 200,
+        maxPages: Int = 8,
     ): List<DispatcharrEpgEntry> {
         val encoded = java.net.URLEncoder.encode(tvgId, "UTF-8")
-        val url = "${baseUrl.trimEnd('/')}/api/epg/programs/?tvg_id=$encoded&page_size=$pageSize"
-        val response: HttpResponse = client.get(url) { applyAuth(apiKey) }
-        unauthorizedCheck(response, url)
-        if (!response.status.isSuccess()) {
-            throw DispatcharrError.Transport("Programs-by-tvg-id failed: HTTP ${response.status.value}")
+        val all = mutableListOf<DispatcharrEpgEntry>()
+        var nextUrl: String? =
+            "${baseUrl.trimEnd('/')}/api/epg/programs/?tvg_id=$encoded&page_size=$pageSize"
+        var pagesLeft = maxPages
+        while (nextUrl != null && pagesLeft > 0) {
+            pagesLeft -= 1
+            val response: HttpResponse = client.get(nextUrl) { applyAuth(apiKey) }
+            unauthorizedCheck(response, nextUrl)
+            if (!response.status.isSuccess()) {
+                if (all.isEmpty()) {
+                    throw DispatcharrError.Transport("Programs-by-tvg-id failed: HTTP ${response.status.value}")
+                }
+                break
+            }
+            val raw: JsonElement = response.body()
+            when {
+                raw is JsonArray -> {
+                    // Flat array = no pagination; absorb + done.
+                    raw.forEach { all.add(json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it)) }
+                    nextUrl = null
+                }
+                raw is JsonObject -> {
+                    val rows = (raw["results"] as? JsonArray) ?: JsonArray(emptyList())
+                    rows.forEach { all.add(json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it)) }
+                    nextUrl = (raw["next"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                }
+                else -> nextUrl = null
+            }
         }
-        val raw: JsonElement = response.body()
-        val rows: JsonArray = when {
-            raw is JsonArray -> raw
-            raw is JsonObject -> (raw["results"] as? JsonArray) ?: JsonArray(emptyList())
-            else -> JsonArray(emptyList())
-        }
-        return rows.map { json.decodeFromJsonElement(serializer<DispatcharrEpgEntry>(), it) }
+        return all
     }
 
     suspend fun getEpgGrid(baseUrl: String, apiKey: String): List<DispatcharrEpgEntry> {
