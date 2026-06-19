@@ -162,6 +162,23 @@ class AppPreferences @Inject constructor(
     }
 
     /**
+     * iOS `appBehaviorsAutoRecoverFrozenStreams` parity (#37, commit fe93531c).
+     * When false the live stall watchdogs (stale-position reload + black-screen
+     * reload) are disabled so a channel that restarts/stutters at OTA commercial
+     * boundaries is left to recover on its own instead of being force-reloaded.
+     * The cold-start no-data net (never-started dead stream) stays armed
+     * regardless, iOS keeps that lifeline. Default true. Device-local, NOT
+     * synced. Read per-tune by AerioExoPlayerHolder.
+     */
+    val autoRecoverFrozenStreams: Flow<Boolean> =
+        store.data.map { it[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true }
+    suspend fun setAutoRecoverFrozenStreams(value: Boolean) {
+        store.edit { it[KEY_AUTO_RECOVER_FROZEN_STREAMS] = value }
+    }
+    suspend fun autoRecoverFrozenStreamsOnce(): Boolean =
+        store.data.first()[KEY_AUTO_RECOVER_FROZEN_STREAMS] ?: true
+
+    /**
      * iOS TMDBPosters parity (Aerio VODService.swift). Opt-in, OFF by default:
      * when on AND a key is set, missing artwork (VOD posters, and later EPG
      * program posters) is filled from the user's OWN free TMDB key. The toggle
@@ -804,6 +821,8 @@ class AppPreferences @Inject constructor(
         val KEY_SKIP_LOADING_SCREEN = booleanPreferencesKey("app_behaviors_skip_loading_screen")
         val KEY_DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val KEY_APPLE_TV_CHANNEL_FLIP = booleanPreferencesKey("app_behaviors_apple_tv_channel_flip")
+        val KEY_AUTO_RECOVER_FROZEN_STREAMS =
+            booleanPreferencesKey("app_behaviors_auto_recover_frozen_streams")
         // Synced via Drive (snapshotSyncablePreferences) -- the user's own key.
         val KEY_PROGRAM_POSTERS_TMDB_ENABLED =
             booleanPreferencesKey("app_behaviors_program_posters_tmdb_enabled")

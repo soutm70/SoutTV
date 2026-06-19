@@ -102,6 +102,12 @@ class AerioExoPlayerHolder @Inject constructor(
     /** Passthrough state the current player was built with; a pref flip
      *  forces a rebuild because sink capabilities are fixed at build. */
     private var builtWithPassthrough: Boolean? = null
+    /** Buffer floor (ms) the current player was built with; a pref flip forces
+     *  a rebuild because the LoadControl is fixed at build time. */
+    private var builtWithBufferFloorMs: Int? = null
+    /** iOS #37 kill-switch, cached at build/tune time. When false the stall +
+     *  black-screen reload nets no-op; the cold-start no-data net stays armed. */
+    @Volatile private var watchdogReloadEnabled: Boolean = true
     // GH #8: some devices (Chromecast w/ Google TV report) output NO audio
     // on the forced-PCM no-context sink the lip-sync fix uses when
     // passthrough is off. When the sink raises an AudioTrack init/write
@@ -332,9 +338,22 @@ class AerioExoPlayerHolder @Inject constructor(
     ): ExoPlayer {
         appContext = context.applicationContext
         val audioPassthrough = runBlocking { appPreferences.audioPassthroughEnabled.first() } || audioSinkFallback
+        // Network > Buffer Size: the live LoadControl is fixed at build time, so
+        // read the pref here (like audioPassthrough) and rebuild the singleton
+        // player when it changes. Mirrors the Stream Buffer cushion on iOS
+        // (read once per tune). minBufferMs floor = the user's chosen caching ms
+        // with the live default floor; small=300 lowers latency, xlarge=8000
+        // smooths jitter on poor networks.
+        val bufferFloorMs = runBlocking {
+            com.aeriotv.android.feature.settings.bufferMillisFor(
+                appPreferences.streamBufferSize.first()
+            )
+        }
+        // Cache the frozen-stream kill-switch for the watchdog loop.
+        watchdogReloadEnabled = runBlocking { appPreferences.autoRecoverFrozenStreamsOnce() }
         player?.let { existing ->
-            if (builtWithPassthrough == audioPassthrough) return existing
-            Log.i(TAG, "Audio passthrough pref changed; rebuilding player")
+            if (builtWithPassthrough == audioPassthrough && builtWithBufferFloorMs == bufferFloorMs) return existing
+            Log.i(TAG, "Player build pref changed (passthrough/buffer); rebuilding player")
             destroy()
         }
         Log.i(TAG, "Creating fresh ExoPlayer in holder")
@@ -386,10 +405,11 @@ class AerioExoPlayerHolder @Inject constructor(
         //     keeps mid-stream rebuffer recovery snappy.
         // (Multiview + VOD have their own LoadControls; this governs only the
         // single live player.)
+        val minBufferMs = maxOf(4_000, bufferFloorMs)
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 4_000,
-                /* maxBufferMs = */ 8_000,
+                /* minBufferMs = */ minBufferMs,
+                /* maxBufferMs = */ maxOf(8_000, minBufferMs),
                 /* bufferForPlaybackMs = */ 1_200,
                 /* bufferForPlaybackAfterRebufferMs = */ 2_000,
             )
@@ -444,6 +464,7 @@ class AerioExoPlayerHolder @Inject constructor(
         player = fresh
         _playerInstance.value = fresh
         builtWithPassthrough = audioPassthrough
+        builtWithBufferFloorMs = bufferFloorMs
         startWatchdog()
         return fresh
     }
@@ -561,6 +582,10 @@ class AerioExoPlayerHolder @Inject constructor(
         lastPlaySubtitle = subtitle
         lastPlayArtworkUri = artworkUri
         resetWatchdogStateForNewStream()
+        // iOS #37: re-read the kill-switch per tune so toggling it applies to
+        // the next channel even within a live session (channel-flip reuses the
+        // singleton player and skips acquireOrCreate).
+        watchdogReloadEnabled = runBlocking { appPreferences.autoRecoverFrozenStreamsOnce() }
         // Foreground playback wants video; re-enable it in case an Android Auto
         // session previously dropped the video track on this shared player.
         setVideoTrackEnabled(true)
@@ -721,7 +746,8 @@ class AerioExoPlayerHolder @Inject constructor(
                 // advancing audio position is exactly what masks this failure.
                 // videoFormat != null excludes radio/audio-only feeds; the
                 // disabled-types check excludes deliberate Audio Only mode.
-                if (!videoFrameRendered &&
+                if (watchdogReloadEnabled &&
+                    !videoFrameRendered &&
                     p.isPlaying &&
                     p.videoFormat != null &&
                     !p.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO) &&
@@ -745,7 +771,7 @@ class AerioExoPlayerHolder @Inject constructor(
                     continue
                 }
                 val staleMs = now - lastPositionAdvanceAtMs
-                if (staleMs >= staleReloadThresholdMs) {
+                if (watchdogReloadEnabled && staleMs >= staleReloadThresholdMs) {
                     forceReload("stale=${staleMs}ms")
                 }
             }

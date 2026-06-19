@@ -119,6 +119,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { prefs.setAppleTVChannelFlip(value) }
     }
 
+    // iOS appBehaviorsAutoRecoverFrozenStreams (#37). Default true; device-local.
+    val autoRecoverFrozenStreams: Flow<Boolean> = prefs.autoRecoverFrozenStreams
+    fun setAutoRecoverFrozenStreams(value: Boolean) {
+        viewModelScope.launch { prefs.setAutoRecoverFrozenStreams(value) }
+    }
+
     // TMDB program posters (opt-in, off by default). Key is device-local.
     val programPostersTmdbEnabled: Flow<Boolean> = prefs.programPostersTmdbEnabled
     fun setProgramPostersTmdbEnabled(value: Boolean) {

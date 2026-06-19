@@ -71,6 +71,7 @@ fun AppBehaviorsSettingsScreen(
 ) {
     val skipLoadingScreen by viewModel.skipLoadingScreen.collectAsStateWithLifecycle(initialValue = false)
     val appleTVChannelFlip by viewModel.appleTVChannelFlip.collectAsStateWithLifecycle(initialValue = true)
+    val autoRecoverFrozenStreams by viewModel.autoRecoverFrozenStreams.collectAsStateWithLifecycle(initialValue = true)
     val autoResumeLastChannel by viewModel.autoResumeLastChannel.collectAsStateWithLifecycle(initialValue = false)
     val defaultTab by viewModel.defaultTab.collectAsStateWithLifecycle(initialValue = "")
     val programPostersTmdb by viewModel.programPostersTmdbEnabled.collectAsStateWithLifecycle(initialValue = false)
@@ -137,6 +138,18 @@ fun AppBehaviorsSettingsScreen(
                         "While the player chrome is visible, swipe up for the next channel and down for the previous. Live single-stream playback only.",
                     checked = appleTVChannelFlip,
                     onCheckedChange = viewModel::setAppleTVChannelFlip,
+                )
+            }
+
+            SettingsSection(
+                header = "Stream Recovery",
+                footer = "If a live stream stops sending video, the player reloads it to recover. Turn this off if live channels restart or stutter during commercial breaks; a brief freeze may show instead. Applies to the next channel you tune.",
+            ) {
+                SettingsToggleRow(
+                    title = "Auto-Recover Frozen Streams",
+                    subtitle = "Reload a live stream that stops sending video. Off keeps the stream as-is through commercial-break stutters.",
+                    checked = autoRecoverFrozenStreams,
+                    onCheckedChange = viewModel::setAutoRecoverFrozenStreams,
                 )
             }
 
