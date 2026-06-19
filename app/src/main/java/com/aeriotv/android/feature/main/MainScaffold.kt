@@ -241,6 +241,20 @@ fun MainScaffold(
         if (selectedTab !in tabs) selectedTab = AppTab.LiveTV
     }
 
+    // EPG-search guide jump (iOS: MainTabView switches to .liveTV +
+    // ChannelListView sets showGuideView=true). When a Search EPG result is
+    // tapped (warm path) or an aeriotv://guide deep link is consumed (cold
+    // path re-emits through requestGuideJump), force guide mode so EPG cells
+    // exist to scroll/focus to, then select the Live TV tab. GuideScreen
+    // collects the same SharedFlow (replay=1) to do the scroll + focus.
+    LaunchedEffect(Unit) {
+        viewModel.guideJumpRequests.collect {
+            settingsVm.setDefaultLiveTVView("guide")
+            selectedTab = AppTab.LiveTV
+            initialTabApplied = true
+        }
+    }
+
     // Back from any secondary tab (Favorites / DVR / On Demand / Settings)
     // returns to Live TV instead of exiting the app -- Live TV is the home tab.
     // On Live TV this handler is disabled so Back falls through to the default

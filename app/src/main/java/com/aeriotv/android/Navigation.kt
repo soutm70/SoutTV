@@ -29,6 +29,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import com.aeriotv.android.core.data.SourceType
+import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.db.entity.canRecordToServer
 import com.aeriotv.android.core.data.db.entity.isDispatcharrAdmin
 import com.aeriotv.android.ui.LocalCanRecordToServer
@@ -477,6 +478,25 @@ fun AerioTVNavHost(
                         is DeepLinkTarget.Vod -> {
                             navController.navigate(Routes.movieDetail(target.movieUuid))
                             onDeepLinkConsumed()
+                        }
+                        is DeepLinkTarget.GuideProgram -> {
+                            // Resolve the channel by guideMatchKey (the search
+                            // result carries that key, NOT M3UChannel.id).
+                            val exists = state.channels.any {
+                                it.guideMatchKey == target.channelId && it.url.isNotBlank()
+                            }
+                            if (exists) {
+                                // Re-emit through the VM so MainScaffold (tab
+                                // switch + force guide mode) and GuideScreen
+                                // (scroll + focus) both react. selectedGroup is
+                                // reset to All inside requestGuideJump.
+                                vm.requestGuideJump(target.channelId, target.startMillis)
+                                onDeepLinkConsumed()
+                            } else if (state.phase == PlaylistViewModel.Phase.ChannelsReady) {
+                                onDeepLinkConsumed() // channels loaded, key gone => drop
+                            }
+                            // else: channels still loading; leave target pending
+                            // for the next (deepLinkTarget, channels.size) pass.
                         }
                     }
                 }

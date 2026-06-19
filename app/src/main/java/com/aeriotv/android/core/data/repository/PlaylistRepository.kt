@@ -612,6 +612,28 @@ class PlaylistRepository @Inject constructor(
                 .map { it.toProgramme() }
         }
 
+    /**
+     * EPG-scope search (iOS SearchView EPG scope). Returns near-term
+     * programmes whose title/description match [query] for the active
+     * source, ordered soonest-first. The returned EPGProgramme.channelId is
+     * the canonical guideMatchKey (bridgeChannelIds already rewrote it at
+     * fetch time), so a Search result can be handed straight to the
+     * guide-jump path without further tvg-id/uuid resolution.
+     *
+     * TODO(parity task #41): consumed by the #41 global-Search ViewModel
+     * (EPG scope), which is not built yet. Exposed here now so the deep-link
+     * guide-jump path is complete; wire this into the Search VM when #41 lands.
+     */
+    suspend fun searchEpg(playlistId: String, query: String): List<EPGProgramme> =
+        withContext(Dispatchers.Default) {
+            val q = query.trim()
+            if (q.isBlank()) return@withContext emptyList()
+            val like = "%" + q.replace("%", "\\%").replace("_", "\\_") + "%"
+            epgProgrammeDao
+                .searchInWindow(playlistId, like, System.currentTimeMillis())
+                .map { it.toProgramme() }
+        }
+
     suspend fun newestEpgFetch(playlistId: String): Long? =
         epgProgrammeDao.newestFetchedAt(playlistId)
 

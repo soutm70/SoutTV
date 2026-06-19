@@ -40,6 +40,27 @@ interface EpgProgrammeDao {
         toMillis: Long,
     ): List<EpgProgrammeEntity>
 
+    /**
+     * EPG-scope search for the global Search surface (parity task #41 / iOS
+     * SearchView EPG scope). Matches title OR description, case-insensitive
+     * (Room LIKE is case-insensitive for ASCII), time-windowed to now-forward
+     * (endMillis > :nowMillis) so already-ended programmes don't clutter
+     * results. Ordered by start time so the soonest airing surfaces first.
+     * Caller (PlaylistRepository.searchEpg) injects '%'||q||'%' wildcards.
+     */
+    @Query(
+        "SELECT * FROM epg_programme WHERE playlistId = :playlistId " +
+            "AND endMillis > :nowMillis " +
+            "AND (title LIKE :like OR description LIKE :like) " +
+            "ORDER BY startMillis ASC LIMIT :limit"
+    )
+    suspend fun searchInWindow(
+        playlistId: String,
+        like: String,
+        nowMillis: Long,
+        limit: Int = 60,
+    ): List<EpgProgrammeEntity>
+
     /** Most recent fetch time for this source, or null when nothing is cached. */
     @Query("SELECT MAX(fetchedAt) FROM epg_programme WHERE playlistId = :playlistId")
     suspend fun newestFetchedAt(playlistId: String): Long?

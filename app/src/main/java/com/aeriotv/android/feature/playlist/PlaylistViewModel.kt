@@ -3,6 +3,7 @@ package com.aeriotv.android.feature.playlist
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aeriotv.android.DeepLinkTarget
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.M3UChannel
@@ -184,6 +185,33 @@ class PlaylistViewModel @Inject constructor(
      *  phase-watcher never re-fires and the add silently succeeds with no advance. */
     private val _sourceConfigured = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val sourceConfigured: SharedFlow<Unit> = _sourceConfigured.asSharedFlow()
+
+    /** Pending Live TV guide-jump target (channel guideMatchKey + programme
+     *  start millis), emitted when a Search EPG result is tapped while the
+     *  app is foregrounded. GuideScreen collects this (when mounted) to
+     *  scroll + focus the cell; MainScaffold collects it to switch to the
+     *  Live TV tab. extraBufferCapacity=1 + DROP_OLDEST so a tap that lands
+     *  before any collector is attached (cold guide) is still replayable via
+     *  the DeepLinkTarget.GuideProgram durable path in Navigation.kt. */
+    private val _guideJumpRequests =
+        kotlinx.coroutines.flow.MutableSharedFlow<DeepLinkTarget.GuideProgram>(
+            replay = 1,
+            extraBufferCapacity = 1,
+            onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+        )
+    val guideJumpRequests: SharedFlow<DeepLinkTarget.GuideProgram> = _guideJumpRequests.asSharedFlow()
+
+    /** Called when a Search EPG result is tapped: stash + broadcast the
+     *  jump, and force the group filter back to All so the target channel is
+     *  guaranteed visible (iOS ChannelListView sets selectedGroup='All').
+     *  Guide-mode itself is a SettingsViewModel/DataStore pref, flipped by
+     *  the collector in MainScaffold (see that file). */
+    fun requestGuideJump(channelGuideMatchKey: String, startMillis: Long) {
+        _state.update { it.copy(selectedGroup = ALL_GROUPS) }
+        _guideJumpRequests.tryEmit(
+            DeepLinkTarget.GuideProgram(channelGuideMatchKey, startMillis)
+        )
+    }
 
     /** Begin adding a NEW source: clear the draft form + draft id so the add
      *  creates a fresh row (existingId = null) and never edits the active

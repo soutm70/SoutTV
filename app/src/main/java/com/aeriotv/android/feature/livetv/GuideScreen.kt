@@ -1064,6 +1064,33 @@ fun GuideScreen(
                 guideNav.focusChannelAt(rowIndex, anchorMs, listState)
             }
         }
+        // EPG-search guide jump (iOS commit e3ccf439d consumePendingGuideJump).
+        // Warm path: a Search EPG result was tapped in-process; the VM emits a
+        // GuideProgram(channelId=guideMatchKey, startMillis). Resolve the row in
+        // filteredChannels by guideMatchKey (the same 3-way-matched key the grid
+        // and epgByChannel use), then reuse focusChannelAt to scroll + (on TV)
+        // focus the cell at the programme's start column. Idempotent: a key that
+        // isn't in the current filtered list (e.g. its group is still hidden
+        // mid-load) simply no-ops; selectedGroup was already reset to All by
+        // requestGuideJump, so once channels settle the row resolves. NON-TV
+        // gated so the scroll runs on every form factor; D-pad focus only on TV.
+        LaunchedEffect(Unit) {
+            viewModel.guideJumpRequests.collect { jump ->
+                // Re-read live state at consume time (channels may have just
+                // loaded). filteredChannels is a Compose State read inside the
+                // suspending collect, so it re-reads on each emission.
+                val idx = filteredChannels.indexOfFirst { it.guideMatchKey == jump.channelId }
+                if (idx < 0) return@collect
+                // Let the guide's own scroll-to-now / focus-on-return settle
+                // first (iOS sleeps 250ms before scrolling).
+                kotlinx.coroutines.delay(250L)
+                if (isTv) {
+                    guideNav.focusChannelAt(idx, jump.startMillis, listState)
+                } else {
+                    listState.animateScrollToItem(idx)
+                }
+            }
+        }
         // GH #5: anchor a focused cell's LEADING edge so an oversized programme
         // (wider than the timeline viewport) doesn't fling the horizontal scroll
         // to its END on D-pad focus. Flows down into each row's horizontalScroll;

@@ -170,8 +170,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Pull a deep-link target out of [intent.data] when the scheme is
-     * `aeriotv`. Supported hosts: `channel`, `vod`. Path is the id /
-     * uuid. Anything else is ignored.
+     * `aeriotv`. Supported hosts: `channel`, `vod`, `guide`. Path is the id /
+     * uuid / guideMatchKey. Anything else is ignored.
      */
     private fun captureDeepLinkFrom(intent: Intent?) {
         val data = intent?.data ?: return
@@ -181,6 +181,11 @@ class MainActivity : ComponentActivity() {
         val target = when (host) {
             "channel" -> DeepLinkTarget.Channel(path)
             "vod" -> DeepLinkTarget.Vod(path)
+            "guide" -> {
+                val start = data.getQueryParameter("start")?.toLongOrNull()
+                    ?: return // no start time => cannot anchor; ignore
+                DeepLinkTarget.GuideProgram(path, start)
+            }
             else -> null
         } ?: return
         deepLinkTarget.value = target

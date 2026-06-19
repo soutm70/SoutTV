@@ -13,4 +13,17 @@ sealed interface DeepLinkTarget {
 
     /** Launch movie detail screen for [movieUuid]. */
     data class Vod(val movieUuid: String) : DeepLinkTarget
+
+    /**
+     * Jump to a programme in the Live TV guide (parity: iOS
+     * aerioJumpToGuideProgram, commit e3ccf439d). [channelId] is the
+     * channel's guideMatchKey (the same key epgByChannel is keyed on, which
+     * is also what an EPG search result carries), NOT M3UChannel.id.
+     * [startMillis] is the programme's start time, used as the guide's
+     * horizontal anchor column. Consumed idempotently in Navigation.kt's
+     * MAIN route once a matching loaded channel exists; the consumer routes
+     * to the Live TV tab, forces guide mode, resets the group filter to All,
+     * and scrolls/focuses the program cell.
+     */
+    data class GuideProgram(val channelId: String, val startMillis: Long) : DeepLinkTarget
 }
