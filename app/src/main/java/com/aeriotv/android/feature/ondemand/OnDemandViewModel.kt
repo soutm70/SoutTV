@@ -409,6 +409,9 @@ class OnDemandViewModel @Inject constructor(
             val perCatCap = maxOf((totalCap / 100 / maxOf(cats.size, 1)) * 100, 100)
             val merged = mutableListOf<DispatcharrVODMovie>()
             val seen = HashSet<String>()
+            // Only categories that yield >=1 movie for THIS account are real
+            // groups for this playlist; Manage Groups is published from here.
+            val groupsWithContent = LinkedHashSet<String>()
             var firstPainted = false
             for (catName in cats) {
                 if (merged.size >= totalCap) break
@@ -422,7 +425,7 @@ class OnDemandViewModel @Inject constructor(
                 }.onFailure { Log.w(TAG, "VOD movies cat='$catName' failed; continuing", it) }.getOrNull()
                 if (firstPage != null) {
                     firstPage.results.forEach { m ->
-                        if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++ }
+                        if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++; groupsWithContent += catName }
                     }
                     nextUrl = firstPage.next
                     if (!firstPainted) {
@@ -442,14 +445,27 @@ class OnDemandViewModel @Inject constructor(
                     }.onFailure { Log.w(TAG, "VOD movies cat='$catName' next-page failed; stopping cat", it) }.getOrNull()
                     if (p == null) break
                     p.results.forEach { m ->
-                        if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++ }
+                        if (seen.add(m.uuid)) { merged += m.copy(categoryName = catName); fetchedForCat++; groupsWithContent += catName }
                     }
                     nextUrl = p.next
                     _state.update { it.copy(movies = merged.toList(), totalCount = merged.size, moviesNextCursor = null) }
                 }
             }
             // Ensure the spinner clears even if every category returned empty.
-            _state.update { it.copy(isLoading = false, movies = merged.toList(), totalCount = if (merged.isEmpty()) it.totalCount else merged.size, moviesNextCursor = null) }
+            // Publish ONLY names that carried content for this account so
+            // Manage Groups never offers an empty category like "Apple TV".
+            // Skip when the sweep produced nothing so a transient all-empty
+            // refresh doesn't wipe a previously-good list.
+            _state.update {
+                it.copy(
+                    isLoading = false,
+                    movies = merged.toList(),
+                    totalCount = if (merged.isEmpty()) it.totalCount else merged.size,
+                    moviesNextCursor = null,
+                    movieGroupNames = if (groupsWithContent.isEmpty()) it.movieGroupNames
+                        else groupsWithContent.toList().sorted(),
+                )
+            }
         }
     }
 
@@ -563,6 +579,7 @@ class OnDemandViewModel @Inject constructor(
             val perCatCap = maxOf((totalCap / 100 / maxOf(cats.size, 1)) * 100, 100)
             val merged = mutableListOf<DispatcharrVODSeries>()
             val seen = HashSet<Int>()
+            val groupsWithContent = LinkedHashSet<String>()
             var firstPainted = false
             for (catName in cats) {
                 if (merged.size >= totalCap) break
@@ -575,7 +592,7 @@ class OnDemandViewModel @Inject constructor(
                 }.onFailure { Log.w(TAG, "VOD series cat='$catName' failed; continuing", it) }.getOrNull()
                 if (firstPage != null) {
                     firstPage.results.forEach { s ->
-                        if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++ }
+                        if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++; groupsWithContent += catName }
                     }
                     nextUrl = firstPage.next
                     if (!firstPainted) {
@@ -594,13 +611,22 @@ class OnDemandViewModel @Inject constructor(
                     }.onFailure { Log.w(TAG, "VOD series cat='$catName' next-page failed; stopping cat", it) }.getOrNull()
                     if (p == null) break
                     p.results.forEach { s ->
-                        if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++ }
+                        if (seen.add(s.id)) { merged += s.copy(categoryName = catName); fetchedForCat++; groupsWithContent += catName }
                     }
                     nextUrl = p.next
                     _state.update { it.copy(series = merged.toList(), seriesTotalCount = merged.size, seriesNextCursor = null) }
                 }
             }
-            _state.update { it.copy(isLoadingSeries = false, series = merged.toList(), seriesTotalCount = if (merged.isEmpty()) it.seriesTotalCount else merged.size, seriesNextCursor = null) }
+            _state.update {
+                it.copy(
+                    isLoadingSeries = false,
+                    series = merged.toList(),
+                    seriesTotalCount = if (merged.isEmpty()) it.seriesTotalCount else merged.size,
+                    seriesNextCursor = null,
+                    seriesGroupNames = if (groupsWithContent.isEmpty()) it.seriesGroupNames
+                        else groupsWithContent.toList().sorted(),
+                )
+            }
         }
     }
 
@@ -721,12 +747,14 @@ class OnDemandViewModel @Inject constructor(
         dispatcharrSeriesFallbackGroup = seriesCats.firstOrNull()?.name
         dispatcharrEnabledMovieCats = movieCats.map { it.name }.distinct()
         dispatcharrEnabledSeriesCats = seriesCats.map { it.name }.distinct()
-        _state.update {
-            it.copy(
-                movieGroupNames = movieCats.map { c -> c.name }.distinct().sorted(),
-                seriesGroupNames = seriesCats.map { c -> c.name }.distinct().sorted(),
-            )
-        }
+        // NOTE: movieGroupNames / seriesGroupNames are intentionally NOT
+        // published here. /api/vod/categories/ is SERVER-WIDE (every M3U
+        // account on the box), and enabledOnAnyAccount passes a category that
+        // is enabled on ANY account, so this list includes categories the
+        // ACTIVE playlist/account has no VOD for (the "Apple TV" Series leak).
+        // The per-category sweep in refresh()/refreshSeries() proves which
+        // categories actually have content for THIS account and publishes only
+        // those; the unfiltered fallback uses the UI's items-derived fallback.
     }
 
     /** Stamp a Dispatcharr movie with its group display name. */
