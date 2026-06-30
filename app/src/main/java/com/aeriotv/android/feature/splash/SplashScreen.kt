@@ -112,6 +112,13 @@ private fun SplashVideo(onPlaybackDone: () -> Unit) {
                         setOnErrorListener { _, _, _ -> failed = true; true }
                     }
                 },
+                // Release the underlying MediaPlayer + surface when the splash
+                // dismisses (finished -> SplashVideo leaves composition) or
+                // falls back to the static card (failed flips). Without this the
+                // VideoView's MediaPlayer + Surface leak for the process
+                // lifetime on every cold launch. stopPlayback() is VideoView's
+                // documented teardown.
+                onRelease = { view -> runCatching { view.stopPlayback() } },
             )
         }
     }
