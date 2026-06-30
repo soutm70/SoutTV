@@ -67,7 +67,10 @@ class LocalRecordingService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var recordingJob: Job? = null
-    private var currentChannelName: String = ""
+    /** Title of the in-flight recording. Used only to re-post the foreground
+     *  notification when a duplicate start is rejected (so the second
+     *  startForegroundService() call still satisfies the FGS contract). */
+    private var activeTitle: String = ""
 
     /**
      * Partial wake lock held while a local recording is in flight, gated by
@@ -107,30 +110,51 @@ class LocalRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
-                val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
-                val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
-                val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
-                val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 60 * 60 * 1000L)
-                currentChannelName = channelName
-                startRecording(streamUrl, title, apiKey, durationMs)
+                if (recordingJob?.isActive == true) {
+                    // Single active recording (iOS parity + a single foreground
+                    // notification / wake lock). A second start must NOT clobber
+                    // recordingJob: that orphans the running job and lets one
+                    // job's stopSelf() tear the service down mid-write on the
+                    // other. Re-affirm the foreground notification so this
+                    // duplicate startForegroundService() call still satisfies
+                    // the FGS-start contract, then ignore it.
+                    Log.w(TAG, "Recording already in flight; ignoring duplicate ACTION_START")
+                    reaffirmForeground()
+                } else {
+                    val streamUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
+                    val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
+                    val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
+                    val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
+                    val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 60 * 60 * 1000L)
+                    startRecording(streamUrl, title, channelName, apiKey, durationMs)
+                }
             }
             ACTION_STOP -> {
                 stopRecording()
             }
             ACTION_DOWNLOAD -> {
-                val fileUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
-                val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
-                val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
-                val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
-                currentChannelName = channelName
-                startDownload(fileUrl, title, apiKey)
+                if (recordingJob?.isActive == true) {
+                    Log.w(TAG, "Recording/download already in flight; ignoring duplicate ACTION_DOWNLOAD")
+                    reaffirmForeground()
+                } else {
+                    val fileUrl = intent.getStringExtra(EXTRA_STREAM_URL).orEmpty()
+                    val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recording"
+                    val channelName = intent.getStringExtra(EXTRA_CHANNEL_NAME) ?: title
+                    val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
+                    startDownload(fileUrl, title, channelName, apiKey)
+                }
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startRecording(streamUrl: String, title: String, apiKey: String, durationMs: Long) {
+    private fun startRecording(
+        streamUrl: String,
+        title: String,
+        channelName: String,
+        apiKey: String,
+        durationMs: Long,
+    ) {
         if (streamUrl.isBlank()) {
             stopSelf()
             return
@@ -140,11 +164,12 @@ class LocalRecordingService : Service() {
         // process mid-write and the recording's MediaStore row would stay
         // IS_PENDING (invisible) and be reaped -- total recording loss.
         isActive = true
+        activeTitle = title
         ensureNotificationChannel()
         val notif = buildNotification(title, "Recording…")
         startForegroundCompat(notif)
 
-        recordingJob = scope.launch {
+        val recJob = scope.launch {
             // Acquire the wake lock before the read-loop if the user left the
             // "Keep device awake during recording" toggle on. Bounded to
             // duration + 1 min so a hung job can never hold the CPU awake
@@ -213,7 +238,7 @@ class LocalRecordingService : Service() {
                 runCatching {
                     localRecordingDao.insert(
                         LocalRecordingEntity(
-                            channelName = currentChannelName.ifBlank { title },
+                            channelName = channelName.ifBlank { title },
                             title = title,
                             filePath = sink.displayPath,
                             startedAt = startedAt,
@@ -228,11 +253,15 @@ class LocalRecordingService : Service() {
             releaseWakeLock()
             stopSelf()
         }
+        recordingJob = recJob
 
-        // Also schedule a hard stop just in case the read loop hangs.
+        // Hard-stop watchdog tied to THIS recording's job, so a watchdog left
+        // over from an earlier recording can never force-stop a later one (the
+        // old code checked the mutable recordingJob field). Cancelled with the
+        // scope on teardown (onDestroy), and a no-op once recJob has finished.
         scope.launch {
             delay(durationMs + 5_000L)
-            if (recordingJob?.isActive == true) {
+            if (recJob.isActive) {
                 Log.w(TAG, "Recording exceeded duration + 5s grace - force-stopping")
                 stopRecording()
             }
@@ -257,15 +286,21 @@ class LocalRecordingService : Service() {
      * playback URL with the source's auth headers, write it to the recordings
      * directory, record the byte size.
      */
-    private fun startDownload(fileUrl: String, title: String, apiKey: String) {
+    private fun startDownload(fileUrl: String, title: String, channelName: String, apiKey: String) {
         if (fileUrl.isBlank()) {
             stopSelf()
             return
         }
+        // Same updater interlock as a live recording: a self-update mid-download
+        // truncates the file and leaves a discarded partial. The download is
+        // recoverable (re-fetch) but there's no reason to let an update clobber
+        // it; keep the flag consistent across both in-flight paths.
+        isActive = true
+        activeTitle = title
         ensureNotificationChannel()
         startForegroundCompat(buildNotification(title, "Saving to device…"))
 
-        recordingJob = scope.launch {
+        val recJob = scope.launch {
             // A multi-GB recording can take minutes; hold the CPU awake (gated
             // by the same DVR keep-awake toggle) so doze doesn't stall the
             // read loop. Generous 6h cap as a leak backstop.
@@ -328,7 +363,7 @@ class LocalRecordingService : Service() {
                 runCatching {
                     localRecordingDao.insert(
                         LocalRecordingEntity(
-                            channelName = currentChannelName.ifBlank { title },
+                            channelName = channelName.ifBlank { title },
                             title = title,
                             filePath = sink.displayPath,
                             startedAt = startedAt,
@@ -344,6 +379,7 @@ class LocalRecordingService : Service() {
             postDownloadResult(title, ok)
             stopSelf()
         }
+        recordingJob = recJob
     }
 
     /**
@@ -518,6 +554,17 @@ class LocalRecordingService : Service() {
             @Suppress("DEPRECATION")
             startForeground(NOTIF_ID, notification)
         }
+    }
+
+    /**
+     * Re-post the ongoing foreground notification for the recording already in
+     * flight. Called when a duplicate ACTION_START / ACTION_DOWNLOAD is rejected,
+     * so that duplicate's startForegroundService() call still gets its required
+     * startForeground() within the FGS window without disturbing the active job.
+     */
+    private fun reaffirmForeground() {
+        ensureNotificationChannel()
+        startForegroundCompat(buildNotification(activeTitle.ifBlank { "Recording" }, "Recording…"))
     }
 
     private fun stopForegroundCompat() {
