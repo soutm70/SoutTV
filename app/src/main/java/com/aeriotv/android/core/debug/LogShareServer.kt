@@ -16,17 +16,25 @@ import kotlin.concurrent.thread
  * LogShareServer (Aerio DeveloperSettingsView.swift): tvOS has no share
  * sheet, and Google TV has the same gap (no useful ACTION_SEND targets).
  *
- * Security posture matches iOS: no auth, binds all interfaces. Mitigations:
- * the server only lives while the share dialog is on screen, the file
- * content is already credential-sanitized by LogSanitizer on the write
- * path, and every path other than /log.txt gets a 404. Each connection is
- * answered once and closed; the socket stays open for repeat downloads
+ * Security posture: binds all interfaces, but the served path carries an
+ * unguessable per-session token (`/log-<random>.txt`) so a passive device on
+ * the LAN cannot blind-fetch the log even during the brief share window -- it
+ * has to know the exact URL, which only the on-screen QR code reveals. Layered
+ * with: the server only lives while the share dialog is on screen, the file
+ * content is already credential-sanitized by LogSanitizer on the write path,
+ * and every other path (including a bare /log.txt) gets a 404. Each connection
+ * is answered once and closed; the socket stays open for repeat downloads
  * until [stop].
  */
 class LogShareServer(private val file: File) {
 
     @Volatile private var serverSocket: ServerSocket? = null
     private var thread: Thread? = null
+
+    // Unguessable per-instance path token (128-bit, SecureRandom-backed via
+    // UUID). The QR-encoded share URL is the only place it appears, so knowing
+    // the IP:port alone is not enough to pull the log.
+    private val servePath: String = "/log-${java.util.UUID.randomUUID().toString().replace("-", "")}.txt"
 
     /** Binds a random high port on all interfaces and returns the share URL, or null on failure. */
     fun start(): String? {
@@ -41,7 +49,7 @@ class LogShareServer(private val file: File) {
                 runCatching { client.use { handle(it) } }
             }
         }
-        return "http://$ip:${ss.localPort}/log.txt"
+        return "http://$ip:${ss.localPort}$servePath"
     }
 
     fun stop() {
@@ -57,7 +65,7 @@ class LogShareServer(private val file: File) {
         val reqLine = socket.getInputStream().bufferedReader().readLine() ?: return
         val path = reqLine.split(" ").getOrNull(1)?.substringBefore('?')
         val out = BufferedOutputStream(socket.getOutputStream())
-        if (path == "/log.txt" && file.exists()) {
+        if (path == servePath && file.exists()) {
             // Snapshot the length up front: the log can keep growing during
             // the transfer while logging is enabled, and serving more bytes
             // than the promised Content-Length hangs browsers.
