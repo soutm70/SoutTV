@@ -350,6 +350,12 @@ class DriveSyncManager @Inject constructor(
     }
 
     private suspend fun buildCredentialsSnapshot(): CredentialsSnapshot {
+        // playlistDao is the EncryptingPlaylistDao decorator, so allOnce() yields
+        // CLEARTEXT credentials (decrypted from their at-rest ciphertext). They
+        // are uploaded to Drive AppData in cleartext by design; see the trust
+        // model on CredentialsSnapshotEntry (audit task #53). The matching pull
+        // path (applyCredentialsSnapshot) writes back through the same decorator,
+        // re-encrypting at rest on the receiving device.
         val rows = playlistDao.allOnce()
         return CredentialsSnapshot(
             envelope = envelope(),

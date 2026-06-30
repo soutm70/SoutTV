@@ -647,6 +647,19 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_CREDS_ENCRYPTED_V1] = value }
     }
 
+    /**
+     * Whether the one-time "your server credentials sync to your Drive in
+     * cleartext" disclosure has been shown (audit task #53). Server credentials
+     * are encrypted at rest on-device, but the Drive AppData snapshot carries
+     * them in cleartext so any of the user's devices can restore them with no
+     * re-typing; this flag gates a single up-front notice of that trust model.
+     */
+    val credentialsSyncDisclosed: Flow<Boolean> =
+        store.data.map { it[KEY_CREDENTIALS_SYNC_DISCLOSED] ?: false }
+    suspend fun setCredentialsSyncDisclosed(value: Boolean) {
+        store.edit { it[KEY_CREDENTIALS_SYNC_DISCLOSED] = value }
+    }
+
     val syncLastPullAt: Flow<Long> = store.data.map { it[KEY_SYNC_LAST_PULL] ?: 0L }
 
     /**
@@ -953,6 +966,7 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_ACCESS_TOKEN = stringPreferencesKey("sync_access_token")
         val KEY_SYNC_TOKEN_EXPIRY = longPreferencesKey("sync_token_expiry")
         val KEY_CREDS_ENCRYPTED_V1 = booleanPreferencesKey("creds_encrypted_v1")
+        val KEY_CREDENTIALS_SYNC_DISCLOSED = booleanPreferencesKey("credentials_sync_disclosed")
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
     }

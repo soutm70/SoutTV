@@ -103,6 +103,13 @@ fun SyncSettingsScreen(
     var pullConfirmOpen by remember { mutableStateOf(false) }
     val configured = remember { SyncConfig.isConfigured() }
 
+    // One-time disclosure that server credentials sync to Drive in cleartext
+    // (audit task #53). initialValue=true keeps the dialog from flashing before
+    // the real flag loads; the flow settles well before the user can toggle.
+    val credsSyncDisclosed by viewModel.credentialsSyncDisclosed
+        .collectAsStateWithLifecycle(initialValue = true)
+    var credsSyncDisclosureOpen by remember { mutableStateOf(false) }
+
     // Silently restore a persisted Drive session on open so the screen shows
     // signed-in (and Push/Pull work) without a manual re-login.
     LaunchedEffect(Unit) { viewModel.restoreSessionIfPossible() }
@@ -209,7 +216,14 @@ fun SyncSettingsScreen(
                         else
                             "Sign in below, then enable sync to push and pull data.",
                         checked = masterEnabled,
-                        onCheckedChange = viewModel::setMasterEnabled,
+                        onCheckedChange = { enabled ->
+                            viewModel.setMasterEnabled(enabled)
+                            // First time sync is turned on, disclose that server
+                            // credentials are part of the Drive snapshot.
+                            if (enabled && !credsSyncDisclosed) {
+                                credsSyncDisclosureOpen = true
+                            }
+                        },
                     )
                 }
             }
@@ -383,6 +397,39 @@ fun SyncSettingsScreen(
             dismissButton = {
                 SettingsDialogTextButton(label = "Cancel", onClick = { pullConfirmOpen = false })
             },
+        )
+    }
+
+    if (credsSyncDisclosureOpen) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                credsSyncDisclosureOpen = false
+                viewModel.markCredentialsSyncDisclosed()
+            },
+            title = { Text("Credentials sync to your Drive") },
+            text = {
+                Text(
+                    "So your servers restore automatically on another device, AerioTV " +
+                        "includes each server's sign-in details (username, password, and API " +
+                        "key) in the Drive backup. These files live in your own Google Drive " +
+                        "app data, are reachable only by AerioTV, and never appear in your " +
+                        "Drive UI, but they are stored without an extra password. On this " +
+                        "device the same credentials are encrypted at rest.\n\n" +
+                        "You can turn this off any time with the Credentials toggle below.",
+                )
+            },
+            confirmButton = {
+                SettingsDialogTextButton(
+                    label = "Got it",
+                    onClick = {
+                        credsSyncDisclosureOpen = false
+                        viewModel.markCredentialsSyncDisclosed()
+                    },
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onBackground,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 

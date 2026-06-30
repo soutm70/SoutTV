@@ -85,6 +85,21 @@ data class PreferencesSnapshot(
     val keys: Map<String, String>,
 )
 
+/**
+ * One server's sign-in details for the Drive credentials snapshot.
+ *
+ * TRUST MODEL (audit task #53, accepted resolution): username/password/apiKey
+ * travel here in CLEARTEXT. On-device the same credentials are encrypted at rest
+ * (CredentialCipher, AndroidKeystore), but the Drive copy is deliberately NOT
+ * encrypted because the device-local Keystore key can't decrypt on a second
+ * device, and zero-touch cross-device restore is a headline feature. The file
+ * lives in the user's own Drive AppData space (`spaces=appDataFolder`): reachable
+ * only by AerioTV via the user's own OAuth, never shown in the Drive UI, TLS in
+ * transit. The user is told this once via the Sync-settings disclosure
+ * (AppPreferences.credentialsSyncDisclosed) and can disable the Credentials sync
+ * category. A future passphrase-derived key would be the way to encrypt this
+ * cross-device without losing zero-touch restore.
+ */
 @Serializable
 data class CredentialsSnapshotEntry(
     val playlistId: String,

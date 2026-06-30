@@ -38,6 +38,16 @@ class SyncSettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Gates the one-time disclosure that server credentials sync to the user's
+     * Drive in cleartext (audit task #53). The screen shows the notice the first
+     * time sync is enabled, then calls [markCredentialsSyncDisclosed].
+     */
+    val credentialsSyncDisclosed: Flow<Boolean> = prefs.credentialsSyncDisclosed
+    fun markCredentialsSyncDisclosed() {
+        viewModelScope.launch { prefs.setCredentialsSyncDisclosed(true) }
+    }
+
     val accountEmail: Flow<String> = prefs.syncAccountEmail
     val lastPushAt: Flow<Long> = prefs.syncLastPushAt
     val lastPullAt: Flow<Long> = prefs.syncLastPullAt
