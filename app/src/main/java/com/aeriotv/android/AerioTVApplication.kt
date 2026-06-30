@@ -2,6 +2,7 @@ package com.aeriotv.android
 
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
+import androidx.room.withTransaction
 import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.PlatformContext
@@ -11,6 +12,8 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
+import com.aeriotv.android.core.data.db.AerioDatabase
+import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.repository.PlaylistRepository
 import com.aeriotv.android.core.data.sync.PlaylistRefreshWorker
 import com.aeriotv.android.core.debug.DebugLogger
@@ -59,6 +62,8 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
     @Inject lateinit var memoryPressureBus: MemoryPressureBus
     @Inject lateinit var activeCredentials: ActivePlaylistCredentials
     @Inject lateinit var playlistRepository: PlaylistRepository
+    @Inject lateinit var playlistDao: PlaylistDao
+    @Inject lateinit var aerioDatabase: AerioDatabase
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -176,6 +181,41 @@ class AerioTVApplication : Application(), Configuration.Provider, SingletonImage
         // .activePlaylist() also publishes; this is the bootstrap nudge.
         appScope.launch {
             runCatching { playlistRepository.activePlaylist() }
+        }
+        // Audit task #53: one-time pass that re-encrypts existing plaintext
+        // playlist credentials at rest. New writes already encrypt via the
+        // EncryptingPlaylistDao decorator; this upgrades rows saved by older
+        // builds. Reading through the decorator yields cleartext, the targeted
+        // updateCredentials() re-encrypts only the three credential columns.
+        //
+        // Wrapped in a single Room transaction so the read+writes are atomic:
+        // a concurrent cold-start write (warmup refreshing apiKey on 401,
+        // refresh() stamping lastRefreshedAt/channelCount) can neither be
+        // clobbered by this pass nor interleave with it, and Room coalesces the
+        // invalidations into one Flow emission. Idempotent and flag-guarded, so
+        // a fresh install (no rows) just sets the flag and a kill mid-pass
+        // re-runs harmlessly next launch. Rows with no credentials are skipped.
+        appScope.launch {
+            runCatching {
+                if (!appPreferences.credentialsEncryptedOnce()) {
+                    aerioDatabase.withTransaction {
+                        playlistDao.allOnce().forEach { row ->
+                            if (!row.apiKey.isNullOrBlank() ||
+                                !row.username.isNullOrBlank() ||
+                                !row.password.isNullOrBlank()
+                            ) {
+                                playlistDao.updateCredentials(
+                                    row.id,
+                                    row.apiKey,
+                                    row.username,
+                                    row.password,
+                                )
+                            }
+                        }
+                    }
+                    appPreferences.setCredentialsEncrypted(true)
+                }
+            }
         }
     }
 

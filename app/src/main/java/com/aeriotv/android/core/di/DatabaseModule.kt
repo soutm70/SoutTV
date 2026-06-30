@@ -6,12 +6,14 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.aeriotv.android.core.data.db.AerioDatabase
 import com.aeriotv.android.core.data.db.dao.ChannelSnapshotDao
+import com.aeriotv.android.core.data.db.dao.EncryptingPlaylistDao
 import com.aeriotv.android.core.data.db.dao.EpgProgrammeDao
 import com.aeriotv.android.core.data.db.dao.FavoriteChannelDao
 import com.aeriotv.android.core.data.db.dao.LocalRecordingDao
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.dao.ReminderDao
 import com.aeriotv.android.core.data.db.dao.WatchProgressDao
+import com.aeriotv.android.core.security.CredentialCipher
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -191,8 +193,16 @@ object DatabaseModule {
             .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
             .build()
 
+    /**
+     * Audit task #53: every consumer gets the encrypting decorator, never the
+     * raw Room DAO. apiKey/username/password are encrypted at rest (Keystore
+     * AES-GCM) and decrypted transparently on read, so call sites are unchanged.
+     */
     @Provides
-    fun providePlaylistDao(db: AerioDatabase): PlaylistDao = db.playlistDao()
+    fun providePlaylistDao(
+        db: AerioDatabase,
+        cipher: CredentialCipher,
+    ): PlaylistDao = EncryptingPlaylistDao(db.playlistDao(), cipher)
 
     @Provides
     fun provideWatchProgressDao(db: AerioDatabase): WatchProgressDao = db.watchProgressDao()

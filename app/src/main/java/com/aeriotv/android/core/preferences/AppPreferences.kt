@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.category.CustomCategoryEntry
 import com.aeriotv.android.core.category.ProgramCategory
+import com.aeriotv.android.core.security.CredentialCipher
 import com.aeriotv.android.core.sync.SyncCategory
 import com.aeriotv.android.ui.theme.AppTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -41,6 +42,7 @@ const val GUIDE_SCALE_MAX = 2.0f
 @Singleton
 class AppPreferences @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val cipher: CredentialCipher,
 ) {
     private val store get() = context.appDataStore
 
@@ -208,13 +210,17 @@ class AppPreferences @Inject constructor(
         store.edit { it[KEY_AUDIO_PASSTHROUGH] = value }
     }
 
-    /** The user's TMDB v3 API key OR v4 read-access token. Empty = unset. */
-    val tmdbApiKey: Flow<String> = store.data.map { it[KEY_TMDB_API_KEY] ?: "" }
+    /**
+     * The user's TMDB v3 API key OR v4 read-access token. Empty = unset.
+     * Encrypted at rest (audit task #53): stored ciphertext, decrypted on read.
+     * Legacy plaintext values written by older builds pass through unchanged.
+     */
+    val tmdbApiKey: Flow<String> = store.data.map { cipher.decrypt(it[KEY_TMDB_API_KEY]) ?: "" }
     suspend fun setTmdbApiKey(value: String) {
         store.edit { prefs ->
             val trimmed = value.trim()
             if (trimmed.isBlank()) prefs.remove(KEY_TMDB_API_KEY)
-            else prefs[KEY_TMDB_API_KEY] = trimmed
+            else prefs[KEY_TMDB_API_KEY] = cipher.encrypt(trimmed) ?: trimmed
         }
     }
 
@@ -591,8 +597,11 @@ class AppPreferences @Inject constructor(
      * should refresh rather than trust the cached value.
      */
     suspend fun saveSyncToken(token: String, expiryMs: Long) {
+        // Encrypted at rest (audit task #53). Device-local OAuth token, never
+        // part of the Drive snapshot, so plain Keystore encryption is enough.
+        val stored = cipher.encrypt(token) ?: token
         store.edit { prefs ->
-            prefs[KEY_SYNC_ACCESS_TOKEN] = token
+            prefs[KEY_SYNC_ACCESS_TOKEN] = stored
             prefs[KEY_SYNC_TOKEN_EXPIRY] = expiryMs
         }
     }
@@ -600,7 +609,10 @@ class AppPreferences @Inject constructor(
     /** Saved (token, expiryMs) pair, or null when none is stored. */
     suspend fun syncTokenOnce(): Pair<String, Long>? {
         val prefs = store.data.first()
-        val token = prefs[KEY_SYNC_ACCESS_TOKEN]?.takeIf { it.isNotBlank() } ?: return null
+        val raw = prefs[KEY_SYNC_ACCESS_TOKEN]?.takeIf { it.isNotBlank() } ?: return null
+        // decrypt() returns the legacy plaintext unchanged, the real token for
+        // ciphertext, or null if the Keystore key was lost -> treat as signed out.
+        val token = cipher.decrypt(raw)?.takeIf { it.isNotBlank() } ?: return null
         val expiry = prefs[KEY_SYNC_TOKEN_EXPIRY] ?: 0L
         return token to expiry
     }
@@ -621,6 +633,18 @@ class AppPreferences @Inject constructor(
     val syncLastPushAt: Flow<Long> = store.data.map { it[KEY_SYNC_LAST_PUSH] ?: 0L }
     suspend fun setSyncLastPushAt(value: Long) {
         store.edit { it[KEY_SYNC_LAST_PUSH] = value }
+    }
+
+    /**
+     * One-time guard for the post-upgrade pass that re-encrypts existing
+     * plaintext playlist credentials at rest (audit task #53). Idempotent: the
+     * pass is safe to re-run if the flag never persists (decrypt -> cleartext ->
+     * re-encrypt), this just avoids the redundant write on every cold start.
+     */
+    suspend fun credentialsEncryptedOnce(): Boolean =
+        store.data.first()[KEY_CREDS_ENCRYPTED_V1] ?: false
+    suspend fun setCredentialsEncrypted(value: Boolean) {
+        store.edit { it[KEY_CREDS_ENCRYPTED_V1] = value }
     }
 
     val syncLastPullAt: Flow<Long> = store.data.map { it[KEY_SYNC_LAST_PULL] ?: 0L }
@@ -659,7 +683,10 @@ class AppPreferences @Inject constructor(
         // (their own Drive appData) so it carries across their devices, matching
         // how playlist credentials sync.
         data[KEY_PROGRAM_POSTERS_TMDB_ENABLED]?.let { out["programPostersTmdbEnabled"] = it.toString() }
-        data[KEY_TMDB_API_KEY]?.let { out["tmdbApiKey"] = it }
+        // Stored encrypted; the Drive snapshot carries the cleartext key so the
+        // user's other devices can use it (decrypt here, the receiver re-encrypts
+        // in applySyncedPreferences). A corrupt/undecryptable value is omitted.
+        data[KEY_TMDB_API_KEY]?.let { cipher.decrypt(it)?.let { clear -> out["tmdbApiKey"] = clear } }
         data[KEY_CATEGORY_MASTER_ENABLE]?.let { out["enableCategoryColors"] = it.toString() }
         data[KEY_CATEGORY_CUSTOM_JSON]?.let { out["customCategoryColors.v1"] = it }
         // Audit task #52: broaden Drive sync to match iOS coverage. iOS
@@ -690,7 +717,8 @@ class AppPreferences @Inject constructor(
             keys["appleTVChannelFlip"]?.toBooleanStrictOrNull()?.let { prefs[KEY_APPLE_TV_CHANNEL_FLIP] = it }
             keys["autoResumeLastChannel"]?.toBooleanStrictOrNull()?.let { prefs[KEY_AUTO_RESUME_LAST_CHANNEL] = it }
             keys["programPostersTmdbEnabled"]?.toBooleanStrictOrNull()?.let { prefs[KEY_PROGRAM_POSTERS_TMDB_ENABLED] = it }
-            keys["tmdbApiKey"]?.let { prefs[KEY_TMDB_API_KEY] = it }
+            // Re-encrypt the incoming cleartext key for storage at rest.
+            keys["tmdbApiKey"]?.let { prefs[KEY_TMDB_API_KEY] = cipher.encrypt(it) ?: it }
             keys["enableCategoryColors"]?.toBooleanStrictOrNull()?.let { prefs[KEY_CATEGORY_MASTER_ENABLE] = it }
             keys["customCategoryColors.v1"]?.let { prefs[KEY_CATEGORY_CUSTOM_JSON] = it }
             // Audit task #52: receive the broadened keys.
@@ -924,6 +952,7 @@ class AppPreferences @Inject constructor(
         val KEY_SYNC_LAST_PULL = longPreferencesKey("sync_last_pull_at")
         val KEY_SYNC_ACCESS_TOKEN = stringPreferencesKey("sync_access_token")
         val KEY_SYNC_TOKEN_EXPIRY = longPreferencesKey("sync_token_expiry")
+        val KEY_CREDS_ENCRYPTED_V1 = booleanPreferencesKey("creds_encrypted_v1")
         val KEY_BG_REFRESH_ENABLED = booleanPreferencesKey("background_refresh_enabled")
         val KEY_BG_REFRESH_INTERVAL_MINS = intPreferencesKey("background_refresh_interval_mins")
     }

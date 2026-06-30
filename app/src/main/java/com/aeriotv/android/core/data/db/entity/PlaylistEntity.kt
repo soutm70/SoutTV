@@ -36,11 +36,11 @@ data class PlaylistEntity(
     val epgUrl: String? = null,
     /** Source type as enum NAME (`M3uUrl`, `DispatcharrApiKey`, etc.). */
     val sourceType: String = "M3uUrl",
-    /** Dispatcharr admin API key. Used as `X-API-Key` header. Sensitive — see TODO. */
+    /** Dispatcharr admin API key. Used as `X-API-Key` header. Encrypted at rest (see note below). */
     val apiKey: String? = null,
-    /** Username for Dispatcharr (user/pass) and Xtream Codes flows. */
+    /** Username for Dispatcharr (user/pass) and Xtream Codes flows. Encrypted at rest. */
     val username: String? = null,
-    /** Password for Dispatcharr (user/pass) and Xtream Codes. Sensitive — see TODO. */
+    /** Password for Dispatcharr (user/pass) and Xtream Codes. Encrypted at rest (see note below). */
     val password: String? = null,
     val channelCount: Int = 0,
     val lastRefreshedAt: Long? = null,
@@ -121,9 +121,12 @@ data class PlaylistEntity(
     @ColumnInfo(defaultValue = "")
     val dispatcharrAccountProfileIds: String = "",
 )
-// TODO Phase 9 (Block Store): move apiKey + password out of Room into Google Play
-// Block Store / EncryptedSharedPreferences. Room cleartext storage is acceptable for
-// pre-1.0 dev iteration but ships of any real build need encrypted credential storage.
+// Credential columns (apiKey, username, password) are encrypted at rest via
+// CredentialCipher (AndroidKeystore AES-256-GCM), applied transparently by the
+// EncryptingPlaylistDao decorator that every consumer is wired to (audit task
+// #53). Stored values are ciphertext; reads return cleartext, so these columns
+// stay `String?` and call sites are unchanged. A one-time pass in
+// AerioTVApplication re-encrypts rows written by older (plaintext) builds.
 
 /**
  * True when this playlist is a Dispatcharr admin account (user_level >= 10),

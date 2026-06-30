@@ -82,6 +82,17 @@ interface PlaylistDao {
     @Update
     suspend fun update(playlist: PlaylistEntity)
 
+    /**
+     * Targeted write of ONLY the three credential columns by id. Used by the
+     * one-time at-rest re-encryption pass so it can re-encrypt credentials
+     * without a full-row @Update that would clobber a concurrent targeted write
+     * (displayOrder, lastRefreshedAt, channelCount, a 401-rebootstrapped apiKey)
+     * landing in the same window. The EncryptingPlaylistDao override encrypts
+     * these three values before they reach the column.
+     */
+    @Query("UPDATE playlists SET apiKey = :apiKey, username = :username, password = :password WHERE id = :id")
+    suspend fun updateCredentials(id: String, apiKey: String?, username: String?, password: String?)
+
     @Delete
     suspend fun delete(playlist: PlaylistEntity)
 
