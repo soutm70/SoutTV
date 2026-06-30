@@ -138,6 +138,29 @@ class AerioMediaPlaybackService : MediaLibraryService() {
      */
     private inner class LibraryCallback : MediaLibrarySession.Callback {
 
+        // Only the app itself, system-level controllers (Auto, Assistant,
+        // Bluetooth, media resumption -- all have MEDIA_CONTENT_CONTROL and
+        // show as isTrusted), and known car packages may drive playback.
+        // Any other third-party app is rejected to prevent player-state hijack.
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            val pkg = controller.packageName
+            val isCar = pkg == "com.google.android.projection.gearhead" ||
+                pkg == "com.google.android.apps.automotive.templates.host" ||
+                pkg.startsWith("com.google.android.gms.car") ||
+                packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)
+            return if (pkg == packageName || controller.isTrusted || isCar) {
+                MediaSession.ConnectionResult.accept(
+                    MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS,
+                    MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS,
+                )
+            } else {
+                MediaSession.ConnectionResult.reject()
+            }
+        }
+
         override fun onGetLibraryRoot(
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,

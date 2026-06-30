@@ -37,7 +37,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -143,6 +142,27 @@ class AerioExoPlayerHolder @Inject constructor(
     // advancing. We poll currentPosition; if it stops advancing for too long
     // while we expect playback, re-prime the SAME url -- the Media3 analog of
     // mpv `loadfile <url> replace`.
+    // Eagerly-cached DataStore prefs for the hot player path.
+    // Collecting them once at singleton creation eliminates every runBlocking
+    // on Main that would otherwise block the channel-tap and player-build paths.
+    private val prefScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var cachedAudioPassthrough: Boolean = false
+    @Volatile private var cachedBufferFloorMs: Int = com.aeriotv.android.feature.settings.bufferMillisFor("default")
+
+    init {
+        prefScope.launch {
+            appPreferences.audioPassthroughEnabled.collect { cachedAudioPassthrough = it }
+        }
+        prefScope.launch {
+            appPreferences.streamBufferSize.collect { size ->
+                cachedBufferFloorMs = com.aeriotv.android.feature.settings.bufferMillisFor(size)
+            }
+        }
+        prefScope.launch {
+            appPreferences.autoRecoverFrozenStreams.collect { watchdogReloadEnabled = it }
+        }
+    }
+
     private val watchdogScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private var watchdogJob: Job? = null
     private var lastPositionAdvanceAtMs = 0L
@@ -367,20 +387,11 @@ class AerioExoPlayerHolder @Inject constructor(
         context: Context,
     ): ExoPlayer {
         appContext = context.applicationContext
-        val audioPassthrough = runBlocking { appPreferences.audioPassthroughEnabled.first() } || audioSinkFallback
-        // Network > Buffer Size: the live LoadControl is fixed at build time, so
-        // read the pref here (like audioPassthrough) and rebuild the singleton
-        // player when it changes. Mirrors the Stream Buffer cushion on iOS
-        // (read once per tune). minBufferMs floor = the user's chosen caching ms
-        // with the live default floor; small=300 lowers latency, xlarge=8000
-        // smooths jitter on poor networks.
-        val bufferFloorMs = runBlocking {
-            com.aeriotv.android.feature.settings.bufferMillisFor(
-                appPreferences.streamBufferSize.first()
-            )
-        }
-        // Cache the frozen-stream kill-switch for the watchdog loop.
-        watchdogReloadEnabled = runBlocking { appPreferences.autoRecoverFrozenStreamsOnce() }
+        val audioPassthrough = cachedAudioPassthrough || audioSinkFallback
+        // Buffer floor comes from the pref-cache updated by the collector in init{}.
+        val bufferFloorMs = cachedBufferFloorMs
+        // watchdogReloadEnabled is kept current by the autoRecoverFrozenStreams
+        // collector launched in init{}; no blocking read needed here.
         player?.let { existing ->
             if (builtWithPassthrough == audioPassthrough && builtWithBufferFloorMs == bufferFloorMs) return existing
             Log.i(TAG, "Player build pref changed (passthrough/buffer); rebuilding player")
@@ -612,10 +623,8 @@ class AerioExoPlayerHolder @Inject constructor(
         lastPlaySubtitle = subtitle
         lastPlayArtworkUri = artworkUri
         resetWatchdogStateForNewStream()
-        // iOS #37: re-read the kill-switch per tune so toggling it applies to
-        // the next channel even within a live session (channel-flip reuses the
-        // singleton player and skips acquireOrCreate).
-        watchdogReloadEnabled = runBlocking { appPreferences.autoRecoverFrozenStreamsOnce() }
+        // watchdogReloadEnabled is kept current by the collector in init{}; the
+        // cached value reflects the latest pref without blocking the main thread.
         // Foreground playback wants video; re-enable it in case an Android Auto
         // session previously dropped the video track on this shared player.
         setVideoTrackEnabled(true)

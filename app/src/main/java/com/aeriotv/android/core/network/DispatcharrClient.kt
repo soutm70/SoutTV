@@ -761,6 +761,7 @@ class DispatcharrClient @Inject constructor() {
             throw DispatcharrError.Transport("VOD movies fetch failed: HTTP ${response.status.value}")
         }
         val raw: JsonElement = response.body()
+        val trustedHost = runCatching { java.net.URI(url).host }.getOrNull()
         return when {
             raw is JsonArray -> VODMoviesPage(
                 count = raw.size,
@@ -772,7 +773,14 @@ class DispatcharrClient @Inject constructor() {
                     json.decodeFromJsonElement(serializer<DispatcharrVODMovie>(), it)
                 } ?: emptyList()
                 val count = (raw["count"]?.toString()?.toIntOrNull()) ?: results.size
-                val next = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                val rawNext = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                // Pin the next-page cursor to the same origin to prevent a
+                // compromised server from redirecting to an attacker host and
+                // harvesting the API key on the follow-up fetch.
+                val next = rawNext?.takeIf { cursor ->
+                    val cursorHost = runCatching { java.net.URI(cursor).host }.getOrNull()
+                    cursorHost != null && trustedHost != null && cursorHost.equals(trustedHost, ignoreCase = true)
+                }
                 VODMoviesPage(count = count, next = next, results = results)
             }
             else -> throw IllegalStateException("Unexpected /api/vod/movies/ shape: ${raw::class.simpleName}")
@@ -795,6 +803,7 @@ class DispatcharrClient @Inject constructor() {
             throw DispatcharrError.Transport("VOD series fetch failed: HTTP ${response.status.value}")
         }
         val raw: JsonElement = response.body()
+        val trustedHost = runCatching { java.net.URI(url).host }.getOrNull()
         return when {
             raw is JsonArray -> VODSeriesPage(
                 count = raw.size,
@@ -806,7 +815,11 @@ class DispatcharrClient @Inject constructor() {
                     json.decodeFromJsonElement(serializer<DispatcharrVODSeries>(), it)
                 } ?: emptyList()
                 val count = (raw["count"]?.toString()?.toIntOrNull()) ?: results.size
-                val next = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                val rawNext = raw["next"]?.toString()?.trim('"')?.takeIf { it.isNotBlank() && it != "null" }
+                val next = rawNext?.takeIf { cursor ->
+                    val cursorHost = runCatching { java.net.URI(cursor).host }.getOrNull()
+                    cursorHost != null && trustedHost != null && cursorHost.equals(trustedHost, ignoreCase = true)
+                }
                 VODSeriesPage(count = count, next = next, results = results)
             }
             else -> throw IllegalStateException("Unexpected /api/vod/series/ shape: ${raw::class.simpleName}")

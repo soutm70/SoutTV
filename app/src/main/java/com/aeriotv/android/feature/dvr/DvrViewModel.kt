@@ -772,6 +772,14 @@ private fun resolveRecordingUrl(fileUrl: String?, baseUrl: String): String? {
     if (trimmed.startsWith("http://", ignoreCase = true) ||
         trimmed.startsWith("https://", ignoreCase = true)
     ) {
+        // Reject cross-origin absolute URLs: a server-supplied file_url pointing
+        // at a different host would send the API key to an attacker on redirect.
+        val resolvedHost = runCatching { java.net.URI(trimmed).host }.getOrNull()
+        val baseHost = runCatching { java.net.URI(baseUrl).host }.getOrNull()
+        if (resolvedHost == null || baseHost == null || !resolvedHost.equals(baseHost, ignoreCase = true)) {
+            android.util.Log.w("DvrViewModel", "resolveRecordingUrl: rejected cross-origin file_url (host mismatch)")
+            return null
+        }
         return trimmed
     }
     val base = baseUrl.trimEnd('/')

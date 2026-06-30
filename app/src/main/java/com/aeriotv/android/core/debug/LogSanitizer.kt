@@ -15,6 +15,8 @@ package com.aeriotv.android.core.debug
  * 3. Bearer/ApiKey/Token prefixes inside free-form text.
  * 4. JWTs (3-segment base64url tokens beginning with `eyJ`).
  * 5. Dispatcharr-shaped API key form-encoded body (`apikey=...`).
+ * 6. JSON body fields whose name implies a secret
+ *    (`"access":"..."`, `"password":"..."`, etc.).
  *
  * The set is intentionally case-insensitive. The replacement is `***` so
  * the structure of the line is preserved (a downstream reader still sees
@@ -56,16 +58,23 @@ internal object LogSanitizer {
         "\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b",
     )
 
+    // JSON response body field: "access":"...", "password":"...", etc.
+    // Keeps the field name visible; replaces the value with ***.
+    private val JSON_CREDENTIAL = Regex(
+        """(?i)"(access|refresh|token|api[_-]?key|apikey|password|secret|auth)"\s*:\s*"([^"]+)"""",
+    )
+
     fun redact(message: String): String {
         if (message.isEmpty()) return message
         var out = message
         // Order matters: userinfo first (scheme://user:pass@ in raw M3U URLs),
         // then header form (keeps the header name visible), then JWT (longest
         // pattern, prevents query-param regex from chopping a JWT mid-base64),
-        // then prefix forms, then query params last.
+        // then JSON body fields, then prefix forms, then query params last.
         out = URL_USERINFO.replace(out, "$1***@")
         out = HEADER_LINE.replace(out) { mr -> mr.groupValues[1] + "***" }
         out = JWT.replace(out, "eyJ***")
+        out = JSON_CREDENTIAL.replace(out) { mr -> "\"${mr.groupValues[1]}\":\"***\"" }
         out = INLINE_PREFIX.replace(out) { mr -> "${mr.groupValues[1]} ***" }
         out = QUERY_PARAM.replace(out) { mr -> mr.groupValues[1] + "***" }
         return out

@@ -85,6 +85,20 @@ class LocalRecordingService : Service() {
             .followSslRedirects(true)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
+            // OkHttp strips Authorization on cross-host redirects by default,
+            // but NOT custom headers. Strip X-API-Key too so a 302 to an
+            // attacker host cannot harvest the credential.
+            .addNetworkInterceptor { chain ->
+                val req = chain.request()
+                val trustedHost = req.tag(String::class.java)
+                val modifiedReq = if (trustedHost != null && req.url.host != trustedHost) {
+                    req.newBuilder()
+                        .removeHeader("X-API-Key")
+                        .removeHeader("Authorization")
+                        .build()
+                } else req
+                chain.proceed(modifiedReq)
+            }
             .build()
     }
 
@@ -163,6 +177,9 @@ class LocalRecordingService : Service() {
                     .url(streamUrl)
                     .header("X-API-Key", apiKey)
                     .header("Authorization", "ApiKey $apiKey")
+                    // Tag the trusted host so the network interceptor can strip
+                    // credentials from any cross-host redirect that follows.
+                    .tag(String::class.java, runCatching { java.net.URI(streamUrl).host }.getOrNull() ?: "")
                     .build()
                 okHttp.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
@@ -275,6 +292,7 @@ class LocalRecordingService : Service() {
                     .url(fileUrl)
                     .header("X-API-Key", apiKey)
                     .header("Authorization", "ApiKey $apiKey")
+                    .tag(String::class.java, runCatching { java.net.URI(fileUrl).host }.getOrNull() ?: "")
                     .build()
                 okHttp.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
