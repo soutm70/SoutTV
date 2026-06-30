@@ -122,6 +122,9 @@ fun BoxScope.PersistentExoWindow(
 
     Box(modifier = containerModifier) {
         key(surfaceEpoch) {
+        // Survives recompositions within this epoch; disposed (and detached via
+        // onRelease) when surfaceEpoch flips and the SurfaceView is recreated.
+        val fpsMatch = remember { FrameRateMatchAttachment() }
         AndroidView(
             factory = { ctx ->
                 Log.i(TAG, "PersistentExoWindow factory: building PlayerView + binding player")
@@ -181,7 +184,12 @@ fun BoxScope.PersistentExoWindow(
                             // to it -- survive the transition untouched.
                             val dm = ctx.resources.displayMetrics
                             sv.holder.setFixedSize(dm.widthPixels, dm.heightPixels)
-                            DisplayFrameRateMatcher.attach(player, sv)
+                            // Retain the handle + player + SurfaceView so the
+                            // matcher can be re-attached after a holder rebuild
+                            // (update block) and detached on teardown (onRelease).
+                            fpsMatch.handle = DisplayFrameRateMatcher.attach(player, sv)
+                            fpsMatch.player = player
+                            fpsMatch.surfaceView = sv
                         }
                     }
                 }
@@ -204,6 +212,19 @@ fun BoxScope.PersistentExoWindow(
                     Log.i(TAG, "PersistentExoWindow: rebinding PlayerView to recreated player")
                     view.player = current
                 }
+                // Re-attach the seamless frame-rate matcher to the rebuilt
+                // player. The factory attached only the original instance; a
+                // holder rebuild (black-screen recreate / passthrough rebuild)
+                // otherwise leaves the matcher bound to a destroyed player and
+                // UHD judder returns for the rest of the session. TV-only:
+                // surfaceView is null off-TV, so this is a no-op there. The
+                // player-identity guard keeps it from firing on every recompose.
+                val matchSv = fpsMatch.surfaceView
+                if (matchSv != null && current != null && current !== fpsMatch.player) {
+                    DisplayFrameRateMatcher.detach(fpsMatch.player, fpsMatch.handle, matchSv)
+                    fpsMatch.handle = DisplayFrameRateMatcher.attach(current, matchSv)
+                    fpsMatch.player = current
+                }
             },
             modifier = Modifier.fillMaxSize(),
             // onRelease only runs on a surfaceEpoch swap (the view otherwise
@@ -211,6 +232,15 @@ fun BoxScope.PersistentExoWindow(
             // view; Media3 ignores the clear when the player's active surface
             // already belongs to the replacement view, so ordering is safe.
             onRelease = { view ->
+                // Detach the frame-rate matcher (clear the listener + reset the
+                // Surface's frame-rate preference to the panel default) before
+                // the SurfaceView is destroyed on this epoch swap.
+                fpsMatch.surfaceView?.let { sv ->
+                    DisplayFrameRateMatcher.detach(fpsMatch.player, fpsMatch.handle, sv)
+                }
+                fpsMatch.player = null
+                fpsMatch.handle = null
+                fpsMatch.surfaceView = null
                 view.player = null
             },
         )
@@ -219,3 +249,18 @@ fun BoxScope.PersistentExoWindow(
 }
 
 private const val TAG = "PersistentExoWindow"
+
+/**
+ * Retains the [DisplayFrameRateMatcher] attachment so it can be re-attached
+ * after a holder player rebuild and detached when the SurfaceView is torn down.
+ * The factory previously discarded the attach() handle and detach() was never
+ * called, so seamless frame-rate matching was lost for the rest of the session
+ * after any black-screen / passthrough rebuild, and the Surface's frame-rate
+ * preference was never reset on an epoch swap. TV-only: [surfaceView] is set
+ * only inside the TV gate, so the re-attach / detach paths are no-ops elsewhere.
+ */
+private class FrameRateMatchAttachment {
+    var player: androidx.media3.exoplayer.ExoPlayer? = null
+    var handle: Any? = null
+    var surfaceView: android.view.SurfaceView? = null
+}
