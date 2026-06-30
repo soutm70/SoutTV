@@ -209,11 +209,21 @@ fun PlaylistDetailScreen(
                                 iconTint = MaterialTheme.colorScheme.primary,
                             )
                         }
+                        // Reflect a real signal -- whether the source has ever
+                        // loaded channels -- instead of asserting "Verified"
+                        // unconditionally (which read as connected even for a
+                        // source that never reached the server). The "Last
+                        // Connected" row below dates the last successful load.
+                        val hasConnected = playlist.channelCount > 0
                         DetailRow(
                             label = "Status",
-                            value = "Verified",
-                            valueColor = MaterialTheme.colorScheme.primary,
-                            icon = Icons.Filled.CheckCircle,
+                            value = if (hasConnected) "Connected" else "Not connected yet",
+                            valueColor = if (hasConnected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            icon = Icons.Filled.CheckCircle.takeIf { hasConnected },
                         )
                         playlist.lastRefreshedAt?.let { ts ->
                             DetailRow(
