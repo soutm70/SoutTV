@@ -334,6 +334,9 @@ class LocalRecordingService : Service() {
                         throw IllegalStateException("HTTP ${response.code} fetching recording file")
                     }
                     val body = response.body ?: throw IllegalStateException("empty body")
+                    // -1 when the server didn't declare a length (chunked); we
+                    // can only verify completeness when it did.
+                    val expectedLen = body.contentLength()
                     body.byteStream().use { input ->
                         sink.output.use { output ->
                             val buffer = ByteArray(64 * 1024)
@@ -346,9 +349,19 @@ class LocalRecordingService : Service() {
                             output.flush()
                         }
                     }
+                    // A truncated transfer (server closed the socket early)
+                    // surfaces as a short read that looks like a clean EOF. When
+                    // the response declared a Content-Length, a short file means
+                    // the download is incomplete -- mark it failed so a partial,
+                    // unplayable recording isn't finalized + persisted as
+                    // 'completed' below.
+                    status = when {
+                        !isActive -> "stopped"
+                        expectedLen >= 0L && bytesWritten < expectedLen -> "failed"
+                        else -> "completed"
+                    }
                 }
-                status = if (isActive) "completed" else "stopped"
-                Log.i(TAG, "Save to Device $status: $bytesWritten bytes")
+                Log.i(TAG, "Save to Device $status: $bytesWritten bytes (declared len check applied)")
             }.onFailure { t ->
                 Log.w(TAG, "Save to Device aborted", t)
             }
