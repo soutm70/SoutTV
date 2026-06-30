@@ -3,6 +3,8 @@ package com.aeriotv.android.core.sync
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import androidx.room.withTransaction
+import com.aeriotv.android.core.data.db.AerioDatabase
 import com.aeriotv.android.core.data.db.dao.PlaylistDao
 import com.aeriotv.android.core.data.db.dao.ReminderDao
 import com.aeriotv.android.core.data.db.dao.WatchProgressDao
@@ -36,6 +38,7 @@ import java.util.concurrent.TimeUnit
 @Singleton
 class DriveSyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: AerioDatabase,
     private val playlistDao: PlaylistDao,
     private val watchProgressDao: WatchProgressDao,
     private val reminderDao: ReminderDao,
@@ -373,7 +376,7 @@ class DriveSyncManager @Inject constructor(
 
     // ── Snapshot appliers ─────────────────────────────────────────────────
 
-    private suspend fun applyPlaylistsSnapshot(snapshot: PlaylistsSnapshot) {
+    private suspend fun applyPlaylistsSnapshot(snapshot: PlaylistsSnapshot) = database.withTransaction {
         val existing = playlistDao.allOnce().associateBy { it.id }
         snapshot.playlists.forEach { entry ->
             val current = existing[entry.id]
@@ -385,7 +388,10 @@ class DriveSyncManager @Inject constructor(
                 // Old snapshots have no lanUrlString; keep whatever this
                 // device already has instead of wiping it.
                 lanUrlString = entry.lanUrlString ?: current?.lanUrlString,
-                isActive = entry.id == snapshot.active,
+                // isActive is reconciled below so EXACTLY one row ends up active;
+                // don't trust the per-row flag here. Keep the existing flag for
+                // now (overwritten by switchActive).
+                isActive = current?.isActive ?: false,
                 // Adopt the synced child-safety account-profile filter. Empty
                 // from an older sender keeps this device's own value rather than
                 // wiping a good fail-closed snapshot; the next live load
@@ -395,6 +401,21 @@ class DriveSyncManager @Inject constructor(
                         ?: current?.dispatcharrAccountProfileIds ?: "",
             )
             playlistDao.upsert(merged)
+        }
+        // Enforce the single-active-row invariant that bootstrap relies on.
+        // The old code set isActive per row from snapshot.active, which left the
+        // app with TWO active rows when a local row outside the snapshot stayed
+        // active, or ZERO active when snapshot.active was missing/stale (deleted
+        // playlist). switchActive() deactivates every row and activates exactly
+        // one in a single transaction. Prefer the synced active id; fall back to
+        // the first row by display order so there is always exactly one active
+        // when any playlist exists.
+        val all = playlistDao.allOnce()
+        if (all.isNotEmpty()) {
+            val targetId = all.firstOrNull { it.id == snapshot.active }?.id
+                ?: all.minByOrNull { it.displayOrder }?.id
+                ?: all.first().id
+            playlistDao.switchActive(targetId)
         }
     }
 
