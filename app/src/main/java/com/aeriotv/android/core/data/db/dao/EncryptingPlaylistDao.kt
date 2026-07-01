@@ -2,7 +2,9 @@ package com.aeriotv.android.core.data.db.dao
 
 import com.aeriotv.android.core.data.db.entity.PlaylistEntity
 import com.aeriotv.android.core.security.CredentialCipher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
 /**
@@ -43,8 +45,15 @@ class EncryptingPlaylistDao(
 
     // --- reads: decrypt on the way out ---
 
+    // flowOn(Default): the credential decrypt is AES-GCM via the AndroidKeystore
+    // (a TEE round-trip, not free). These Flows are collected on the main thread
+    // (Compose), so without flowOn every playlists-table change would run the
+    // decrypt on the main thread and risk a dropped-frame hitch. flowOn shifts
+    // the upstream query + decrypt to a background dispatcher; the collector
+    // still receives on main.
     override fun observeActive(): Flow<List<PlaylistEntity>> =
         delegate.observeActive().map { list -> list.map { it.decrypted() } }
+            .flowOn(Dispatchers.Default)
 
     override suspend fun firstActive(): PlaylistEntity? = delegate.firstActive()?.decrypted()
 
@@ -54,6 +63,7 @@ class EncryptingPlaylistDao(
 
     override fun observeAll(): Flow<List<PlaylistEntity>> =
         delegate.observeAll().map { list -> list.map { it.decrypted() } }
+            .flowOn(Dispatchers.Default)
 
     // --- writes: encrypt on the way in ---
 
