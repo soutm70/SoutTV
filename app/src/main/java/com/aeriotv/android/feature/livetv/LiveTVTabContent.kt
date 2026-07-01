@@ -25,6 +25,7 @@ fun LiveTVTabContent(
     onChannelClick: (M3UChannel) -> Unit,
     modifier: Modifier = Modifier,
     onLaunchMultiview: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -59,6 +60,7 @@ fun LiveTVTabContent(
                 viewMode = mode,
                 canToggleViewMode = canToggle,
                 onToggleViewMode = toggleMode,
+                onOpenSearch = onOpenSearch,
             )
         }
         LiveTVViewMode.Guide -> GuideScreen(
@@ -69,6 +71,7 @@ fun LiveTVTabContent(
             canToggleViewMode = canToggle,
             onToggleViewMode = toggleMode,
             onLaunchMultiview = onLaunchMultiview,
+            onOpenSearch = onOpenSearch,
         )
     }
 }

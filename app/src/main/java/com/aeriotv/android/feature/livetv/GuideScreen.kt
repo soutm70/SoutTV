@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.GridView
@@ -173,6 +174,7 @@ fun GuideScreen(
     canToggleViewMode: Boolean,
     onToggleViewMode: () -> Unit,
     onLaunchMultiview: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -707,6 +709,44 @@ fun GuideScreen(
                         modifier = Modifier.size(controlIcon),
                         tint = if (searchActive) MaterialTheme.colorScheme.onPrimary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            // Global Search (parity #41): opens the full Search screen (movies /
+            // shows / EPG programmes). Distinct from the channel-name filter to
+            // its left -- a globe-magnifier icon so it doesn't read as a
+            // duplicate search box.
+            val globalSearchInteraction = remember { MutableInteractionSource() }
+            val globalSearchFocused by globalSearchInteraction.collectIsFocusedAsState()
+            Box(
+                modifier = Modifier
+                    .clickable(interactionSource = globalSearchInteraction, indication = null) { onOpenSearch() }
+                    .padding(if (isTv) 0.dp else 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(controlCircle)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                isTv && globalSearchFocused -> Color.White.copy(alpha = 0.15f)
+                                isTv -> Color.Transparent
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            },
+                        )
+                        .then(
+                            if (isTv && globalSearchFocused) Modifier.border(2.dp, Color.White, CircleShape)
+                            else Modifier,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.TravelExplore,
+                        contentDescription = "Search",
+                        modifier = Modifier.size(controlIcon),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

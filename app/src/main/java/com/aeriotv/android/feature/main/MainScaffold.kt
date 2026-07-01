@@ -131,6 +131,7 @@ fun MainScaffold(
     onLaunchMultiview: () -> Unit = {},
     onWatchLive: (String, String, Boolean) -> Unit = { _, _, _ -> },
     onWatchFromBeginning: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    onOpenSearch: () -> Unit = {},
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -402,6 +403,7 @@ fun MainScaffold(
                     onLaunchMultiview = onLaunchMultiview,
                     onWatchLive = onWatchLive,
                     onWatchFromBeginning = onWatchFromBeginning,
+                    onOpenSearch = onOpenSearch,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -518,6 +520,7 @@ fun MainScaffold(
                 onLaunchMultiview = onLaunchMultiview,
                 onWatchLive = onWatchLive,
                 onWatchFromBeginning = onWatchFromBeginning,
+                onOpenSearch = onOpenSearch,
                 modifier = Modifier.fillMaxSize(),
             )
             // iOS "Syncing" pill, top-left over content (below the status bar).
@@ -551,6 +554,7 @@ private fun MainTabContent(
     onLaunchMultiview: () -> Unit,
     onWatchLive: (String, String, Boolean) -> Unit,
     onWatchFromBeginning: (String, String, Boolean) -> Unit,
+    onOpenSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -558,6 +562,7 @@ private fun MainTabContent(
             AppTab.LiveTV -> LiveTVTabContent(
                 onChannelClick = onChannelClick,
                 onLaunchMultiview = onLaunchMultiview,
+                onOpenSearch = onOpenSearch,
             )
             AppTab.Favorites -> FavoritesTabContent(onChannelClick = onChannelClick)
             AppTab.DVR -> DvrTabContent(

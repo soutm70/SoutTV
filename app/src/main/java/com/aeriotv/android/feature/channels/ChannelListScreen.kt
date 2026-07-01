@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -109,6 +110,7 @@ fun ChannelListScreen(
     viewMode: LiveTVViewMode = LiveTVViewMode.List,
     canToggleViewMode: Boolean = false,
     onToggleViewMode: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
@@ -240,6 +242,15 @@ fun ChannelListScreen(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
+                }
+                // Global Search (parity #41): the full Search screen (movies /
+                // shows / EPG). Distinct from the channel-name filter beside it.
+                IconButton(onClick = onOpenSearch) {
+                    Icon(
+                        imageVector = Icons.Filled.TravelExplore,
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 IconButton(onClick = {
                     searchActive = !searchActive

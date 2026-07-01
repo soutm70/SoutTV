@@ -84,6 +84,7 @@ object Routes {
     const val SERIES_DETAIL = "series_detail/{seriesId}"
     const val VOD_EPISODE_PLAYER = "vod_episode_player/{episodeUuid}"
     const val MULTIVIEW = "multiview"
+    const val SEARCH = "search"
     const val RECORDING_PLAYER = "recording_player/{playbackUrl}/{title}?isDvr={isDvr}&fromStart={fromStart}"
 
     fun configure(type: SourceType) = "configure/${type.name}"
@@ -558,6 +559,7 @@ fun AerioTVNavHost(
                     // ~700MB of GC churn and ~7 seconds of duplicated
                     // work on cold launch (seen in the method trace).
                     viewModel = vm,
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
                 )
                 }
             }
@@ -805,6 +807,27 @@ fun AerioTVNavHost(
                     // Pass the PLAYLIST_GRAPH-scoped VM so the re-entrant
                     // "Add streams" picker reuses this single instance.
                     playlistVm = playlistVm,
+                )
+            }
+
+            // Global Search (parity task #41). Resolve the PLAYLIST_GRAPH-scoped
+            // PlaylistViewModel so an EPG result reuses the same requestGuideJump
+            // SharedFlow that MainScaffold + GuideScreen already collect (switch
+            // to Live TV + guide mode + scroll/focus the cell); movie/series
+            // results reuse the existing detail routes.
+            composable(Routes.SEARCH) { entry ->
+                val parent = remember(entry) {
+                    navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
+                }
+                val playlistVm: PlaylistViewModel = hiltViewModel(parent)
+                com.aeriotv.android.feature.search.SearchScreen(
+                    onBack = { navController.popBackStack() },
+                    onEpgResult = { channelKey, startMillis ->
+                        playlistVm.requestGuideJump(channelKey, startMillis)
+                        navController.popBackStack()
+                    },
+                    onMovieClick = { uuid -> navController.navigate(Routes.movieDetail(uuid)) },
+                    onSeriesClick = { id -> navController.navigate(Routes.seriesDetail(id)) },
                 )
             }
 
