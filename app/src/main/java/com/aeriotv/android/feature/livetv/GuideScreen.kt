@@ -599,7 +599,12 @@ fun GuideScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (isTv) 44.dp else 56.dp)
+                // The control strip is a tight 44dp on TV to keep the pills / time
+                // axis from crowding. A Material OutlinedTextField, however, needs
+                // its ~56dp min height or the entered text clips vertically, so let
+                // the row grow to 56dp WHILE the inline channel-search field is
+                // shown (parity with the phone path, which is 56dp already).
+                .height(if (isTv && !searchActive) 44.dp else 56.dp)
                 .padding(horizontal = if (isTv) 20.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
