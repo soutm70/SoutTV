@@ -303,24 +303,24 @@ fun PlayerScreen(
     var lastInteractionAt by remember { mutableStateOf(0L) }
     androidx.activity.compose.BackHandler {
         if (isTvForm) {
-            // tvOS-style 3-press back flow (Archie spec 2026-05-28):
-            //   1st Back from fullscreen, chrome hidden  -> show chrome
-            //   2nd Back (chrome now visible)            -> exit to mini
-            //   3rd Back (mini Active, see TvMiniPlayerOverlay)  -> close mini
+            // #10 back model (Archie 2026-07-02): a SINGLE Back minimizes the
+            // fullscreen player straight to the corner mini. OK/Select is now
+            // what raises the media controls (the tap-target toggles
+            // chromeVisible), so Back no longer needs the old reveal-chrome
+            // first step -- it matches tvOS, where Menu with chrome visible
+            // minimizes, just without the extra press when chrome is hidden.
             //
-            // Phase 165 persistent-SurfaceView mini path: flip the
-            // root-level PersistentMpvWindow into Mini mode (210x118
-            // top-right), promote MiniPlayerSession to Active so the
-            // hint chip renders. The SurfaceView never reparents -- only
-            // its size + position. No reload, no ANR, no fresh-handle
-            // race. The stream just keeps playing.
-            if (!chromeVisible) {
-                chromeVisible = true
-            } else {
-                exoWindowState.requestMini()
-                miniPlayerVm.showMiniPlayer()
-                onClose()
-            }
+            // Persistent-SurfaceView mini path: flip the root-level
+            // PersistentExoWindow into Mini mode (top-right), promote
+            // MiniPlayerSession to Active. The SurfaceView never reparents --
+            // only its size + position. No reload, no ANR, no fresh-handle
+            // race. The stream just keeps playing. From the mini, Back =
+            // expand / double-Back = top channel (see TvMiniPlayerOverlay);
+            // playback only ever ends by playing something else (tvOS parity:
+            // there is no explicit Stop in fullscreen or the mini).
+            exoWindowState.requestMini()
+            miniPlayerVm.showMiniPlayer()
+            onClose()
         } else {
             // Phone Back: promote to bottom-bar audio-only mini chip,
             // hide the persistent video window, keep playback going
@@ -642,6 +642,9 @@ fun PlayerScreen(
             chromeVisible = chromeVisible,
             pillVisible = pillVisible,
             isTv = isTvForm,
+            // #10 player gesture hints: only advertise Up/Down channel-flip when
+            // it can actually do something (setting on + more than one channel).
+            showChannelFlipHint = appleTVChannelFlip && channels.size >= 2,
             // Explicit X tap = user is done with this channel; clear the mini-player
             // session, destroy the held MPV instance, and stop the background
             // PlaybackService so the notification disappears. System back keeps

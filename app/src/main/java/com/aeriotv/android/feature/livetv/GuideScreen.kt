@@ -106,6 +106,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -213,6 +214,10 @@ fun GuideScreen(
     // stage more. Keyed on the empty<->staged transition so it only grabs focus
     // on the FIRST add, not every subsequent one.
     val multiviewBannerFocus = remember { FocusRequester() }
+    // #10 tvOS parity: HOLD Left in the grid jumps D-pad focus to the "All"
+    // group pill. This requester is attached to that pill (the first item in
+    // the group row) and fired from the grid's key handler.
+    val allPillFocus = remember { FocusRequester() }
     val isTvDevice = rememberIsTvDevice()
     // Guards the banner's launch clicks: armed by the focus pull below (the
     // Streamer's spurious OK-release lands on the newly-focused banner and
@@ -583,7 +588,8 @@ fun GuideScreen(
         )
     }
 
-    Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
+    Box(modifier = modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         // Audit task #22: multiview staging banner. Visible only when at
         // least one channel has been added to Multiview. Tapping the Play
         // button launches the dedicated Multiview screen; tapping the chip
@@ -947,6 +953,14 @@ fun GuideScreen(
                             // the SAME 2dp white ring as a program cell.
                             Box(
                                 modifier = Modifier
+                                    // #10: the "All" pill is the hold-Left focus
+                                    // target (tvOS parity). Only it gets the
+                                    // requester; the other pills stay untouched.
+                                    .then(
+                                        if (group == PlaylistViewModel.ALL_GROUPS)
+                                            Modifier.focusRequester(allPillFocus)
+                                        else Modifier,
+                                    )
                                     .height(30.dp)
                                     .clip(CircleShape)
                                     .background(
@@ -1099,9 +1113,9 @@ fun GuideScreen(
         //  1) Anywhere below the top row -> scroll the guide back to channel 0
         //     and keep the user in the app. Mirrors how the iOS / tvOS Guide
         //     scrolls Home-to-top on Menu / Back rather than dismissing.
-        //  2) Already at the top -> surface a confirmation dialog before we
-        //     actually exit AerioTV, so an accidental Back doesn't drop the
-        //     user out of the app mid-watch.
+        //  2) Already at the top -> finish the activity (exit to the launcher),
+        //     matching tvOS where Menu at the top channel falls through to the
+        //     Apple TV Home. No in-app confirmation dialog (#10).
         //
         // BackHandler is wired LAST in this composable so it takes priority
         // over any outer handlers (sheets, dialogs) -- Compose dispatches
@@ -1125,9 +1139,8 @@ fun GuideScreen(
         val guideNav = remember { GuideVerticalNavState() }
         val navScope = rememberCoroutineScope()
         val backScope = androidx.compose.runtime.rememberCoroutineScope()
-        var showExitDialog by remember { mutableStateOf(false) }
         val activity = LocalContext.current.findActivity()
-        androidx.activity.compose.BackHandler(enabled = !showExitDialog && !miniActive) {
+        androidx.activity.compose.BackHandler(enabled = !miniActive) {
             val atTop = listState.firstVisibleItemIndex == 0 &&
                 listState.firstVisibleItemScrollOffset == 0
             if (!atTop) {
@@ -1139,7 +1152,10 @@ fun GuideScreen(
                     if (isTv) guideNav.focusChannelAtNow(0, nowMillis, listState)
                 }
             } else {
-                showExitDialog = true
+                // #10 tvOS parity: at the top channel Menu/Back exits to the
+                // launcher (Apple TV Home has no confirm), so finish straight
+                // away -- the scroll-to-top above is the soft first step.
+                activity?.finish()
             }
         }
         // tvOS parity: DOUBLE-Back on the corner mini jumps the guide to the
@@ -1150,29 +1166,6 @@ fun GuideScreen(
                 listState.animateScrollToItem(0)
                 if (isTv) guideNav.focusChannelAtNow(0, nowMillis, listState)
             }
-        }
-        if (showExitDialog) {
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { showExitDialog = false },
-                title = { androidx.compose.material3.Text("Exit AerioTV?") },
-                text = { androidx.compose.material3.Text("Are you sure you want to leave the app?") },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        showExitDialog = false
-                        activity?.finish()
-                    }) {
-                        androidx.compose.material3.Text(
-                            "Exit",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                },
-                dismissButton = {
-                    androidx.compose.material3.TextButton(onClick = { showExitDialog = false }) {
-                        androidx.compose.material3.Text("Cancel")
-                    }
-                },
-            )
         }
 
         // Audit task #57: when the guide is showing on TV, route D-pad UP off
@@ -1309,6 +1302,21 @@ fun GuideScreen(
                     // next program in one press. Once the program's edge is on
                     // screen, fall through so focus moves to the adjacent cell as
                     // usual. Normal-length programs always fall straight through.
+                    // #10 tvOS parity: HOLD Left ~0.5s -> jump focus to the
+                    // "All" group pill. The framework flags FLAG_LONG_PRESS on
+                    // the auto-repeat event at the long-press timeout (~500ms,
+                    // matching tvOS's 0.5s recognizer); repeatCount >= 4 is the
+                    // same threshold as a belt-and-suspenders fallback. A tap
+                    // sends neither (repeatCount 0, no long-press flag), so this
+                    // never fires on the short-Left timeline scroll. Firing moves
+                    // focus out of the grid, so it only fires once per hold.
+                    if (event.key == Key.DirectionLeft &&
+                        (event.nativeKeyEvent.isLongPress ||
+                            event.nativeKeyEvent.repeatCount >= HOLD_LEFT_ALL_PILL_REPEAT)
+                    ) {
+                        runCatching { allPillFocus.requestFocus() }
+                        return@onPreviewKeyEvent true
+                    }
                     if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
                         guideNav.allowHorizontalScroll()
                         val cellStartPx = guideNav.focusedCellStartPx
@@ -1484,6 +1492,28 @@ fun GuideScreen(
                 HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
         }
+        }
+    }
+        // #10 tvOS parity: Menu/Back gesture hints, top-left of the Live TV
+        // guide, floating over the grid (HomeView guideMenuHint copy). A1 only
+        // shows while the corner mini is Active; non-interactive.
+        if (isTv) {
+            // Sits below the Android-only controls/pills row + time header (tvOS
+            // has no pills row here, so its hints float over an empty top-left)
+            // so the interactive group pills stay visible; the chips then float
+            // over the grid's top-left corner like tvOS.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (miniActive) {
+                    GuideHintChip("Press Menu/Back or Play/Pause to resume playback.")
+                }
+                GuideHintChip("Double press Menu/Back to return to top channel.")
+                GuideHintChip("Hold left on remote to return to the All group pill.")
+            }
         }
     }
 
@@ -2480,6 +2510,29 @@ private const val MS_PER_HOUR_F = 3_600_000f
  *  controllable ~8 channels/sec instead of the system's ~20/sec repeat rate
  *  blasting 7-8 rows in one press. Tune up for a slower hold-scroll. */
 private const val HOLD_SCROLL_MIN_INTERVAL_MS = 120L
+
+/** D-pad LEFT auto-repeat count that counts as a "hold" for the tvOS
+ *  return-to-All-pill gesture (#10). Android starts auto-repeating ~400ms after
+ *  the initial press, then ~1 count / 50ms, so 4 ~= a half-second hold, matching
+ *  tvOS's 0.5s UILongPressGestureRecognizer. A tap only ever sends count 0, so
+ *  the short-Left timeline scroll never trips it. */
+private const val HOLD_LEFT_ALL_PILL_REPEAT = 4
+
+/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): 15pt medium
+ *  white@0.55 on a black@0.4 pill. Non-interactive; state-gated by the caller. */
+@Composable
+private fun GuideHintChip(text: String) {
+    Text(
+        text = text,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color.White.copy(alpha = 0.55f),
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.4f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+}
 
 /** Off-screen pre-render pad (each side) for the horizontal viewport clip. Cells
  *  whose visible span lies entirely within this pad are composed but not actually

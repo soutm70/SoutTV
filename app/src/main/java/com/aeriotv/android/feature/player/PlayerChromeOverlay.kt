@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.size.Size
@@ -122,6 +123,7 @@ fun PlayerChromeOverlay(
     chromeVisible: Boolean,
     pillVisible: Boolean = chromeVisible,
     isTv: Boolean = false,
+    showChannelFlipHint: Boolean = false,
     onClose: () -> Unit,
     onAddToMultiview: () -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
@@ -490,11 +492,25 @@ fun PlayerChromeOverlay(
             .padding(top = if (isTv) 24.dp else 14.dp, start = if (isTv) 28.dp else 70.dp),
     ) {
         channel?.let {
-            InfoCard(
-                channel = it,
-                programme = nowProgramme,
-                sleepRemainingMillis = sleepRemainingMillis,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                InfoCard(
+                    channel = it,
+                    programme = nowProgramme,
+                    sleepRemainingMillis = sleepRemainingMillis,
+                )
+                if (isTv) {
+                    // #10 tvOS parity: gesture hints ride the banner's same
+                    // appear/fade window, left-aligned with the info card. Copy
+                    // verbatim from HomeView.playerHint (tvOS single-stream live).
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        PlayerHintChip("Press Menu/Back to return to TV Guide.")
+                        PlayerHintChip("Press Select to show player controls.")
+                        if (showChannelFlipHint) {
+                            PlayerHintChip("Press Up/Down to change channels.")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -544,6 +560,24 @@ private fun CircleIconButton(
             )
         }
     }
+}
+
+/**
+ * tvOS gesture-hint capsule (HomeView.playerHint parity): 15pt medium white@0.55
+ * on a black@0.72 pill. Non-interactive; rides the banner's appear/fade window.
+ */
+@Composable
+private fun PlayerHintChip(text: String) {
+    Text(
+        text = text,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color.White.copy(alpha = 0.55f),
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 /**
