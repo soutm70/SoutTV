@@ -391,7 +391,7 @@ fun MainScaffold(
                 //  - Other tabs / fullscreen (Pending): none (no hints shown).
                 val miniActive = miniPlayerState is MiniPlayerSession.State.Active
                 val topHintGap = when {
-                    miniActive -> 64.dp
+                    miniActive -> 78.dp
                     selectedTab == AppTab.LiveTV &&
                         miniPlayerState !is MiniPlayerSession.State.Pending -> 40.dp
                     else -> 0.dp
@@ -723,10 +723,10 @@ private fun TvTopTabBar(
                 .clip(RoundedCornerShape(22.dp))
                 .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
                 .padding(horizontal = 4.dp, vertical = 4.dp),
-            // 8dp leaves headroom for the focused pill's 1.04x paint-only
+            // 6dp still leaves headroom for the focused pill's 1.04x paint-only
             // grow (graphicsLayer does not relayout); at 3dp the widest pill
-            // visually collided with its neighbor.
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // visually collided. Trimmed from 8dp to narrow the bar.
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             tabs.forEach { tab ->
@@ -788,7 +788,9 @@ private fun TvTab(
                 shape = RoundedCornerShape(18.dp),
             )
             .focusable()
-            .padding(horizontal = 13.dp, vertical = 6.dp),
+            // Trimmed (13->10 h / 20->18 icon) to narrow the whole centered nav
+            // bar so its right edge clears the enlarged corner mini-player.
+            .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -796,7 +798,7 @@ private fun TvTab(
             imageVector = if (selected) tab.iconSelected else tab.iconUnselected,
             contentDescription = null,
             tint = foreground,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(18.dp),
         )
         Text(
             text = tab.label,
