@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.FiberManualRecord
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Notifications
@@ -117,6 +118,11 @@ import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
 import com.aeriotv.android.core.tv.TvActionMenuDialog
 import com.aeriotv.android.core.tv.TvMenuAction
+import com.aeriotv.android.core.data.ChannelCollection
+import com.aeriotv.android.feature.collections.AddToCollectionFlow
+import com.aeriotv.android.feature.collections.CollectionPill
+import com.aeriotv.android.feature.collections.CollectionsMenuContext
+import com.aeriotv.android.feature.collections.CollectionsViewModel
 import com.aeriotv.android.feature.favorites.FavoritesViewModel
 import com.aeriotv.android.feature.settings.dpadFocusRing
 import com.aeriotv.android.feature.settings.rememberIsTvDevice
@@ -236,6 +242,32 @@ fun GuideScreen(
     var searchActive by remember { mutableStateOf(false) }
     var showManageGroups by remember { mutableStateOf(false) }
 
+    // Channel Collections (#45): user-named channel groupings rendered as
+    // extra filter pills (placement "beginning" = before All, "end" = after
+    // the last group) with a "collection:<id>" selectedGroup sentinel. The
+    // menu context threads through ChannelGuideRow into each ProgrammeCell's
+    // long-press menu (Add to Collection / contextual Remove).
+    val collectionsVm: CollectionsViewModel = hiltViewModel()
+    val collections by collectionsVm.collections.collectAsStateWithLifecycle(initialValue = emptyList())
+    var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // The guide cell (row index + anchor time) the picker was opened from, so
+    // closing it can restore D-pad focus there (dialogFocusOrigin/Tick are
+    // declared below, hence this staging state). Consumed in the
+    // AddToCollectionFlow onClose.
+    var collectionPickerOrigin by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    val collectionsMenu = remember(collections, state.selectedGroup) {
+        CollectionsMenuContext(
+            collections = collections,
+            activeCollectionId = ChannelCollection.idFromToken(state.selectedGroup),
+            onOpenPicker = { chId, chName, idx, anchor ->
+                if (idx >= 0) collectionPickerOrigin = idx to anchor
+                collectionPickerFor = chId to chName
+            },
+            onRemoveMember = collectionsVm::removeMember,
+            onRemoveFromAll = collectionsVm::removeFromAll,
+        )
+    }
+
     // Guide timeline zoom (iOS guideScale). `liveScale` tracks the in-flight
     // pinch and the discrete selector; it's seeded from the persisted value and
     // re-synced whenever that changes (e.g. selector tap or another screen).
@@ -349,13 +381,35 @@ fun GuideScreen(
     // change re-creates this derivedStateOf and the pills follow the new order.
     val groups by remember(allGroupNames, hiddenGroups) {
         derivedStateOf {
-            listOf(PlaylistViewModel.ALL_GROUPS) + allGroupNames.filter { it !in hiddenGroups }
+            // Drop any provider group literally named "All": it would collide
+            // with the ALL_GROUPS sentinel and crash the pill LazyRow with a
+            // duplicate key (and conflate selection with the sentinel).
+            listOf(PlaylistViewModel.ALL_GROUPS) +
+                allGroupNames.filter {
+                    it !in hiddenGroups && !it.equals(PlaylistViewModel.ALL_GROUPS, ignoreCase = true)
+                }
         }
     }
 
-    val filteredChannels by remember(state.channels, state.selectedGroup, allGroupNames, groupSortMode) {
+    val filteredChannels by remember(state.channels, state.selectedGroup, allGroupNames, groupSortMode, collections) {
         derivedStateOf {
             val query = state.searchQuery.trim()
+            // #45: a "collection:<id>" sentinel filters to exactly the curated
+            // members. The user picked them explicitly, so hidden-group
+            // exclusion is bypassed (iOS filterChannels). A dangling sentinel
+            // (collection deleted mid-view) falls through to showing
+            // everything, exactly like iOS.
+            val activeCollection = ChannelCollection.idFromToken(state.selectedGroup)
+                ?.let { cid -> collections.firstOrNull { it.id == cid } }
+            val collectionMembers = activeCollection?.memberIds?.toSet()
+            // Treat the sentinel as a collection filter ONLY when it doesn't
+            // collide with a real provider group literally named "collection:x"
+            // (that group is in allGroupNames and must still filter normally).
+            // A dangling sentinel (collection deleted mid-view) isn't a real
+            // group, so it stays a collection filter and shows everything.
+            val collectionSelected =
+                state.selectedGroup.startsWith(ChannelCollection.TOKEN_PREFIX) &&
+                    allGroupNames.none { it == state.selectedGroup }
             // When a non-default group order (A-Z / Manual) is active, cluster the
             // "All" guide rows by that group order so the channels follow the
             // groups (primary key = group index, then channel number). A specific
@@ -371,6 +425,7 @@ fun GuideScreen(
             state.channels.asSequence()
                 .filter { ch ->
                     when {
+                        collectionSelected -> collectionMembers?.contains(ch.id) ?: true
                         state.selectedGroup != PlaylistViewModel.ALL_GROUPS ->
                             ch.groupTitle.equals(state.selectedGroup, ignoreCase = true)
                         // In "All", hide channels whose group is toggled off --
@@ -502,6 +557,32 @@ fun GuideScreen(
     // the inset here or the controls + group pills render UNDER the status bar
     // (clock/battery overlap the All/Sports pills). No-op on Android TV (no status
     // bar). Matches ChannelListScreen's top-inset behaviour.
+    // #45: the Add-to-Collection picker + chained New Collection name dialog,
+    // opened from a programme cell's long-press menu. Dialogs render in their
+    // own window, so composing here (outside the Column) is layout-neutral.
+    collectionPickerFor?.let { (chId, chName) ->
+        AddToCollectionFlow(
+            channelId = chId,
+            channelName = chName,
+            isTv = isTv,
+            collections = collections,
+            onToggleMember = collectionsVm::toggleMember,
+            onCreate = collectionsVm::create,
+            onClose = {
+                val origin = collectionPickerOrigin
+                collectionPickerFor = null
+                collectionPickerOrigin = null
+                // Restore D-pad focus to the originating guide cell on TV;
+                // without it Compose's fallback parks focus on the top nav
+                // pills (same machinery the Program Info / Record dialogs use).
+                if (isTv && origin != null) {
+                    dialogFocusOrigin = origin
+                    dialogFocusRestoreTick++
+                }
+            },
+        )
+    }
+
     Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
         // Audit task #22: multiview staging banner. Visible only when at
         // least one channel has been added to Multiview. Tapping the Play
@@ -816,7 +897,30 @@ fun GuideScreen(
                     },
                     modifier = Modifier.weight(1f),
                 )
-            } else if (groups.size > 1) {
+            } else if (groups.size > 1 || collections.isNotEmpty()) {
+                // #45: collection pills join the group row -- placement
+                // "beginning" renders before All, "end" after the last group
+                // (iOS beginningCollections / endCollections). One shared
+                // renderer keeps select / manage behavior identical.
+                val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
+                    val token = ChannelCollection.token(c.id)
+                    CollectionPill(
+                        collection = c,
+                        selected = state.selectedGroup == token,
+                        isTv = isTv,
+                        onSelect = { viewModel.onGroupSelected(token) },
+                        onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
+                        onDelete = {
+                            // Mirror the hidden-group reset: if we're filtered
+                            // to this collection, drop back to All before its
+                            // pill vanishes (iOS collectionManageActions).
+                            if (state.selectedGroup == token) {
+                                viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
+                            }
+                            collectionsVm.delete(c.id)
+                        },
+                    )
+                }
                 LazyRow(
                     modifier = Modifier
                         .weight(1f)
@@ -825,7 +929,11 @@ fun GuideScreen(
                     horizontalArrangement = Arrangement.spacedBy(if (isTv) 5.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    items(groups, key = { it }) { group ->
+                    items(
+                        collections.filter { it.placement == ChannelCollection.PLACEMENT_BEGINNING },
+                        key = { "coll_${it.id}" },
+                    ) { c -> collectionPillItem(c) }
+                    items(groups, key = { "grp_$it" }) { group ->
                         val pillSelected = state.selectedGroup == group
                         val pillInteraction = remember { MutableInteractionSource() }
                         val pillFocused by pillInteraction.collectIsFocusedAsState()
@@ -887,6 +995,10 @@ fun GuideScreen(
                             )
                         }
                     }
+                    items(
+                        collections.filter { it.placement != ChannelCollection.PLACEMENT_BEGINNING },
+                        key = { "coll_${it.id}" },
+                    ) { c -> collectionPillItem(c) }
                 }
             }
         }
@@ -1358,6 +1470,7 @@ fun GuideScreen(
                     palette = palette,
                     multiviewStore = multiviewStore,
                     showLogo = showChannelLogos,
+                    collectionsMenu = collectionsMenu,
                 )
                 HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
@@ -1445,6 +1558,7 @@ private fun ChannelGuideRow(
     palette: CategoryPaletteState,
     multiviewStore: MultiviewStoreHandle,
     showLogo: Boolean = true,
+    collectionsMenu: CollectionsMenuContext? = null,
 ) {
     val multiviewSelected by multiviewStore.selected.collectAsStateWithLifecycle()
     val inMultiview = multiviewSelected.any { it.id == channel.id }
@@ -1852,6 +1966,7 @@ private fun ChannelGuideRow(
                         onToggleMultiview = { multiviewStore.toggle(channel) },
                         isFavorite = isFavorite,
                         onToggleFavorite = onToggleFavorite,
+                        collectionsMenu = collectionsMenu,
                     )
                 }
                 // "Now" indicator vertical line, only drawn when "now" falls
@@ -1961,6 +2076,7 @@ private fun ProgrammeCell(
     onToggleMultiview: () -> Unit,
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
+    collectionsMenu: CollectionsMenuContext? = null,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -2153,6 +2269,40 @@ private fun ProgrammeCell(
                         Icons.Outlined.GridView,
                     ) { onToggleMultiview() },
                 )
+            }
+            // #45: collection actions (iOS tvOS guide-cell dialog order:
+            // ... Multiview, then Add to Collection, then the contextual
+            // remove). The remove row follows iOS's rule exactly: viewing a
+            // collection the channel is IN -> remove from that one; viewing
+            // no collection while it's in any -> remove from all; otherwise
+            // no remove row.
+            collectionsMenu?.let { cm ->
+                add(
+                    TvMenuAction("Add to Collection…", Icons.Outlined.Folder) {
+                        cm.onOpenPicker(channelId, channelName, channelIndex, anchorTimeMs)
+                    },
+                )
+                val active = cm.activeCollectionId
+                    ?.let { id -> cm.collections.firstOrNull { it.id == id } }
+                if (active != null && channelId in active.memberIds) {
+                    add(
+                        TvMenuAction(
+                            "Remove from ${active.name}",
+                            Icons.Outlined.Folder,
+                            destructive = true,
+                        ) { cm.onRemoveMember(active.id, channelId) },
+                    )
+                } else if (cm.activeCollectionId == null &&
+                    cm.collections.any { channelId in it.memberIds }
+                ) {
+                    add(
+                        TvMenuAction(
+                            "Remove from All Collections",
+                            Icons.Outlined.Folder,
+                            destructive = true,
+                        ) { cm.onRemoveFromAll(channelId) },
+                    )
+                }
             }
             // iOS parity: a LIVE program can always be recorded (coerced to a
             // local device recording inside RecordProgramSheet when the account

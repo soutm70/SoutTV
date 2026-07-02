@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.datastore.preferences.core.longPreferencesKey
 import com.aeriotv.android.core.category.CategoryPaletteState
+import com.aeriotv.android.core.data.ChannelCollection
 import com.aeriotv.android.core.category.CustomCategoryEntry
 import com.aeriotv.android.core.category.ProgramCategory
 import com.aeriotv.android.core.security.CredentialCipher
@@ -491,6 +492,70 @@ class AppPreferences @Inject constructor(
     }
     suspend fun setMultiviewLayoutMode(value: String) {
         store.edit { it[KEY_MULTIVIEW_LAYOUT_MODE] = value }
+    }
+
+    // ── Channel Collections (issue #45) ─────────────────────────────────
+
+    /**
+     * Lenient decoder for the collections blob. `ignoreUnknownKeys = true` so a
+     * FUTURE schema field (added in a later app version) survives a downgrade:
+     * the older build ignores the unknown key instead of failing the decode and
+     * treating the whole blob as empty. Paired with the no-overwrite-on-failure
+     * guard in [updateChannelCollections], this makes a user's curated
+     * collections resistant to accidental wipes.
+     */
+    private val collectionsJson = Json { ignoreUnknownKeys = true }
+
+    /**
+     * iOS `ChannelCollectionsStore` parity: the whole collection list as one
+     * JSON blob (iOS key "channelCollections" in UserDefaults). Device-local;
+     * deliberately NOT Drive-synced, matching iOS's not-in-KVS v1. A corrupt
+     * blob decodes to an empty list rather than crashing the filter row.
+     */
+    val channelCollections: Flow<List<ChannelCollection>> = store.data.map { prefs ->
+        val raw = prefs[KEY_CHANNEL_COLLECTIONS]
+        if (raw.isNullOrBlank()) {
+            emptyList()
+        } else {
+            runCatching { collectionsJson.decodeFromString<List<ChannelCollection>>(raw) }
+                .getOrDefault(emptyList())
+        }
+    }
+
+    /**
+     * Atomic read-modify-write for every collection mutation (create /
+     * delete / placement / membership). One writer inside store.edit means
+     * two rapid menu actions can never lose an update to a stale snapshot.
+     *
+     * Data-safety: if a NON-blank blob fails to decode (corrupt, or written by
+     * an incompatible future schema), the mutation is ABORTED rather than
+     * overwriting the blob with a partial list -- otherwise a single decode
+     * regression would silently destroy every saved collection.
+     */
+    suspend fun updateChannelCollections(
+        transform: (List<ChannelCollection>) -> List<ChannelCollection>,
+    ) {
+        store.edit { prefs ->
+            val raw = prefs[KEY_CHANNEL_COLLECTIONS]
+            val current: List<ChannelCollection> = when {
+                raw.isNullOrBlank() -> emptyList()
+                else -> {
+                    val decoded = runCatching {
+                        collectionsJson.decodeFromString<List<ChannelCollection>>(raw)
+                    }.getOrNull()
+                    // Non-blank but undecodable: do not clobber it with a
+                    // partial write; leave the stored blob untouched.
+                    if (decoded == null) return@edit
+                    decoded
+                }
+            }
+            val next = transform(current)
+            if (next.isEmpty()) {
+                prefs.remove(KEY_CHANNEL_COLLECTIONS)
+            } else {
+                prefs[KEY_CHANNEL_COLLECTIONS] = collectionsJson.encodeToString(next)
+            }
+        }
     }
 
     // ── Category Palette ────────────────────────────────────────────────
@@ -976,6 +1041,7 @@ class AppPreferences @Inject constructor(
         val KEY_MULTIVIEW_LAYOUT_MODE = stringPreferencesKey("multiview_layout_mode")
         val KEY_MULTIVIEW_PERF_WARNING_SUPPRESSED =
             booleanPreferencesKey("multiview_perf_warning_suppressed")
+        val KEY_CHANNEL_COLLECTIONS = stringPreferencesKey("channel_collections")
         val KEY_DVR_MAX_LOCAL_STORAGE_MB = intPreferencesKey("dvr_max_local_storage_mb")
         val KEY_DVR_DEFAULT_PRE_ROLL = intPreferencesKey("dvr_default_pre_roll_mins")
         val KEY_DVR_DEFAULT_POST_ROLL = intPreferencesKey("dvr_default_post_roll_mins")

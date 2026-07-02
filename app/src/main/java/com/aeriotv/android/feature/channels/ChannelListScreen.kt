@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FiberManualRecord
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Notifications
@@ -79,7 +80,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import com.aeriotv.android.core.category.CategoryPaletteState
+import com.aeriotv.android.core.data.ChannelCollection
 import com.aeriotv.android.core.data.EPGProgramme
+import com.aeriotv.android.feature.collections.AddToCollectionFlow
+import com.aeriotv.android.feature.collections.CollectionPill
+import com.aeriotv.android.feature.collections.CollectionsMenuContext
+import com.aeriotv.android.feature.collections.CollectionsViewModel
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.guideMatchKey
@@ -133,6 +139,23 @@ fun ChannelListScreen(
     var searchActive by remember { mutableStateOf(false) }
     val isTv = rememberIsTvDevice()
 
+    // Channel Collections (#45): user-named channel groupings as extra filter
+    // pills + row-menu actions. Mirrors the guide's wiring; both screens share
+    // the "collection:<id>" selectedGroup sentinel, so a collection picked in
+    // one view stays active in the other.
+    val collectionsVm: CollectionsViewModel = hiltViewModel()
+    val collections by collectionsVm.collections.collectAsStateWithLifecycle(initialValue = emptyList())
+    var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val collectionsMenu = remember(collections, state.selectedGroup) {
+        CollectionsMenuContext(
+            collections = collections,
+            activeCollectionId = ChannelCollection.idFromToken(state.selectedGroup),
+            onOpenPicker = { chId, chName, _, _ -> collectionPickerFor = chId to chName },
+            onRemoveMember = collectionsVm::removeMember,
+            onRemoveFromAll = collectionsVm::removeFromAll,
+        )
+    }
+
     // Preserve the order groups appear in the source channel list. iOS does
     // this on the parse step (HomeView.swift `fetchM3U` lines 1869-1872) — an
     // empty array seeded with the first-seen groupTitle per channel and
@@ -155,23 +178,40 @@ fun ChannelListScreen(
 
     val groups by remember(allGroupsRaw, hiddenGroups) {
         derivedStateOf {
-            val visible = allGroupsRaw.filterNot { it in hiddenGroups }
+            // Drop any provider group literally named "All" -- it collides with
+            // the ALL_GROUPS sentinel and crashes the pill LazyRow on a
+            // duplicate key (#45 review).
+            val visible = allGroupsRaw.filterNot {
+                it in hiddenGroups || it.equals(PlaylistViewModel.ALL_GROUPS, ignoreCase = true)
+            }
             listOf(PlaylistViewModel.ALL_GROUPS) + visible
         }
     }
 
     val filtered by remember(
         state.channels, state.searchQuery, state.selectedGroup, state.sortMode,
-        favoriteIds, hiddenGroups, allGroupsRaw, groupSortMode,
+        favoriteIds, hiddenGroups, allGroupsRaw, groupSortMode, collections,
     ) {
         derivedStateOf {
             val query = state.searchQuery.trim()
+            // #45: a "collection:<id>" sentinel filters to exactly the curated
+            // members, bypassing hidden groups (the user picked them
+            // explicitly); a dangling sentinel shows everything (iOS).
+            val activeCollection = ChannelCollection.idFromToken(state.selectedGroup)
+                ?.let { cid -> collections.firstOrNull { it.id == cid } }
+            val collectionMembers = activeCollection?.memberIds?.toSet()
+            // Only a collection filter when it doesn't collide with a real
+            // provider group named "collection:x" (#45 review).
+            val collectionSelected =
+                state.selectedGroup.startsWith(ChannelCollection.TOKEN_PREFIX) &&
+                    allGroupsRaw.none { it == state.selectedGroup }
             val byGroupAndSearch = state.channels.asSequence()
                 .filter {
                     // "All" still respects hidden-group filters so toggling a group off
                     // truly hides its channels from the default list. The user can find
                     // them again via search (which ignores the hidden set).
                     when {
+                        collectionSelected -> collectionMembers?.contains(it.id) ?: true
                         state.selectedGroup == PlaylistViewModel.ALL_GROUPS && query.isEmpty() ->
                             it.groupTitle !in hiddenGroups
                         state.selectedGroup == PlaylistViewModel.ALL_GROUPS -> true
@@ -213,6 +253,21 @@ fun ChannelListScreen(
                 )
             }
         }
+    }
+
+    // #45: the Add-to-Collection picker + chained New Collection name dialog,
+    // opened from a channel row's long-press menu. Dialogs render in their own
+    // window, so composing here (outside the Column) is layout-neutral.
+    collectionPickerFor?.let { (chId, chName) ->
+        AddToCollectionFlow(
+            channelId = chId,
+            channelName = chName,
+            isTv = isTv,
+            collections = collections,
+            onToggleMember = collectionsVm::toggleMember,
+            onCreate = collectionsVm::create,
+            onClose = { collectionPickerFor = null },
+        )
     }
 
     Column(modifier = modifierWrap.fillMaxSize()) {
@@ -315,7 +370,10 @@ fun ChannelListScreen(
             derivedStateOf { listState.firstVisibleItemIndex == 0 }
         }
         AnimatedVisibility(
-            visible = chipsVisible && (isTv || groups.size > 1),
+            // Also show the pill row when collections exist even if there's
+            // only the "All" group, else a collection filter is inescapable
+            // on a groupless playlist (#45 review). Mirrors GuideScreen.
+            visible = chipsVisible && (isTv || groups.size > 1 || collections.isNotEmpty()),
             enter = expandVertically(),
             exit = shrinkVertically(),
         ) {
@@ -394,7 +452,29 @@ fun ChannelListScreen(
                         }
                     }
                 }
-                items(groups, key = { it }) { group ->
+                // #45: collection pills join the group row -- placement
+                // "beginning" renders before All, "end" after the last group.
+                val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
+                    val token = ChannelCollection.token(c.id)
+                    CollectionPill(
+                        collection = c,
+                        selected = state.selectedGroup == token,
+                        isTv = isTv,
+                        onSelect = { viewModel.onGroupSelected(token) },
+                        onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
+                        onDelete = {
+                            if (state.selectedGroup == token) {
+                                viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
+                            }
+                            collectionsVm.delete(c.id)
+                        },
+                    )
+                }
+                items(
+                    collections.filter { it.placement == ChannelCollection.PLACEMENT_BEGINNING },
+                    key = { "coll_${it.id}" },
+                ) { c -> collectionPillItem(c) }
+                items(groups, key = { "grp_$it" }) { group ->
                     FilterChip(
                         selected = state.selectedGroup == group,
                         onClick = { viewModel.onGroupSelected(group) },
@@ -405,6 +485,10 @@ fun ChannelListScreen(
                         ),
                     )
                 }
+                items(
+                    collections.filter { it.placement != ChannelCollection.PLACEMENT_BEGINNING },
+                    key = { "coll_${it.id}" },
+                ) { c -> collectionPillItem(c) }
             }
         }
 
@@ -449,6 +533,7 @@ fun ChannelListScreen(
                         onShowRecord = { recordTarget = it },
                         palette = palette,
                         showLogo = showChannelLogos,
+                        collectionsMenu = collectionsMenu,
                     )
                 }
             }
@@ -617,6 +702,9 @@ internal fun ChannelRow(
      * long-press-menu on the rest of the row stay intact.
      */
     reorderHandle: (@Composable () -> Unit)? = null,
+    /** #45: collection actions for the long-press menu (null = not offered,
+     *  e.g. the Favorites tab). */
+    collectionsMenu: CollectionsMenuContext? = null,
 ) {
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
@@ -866,6 +954,36 @@ internal fun ChannelRow(
                                     if (isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
                                 ) { onToggleFavorite() },
                             )
+                            // #45: Add to Collection + the contextual remove
+                            // (iOS cardMenuButtons order: right after Favorites).
+                            collectionsMenu?.let { cm ->
+                                add(
+                                    TvMenuAction("Add to Collection…", Icons.Outlined.Folder) {
+                                        cm.onOpenPicker(channel.id, channel.name, -1, 0L)
+                                    },
+                                )
+                                val active = cm.activeCollectionId
+                                    ?.let { id -> cm.collections.firstOrNull { it.id == id } }
+                                if (active != null && channel.id in active.memberIds) {
+                                    add(
+                                        TvMenuAction(
+                                            "Remove from ${active.name}",
+                                            Icons.Outlined.Folder,
+                                            destructive = true,
+                                        ) { cm.onRemoveMember(active.id, channel.id) },
+                                    )
+                                } else if (cm.activeCollectionId == null &&
+                                    cm.collections.any { channel.id in it.memberIds }
+                                ) {
+                                    add(
+                                        TvMenuAction(
+                                            "Remove from All Collections",
+                                            Icons.Outlined.Folder,
+                                            destructive = true,
+                                        ) { cm.onRemoveFromAll(channel.id) },
+                                    )
+                                }
+                            }
                             if (nowProgramme != null) {
                                 add(
                                     TvMenuAction("Program Info", Icons.Outlined.Info) {
@@ -912,6 +1030,55 @@ internal fun ChannelRow(
                         onToggleFavorite()
                     },
                 )
+                // #45: Add to Collection + the contextual remove (iOS
+                // cardMenuButtons order: right after Favorites).
+                collectionsMenu?.let { cm ->
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Outlined.Folder,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        text = { Text("Add to Collection…") },
+                        onClick = menuGuard.wrap {
+                            menuOpen = false
+                            cm.onOpenPicker(channel.id, channel.name, -1, 0L)
+                        },
+                    )
+                    val active = cm.activeCollectionId
+                        ?.let { id -> cm.collections.firstOrNull { it.id == id } }
+                    if (active != null && channel.id in active.memberIds) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Remove from ${active.name}",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = menuGuard.wrap {
+                                menuOpen = false
+                                cm.onRemoveMember(active.id, channel.id)
+                            },
+                        )
+                    } else if (cm.activeCollectionId == null &&
+                        cm.collections.any { channel.id in it.memberIds }
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "Remove from All Collections",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = menuGuard.wrap {
+                                menuOpen = false
+                                cm.onRemoveFromAll(channel.id)
+                            },
+                        )
+                    }
+                }
                 if (nowProgramme != null) {
                     DropdownMenuItem(
                         text = { Text("Program Info") },

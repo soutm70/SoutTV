@@ -39,11 +39,15 @@ import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.feature.channels.ChannelRow
+import com.aeriotv.android.feature.collections.AddToCollectionFlow
+import com.aeriotv.android.feature.collections.CollectionsMenuContext
+import com.aeriotv.android.feature.collections.CollectionsViewModel
 import com.aeriotv.android.feature.livetv.ProgramInfoSheet
 import com.aeriotv.android.feature.livetv.RecordProgramSheet
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
 import com.aeriotv.android.feature.playlist.nowPlaying
 import com.aeriotv.android.feature.settings.SettingsViewModel
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -70,6 +74,7 @@ fun FavoritesTabContent(
         initialValue = CategoryPaletteState.Default,
     )
     val showChannelLogos by settingsVm.showChannelLogos.collectAsStateWithLifecycle(initialValue = true)
+    val isTv = rememberIsTvDevice()
     val favoriteIds by remember(favorites) {
         derivedStateOf { favorites.asSequence().map { it.channelId }.toHashSet() }
     }
@@ -85,6 +90,23 @@ fun FavoritesTabContent(
 
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
+
+    // Channel Collections (#45): iOS surfaces "Add to Collection…" +
+    // "Remove from All Collections" on favorites rows too. Favorites is never
+    // a collection VIEW (iOS clears activeFilterCollectionID on appear), so
+    // activeCollectionId is null -> the row only ever offers the "all" remove.
+    val collectionsVm: CollectionsViewModel = hiltViewModel()
+    val collections by collectionsVm.collections.collectAsStateWithLifecycle(initialValue = emptyList())
+    var collectionPickerFor by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val collectionsMenu = remember(collections) {
+        CollectionsMenuContext(
+            collections = collections,
+            activeCollectionId = null,
+            onOpenPicker = { chId, chName, _, _ -> collectionPickerFor = chId to chName },
+            onRemoveMember = collectionsVm::removeMember,
+            onRemoveFromAll = collectionsVm::removeFromAll,
+        )
+    }
 
     // Local working copy so the drag preview updates fluidly without hitting
     // Room on every onMove frame. Committed to the favorites table on drag end
@@ -172,6 +194,7 @@ fun FavoritesTabContent(
                         onShowRecord = { recordTarget = it },
                         palette = palette,
                         showLogo = showChannelLogos,
+                        collectionsMenu = collectionsMenu,
                         reorderHandle = {
                             Icon(
                                 imageVector = Icons.Filled.Menu,
@@ -202,6 +225,17 @@ fun FavoritesTabContent(
         RecordProgramSheet(
             target = target,
             onDismiss = { recordTarget = null },
+        )
+    }
+    collectionPickerFor?.let { (chId, chName) ->
+        AddToCollectionFlow(
+            channelId = chId,
+            channelName = chName,
+            isTv = isTv,
+            collections = collections,
+            onToggleMember = collectionsVm::toggleMember,
+            onCreate = collectionsVm::create,
+            onClose = { collectionPickerFor = null },
         )
     }
 }
