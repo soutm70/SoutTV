@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.Dp
+import com.aeriotv.android.ui.adaptive.rememberViewport
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -755,6 +758,9 @@ private fun SeriesInfoSection(
     val tmdbUrl = (info?.tmdbId ?: series.tmdbId)?.takeIf { it.isNotBlank() }?.let {
         "https://www.themoviedb.org/tv/$it"
     }
+    // Foldable (#40): cap only the long synopsis to a readable line length on
+    // the unfolded Medium panel; Dp.Unspecified (no-op) on folded phone and TV.
+    val readableCap = if (isTv) Dp.Unspecified else rememberViewport().readableMaxWidth
 
     Column(
         modifier = Modifier
@@ -768,6 +774,7 @@ private fun SeriesInfoSection(
             // shouldn't either. Matches MovieDetailScreen.
             Text(
                 text = plot,
+                modifier = Modifier.widthIn(max = readableCap),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

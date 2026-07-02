@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.Dp
+import com.aeriotv.android.ui.adaptive.rememberViewport
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -630,6 +633,9 @@ private fun InfoSection(
     val tmdbUrl = (info?.tmdbId ?: movie.tmdbId)?.takeIf { it.isNotBlank() }?.let {
         "https://www.themoviedb.org/movie/$it"
     }
+    // Foldable (#40): cap only the long synopsis to a readable line length on
+    // the unfolded Medium panel; Dp.Unspecified (no-op) on folded phone and TV.
+    val readableCap = if (isTv) Dp.Unspecified else rememberViewport().readableMaxWidth
 
     Column(
         modifier = Modifier
@@ -643,6 +649,7 @@ private fun InfoSection(
             // longer synopses (Dispatcharr's plots can run 400-800 chars).
             Text(
                 text = plot,
+                modifier = Modifier.widthIn(max = readableCap),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

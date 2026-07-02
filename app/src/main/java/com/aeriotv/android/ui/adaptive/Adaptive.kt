@@ -83,6 +83,18 @@ data class Viewport(val widthDp: Int, val heightDp: Int) {
             isMedium -> 24.dp
             else -> 40.dp
         }
+
+    /** Readable line-length cap for a detail synopsis on an UNFOLDED foldable.
+     * On the Z Fold 5 inner panel (screenWidthDp ~690, Medium) a full-width
+     * synopsis runs 100+ chars per line; 560dp keeps it to a comfortable ~70.
+     * [Dp.Unspecified] elsewhere so it is a no-op on Compact (folded phone,
+     * unchanged) and Expanded (tablet-landscape / Android TV, own tier). Apply
+     * directly to the synopsis Text via `Modifier.widthIn(max = ...)` -- a
+     * Text's own widthIn clamps its own measurement, which the enclosing
+     * Column's constraint does not always do (a full-width detail Column
+     * measured a long Text wider than its own placed width). */
+    val readableMaxWidth: Dp
+        get() = if (isMedium) 560.dp else Dp.Unspecified
 }
 
 /**
