@@ -292,6 +292,11 @@ fun PlayerScreen(
     // Declared HERE (above BackHandler) so the BackHandler closure
     // can read + mutate it.
     var chromeVisible by remember { mutableStateOf(!isTvForm) }
+    // True while the visible chrome is the transient banner a D-pad channel
+    // flip raised (not chrome the user opened to interact with). Lets rapid
+    // up/down keep flipping instead of stalling until the banner auto-hides;
+    // cleared the instant the user presses a non-flip key or the chrome hides.
+    var chromeFromFlip by remember { mutableStateOf(false) }
     // Last user interaction timestamp. Bumped on D-pad presses while
     // chrome is visible so the auto-hide timer re-arms instead of firing
     // mid-traversal. Phase 172.
@@ -530,10 +535,11 @@ fun PlayerScreen(
                     lastInteractionAt = android.os.SystemClock.uptimeMillis()
                 }
                 // Android TV: D-pad up/down flips channels during fullscreen
-                // playback (tvOS Siri Remote parity). Matches the touch swipe
-                // (up = next). Gated to chrome-hidden so up/down still moves
-                // focus through the chrome controls while it is showing.
-                if (isTvForm && appleTVChannelFlip && !chromeVisible &&
+                // playback (tvOS Siri Remote parity; up = next, matching the
+                // touch swipe). onPreviewKeyEvent sees the key BEFORE any
+                // focused chrome button, so consuming up/down here flips no
+                // matter where focus sits.
+                if (isTvForm && appleTVChannelFlip &&
                     channels.size >= 2 && event.type == KeyEventType.KeyDown
                 ) {
                     val delta = when (event.key) {
@@ -541,13 +547,27 @@ fun PlayerScreen(
                         Key.DirectionDown -> -1
                         else -> 0
                     }
-                    if (delta != 0 && currentIndex >= 0 && channels.isNotEmpty()) {
-                        val next = (currentIndex + delta).coerceIn(0, channels.lastIndex)
-                        if (next != currentIndex) {
-                            currentIndex = next
-                            chromeVisible = true
+                    // Flip when chrome is hidden OR when the chrome on screen is
+                    // just the banner a prior flip raised. The old `!chromeVisible`
+                    // gate meant every flip (which force-shows chrome) swallowed
+                    // the NEXT up/down as chrome navigation until the banner
+                    // faded, so users couldn't change channels rapidly. A
+                    // non-flip key clears the latch so the transport controls
+                    // stay reachable with up/down.
+                    if (delta != 0 && (!chromeVisible || chromeFromFlip)) {
+                        if (currentIndex >= 0 && channels.isNotEmpty()) {
+                            val next = (currentIndex + delta).coerceIn(0, channels.lastIndex)
+                            if (next != currentIndex) {
+                                currentIndex = next
+                                chromeVisible = true
+                                chromeFromFlip = true
+                            }
+                            return@onPreviewKeyEvent true
                         }
-                        return@onPreviewKeyEvent true
+                    } else if (delta == 0 && chromeVisible && chromeFromFlip) {
+                        // OK / Left / Right / Back on the flip banner = the user
+                        // wants the controls; hand chrome nav back (don't consume).
+                        chromeFromFlip = false
                     }
                 }
                 false
@@ -737,6 +757,12 @@ fun PlayerScreen(
             delay(AUTO_HIDE_MS)
             chromeVisible = false
         }
+    }
+
+    // Any time the chrome hides (auto-hide, tap, Back), drop the flip-banner
+    // latch so the next explicitly-opened chrome starts in navigation mode.
+    LaunchedEffect(chromeVisible) {
+        if (!chromeVisible) chromeFromFlip = false
     }
 
     // On TV, when the chrome hides (fullscreen video), pull D-pad focus to the
