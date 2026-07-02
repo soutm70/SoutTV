@@ -565,20 +565,20 @@ private fun CircleIconButton(
 
 /**
  * tvOS gesture-hint capsule (HomeView.playerHint parity): medium white@0.55 on a
- * black@0.72 pill. 10sp to match the guide hint chips (tvOS draws both at the
+ * black@0.72 pill. 8sp to match the guide hint chips (tvOS draws both at the
  * same size). Non-interactive; rides the banner's appear/fade window.
  */
 @Composable
 private fun PlayerHintChip(text: String) {
     Text(
         text = text,
-        fontSize = 10.sp,
+        fontSize = 8.sp,
         fontWeight = FontWeight.Medium,
         color = Color.White.copy(alpha = 0.55f),
         modifier = Modifier
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.72f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }
 

@@ -382,19 +382,23 @@ fun MainScaffold(
                         pillRequesters = pillRequesters,
                     )
                 }
-                // tvOS layout reference: when the mini-player is active the
-                // group filter pills + guide grid drop DOWN so the
-                // mini-player's right-aligned 210x118 video + hint chip
-                // (~148dp tall starting at y=12) doesn't cover them.
-                // Archie's 2026-05-28 follow-up: pin the chip row
-                // *directly* below the hint chip rather than leaving a
-                // generous buffer. Mini bottom edge ≈ y=160dp; nav row
-                // ends ≈ y=68dp, so a 90dp spacer lands the chip row at
-                // y≈158dp -- effectively flush with the mini's bottom.
+                // Reserve a band below the nav for the top-left gesture hints so
+                // the group pills / guide grid sit clear of them:
+                //  - Mini active: 90dp -- the right-aligned corner video (~148dp
+                //    tall from y=12) needs it, and all THREE hints fit under it.
+                //  - Idle Live TV: a small gap so the TWO-line hint stack has
+                //    room between the nav bar and the group pills.
+                //  - Other tabs / fullscreen (Pending): none (no hints shown).
                 val miniActive = miniPlayerState is MiniPlayerSession.State.Active
-                if (miniActive) {
+                val topHintGap = when {
+                    miniActive -> 90.dp
+                    selectedTab == AppTab.LiveTV &&
+                        miniPlayerState !is MiniPlayerSession.State.Pending -> 40.dp
+                    else -> 0.dp
+                }
+                if (topHintGap > 0.dp) {
                     androidx.compose.foundation.layout.Spacer(
-                        modifier = Modifier.height(90.dp),
+                        modifier = Modifier.height(topHintGap),
                     )
                 }
                 MainTabContent(
@@ -568,21 +572,22 @@ fun MainScaffold(
     }
 }
 
-/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): medium
- *  white@0.55 on a black@0.4 pill. 10sp (not tvOS's raw 15pt) so the longest
- *  line clears the centered top-nav in the top-left corner on Android's denser
- *  TV density. Non-interactive; state-gated by the caller. */
+/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): subtle
+ *  white@0.55 on a black@0.4 pill. 8sp keeps them small like tvOS AND narrow
+ *  enough that the longest line clears the centered top-nav in the top-left
+ *  corner (Android's TV density renders sp larger than tvOS points).
+ *  Non-interactive; state-gated by the caller. */
 @Composable
 private fun TvGuideHintChip(text: String) {
     Text(
         text = text,
-        fontSize = 10.sp,
+        fontSize = 8.sp,
         fontWeight = FontWeight.Medium,
         color = Color.White.copy(alpha = 0.55f),
         modifier = Modifier
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.4f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }
 
