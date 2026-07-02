@@ -278,6 +278,7 @@ fun PlayerChromeOverlay(
                     PlayerMoreMenu(
                         expanded = moreOpen,
                         onDismiss = { moreOpen = false },
+                        isTv = true,
                         canRecord = canRecord,
                         audioOnly = audioOnly,
                         sleepActive = sleepRemainingMillis != null,
@@ -630,6 +631,7 @@ private fun PlayerPill(
 private fun PlayerMoreMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
+    isTv: Boolean = false,
     canRecord: Boolean,
     audioOnly: Boolean,
     sleepActive: Boolean,
@@ -655,6 +657,17 @@ private fun PlayerMoreMenu(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        if (isTv) {
+            // #10 tvOS hint C: the Options panel advertises how to dismiss it.
+            // Non-interactive header (D-pad focus skips it and lands on the first
+            // row); Back closes the dropdown, which the "‹" chevron represents.
+            Text(
+                text = "Press ‹ to close",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+            )
+        }
         DropdownMenuItem(
             leadingIcon = {
                 Icon(
