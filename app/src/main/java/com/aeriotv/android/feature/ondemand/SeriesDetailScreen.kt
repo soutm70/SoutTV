@@ -580,6 +580,7 @@ fun SeriesDetailScreen(
                 fetchBio = viewModel::resolveTmdbPersonBio,
                 profileUrl = viewModel::tmdbProfileImageUrl,
                 onDismiss = { bioPerson = null },
+                isTv = isTv,
                 onTileClick = { item ->
                     if (!resolvingKnownFor) {
                         resolvingKnownFor = true

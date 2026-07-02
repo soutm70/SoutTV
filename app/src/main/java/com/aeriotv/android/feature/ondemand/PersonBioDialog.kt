@@ -1,5 +1,7 @@
 package com.aeriotv.android.feature.ondemand
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -85,6 +88,7 @@ fun PersonBioDialog(
     fetchBio: suspend (String) -> TmdbPersonBio?,
     profileUrl: (String?, String) -> String?,
     onDismiss: () -> Unit,
+    isTv: Boolean,
     onTileClick: ((TmdbKnownForItem) -> Unit)? = null,
 ) {
     var bio by remember(person.id) { mutableStateOf<TmdbPersonBio?>(null) }
@@ -173,11 +177,16 @@ fun PersonBioDialog(
                             }
                         }
 
-                        // QR to the person's TMDB page: no browser on a TV, so
-                        // the user scans it to open the full filmography on a
-                        // phone. A real layout child (not an overlay) so it
-                        // never sits on top of the bio text.
-                        TmdbPersonQr(personId = person.id)
+                        // TV only: QR to the person's TMDB page. A TV has no
+                        // browser, so the user scans it to open the full
+                        // filmography on a phone. A real layout child (not an
+                        // overlay) so it never sits on top of the bio text. On
+                        // phone/tablet the QR makes no sense (you're already on
+                        // the device) -- a tappable "View on TMDB" link in the
+                        // footer opens the page directly instead.
+                        if (isTv) {
+                            TmdbPersonQr(personId = person.id)
+                        }
                     }
 
                     val knownFor = bio?.knownFor.orEmpty()
@@ -206,7 +215,26 @@ fun PersonBioDialog(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Phone/tablet: the QR is replaced by a direct link that
+                    // opens the person's TMDB page in the browser.
+                    if (!isTv) {
+                        val context = LocalContext.current
+                        SettingsDialogTextButton(
+                            label = "View on TMDB",
+                            onClick = {
+                                val url = "https://www.themoviedb.org/person/${person.id}"
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                }
+                            },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
                     SettingsDialogTextButton(label = "Close", onClick = onDismiss)
                 }
             }
