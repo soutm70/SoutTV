@@ -928,7 +928,25 @@ fun GuideScreen(
                 LazyRow(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
+                        // #14 tvOS parity: a HOLD Left while focus is on the
+                        // group pills jumps straight to the "All" pill (the same
+                        // gesture the guide grid uses), instead of walking pill
+                        // by pill. A tap Left still steps one pill. isLongPress
+                        // fires at the ~0.5s long-press timeout; repeatCount>=4
+                        // is the fallback. Inert on touch (no key events).
+                        .onPreviewKeyEvent { event ->
+                            if (isTv && event.type == KeyEventType.KeyDown &&
+                                event.key == Key.DirectionLeft &&
+                                (event.nativeKeyEvent.isLongPress ||
+                                    event.nativeKeyEvent.repeatCount >= HOLD_LEFT_ALL_PILL_REPEAT)
+                            ) {
+                                runCatching { allPillFocus.requestFocus() }
+                                true
+                            } else {
+                                false
+                            }
+                        },
                     contentPadding = PaddingValues(end = if (isTv) 20.dp else 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (isTv) 5.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
