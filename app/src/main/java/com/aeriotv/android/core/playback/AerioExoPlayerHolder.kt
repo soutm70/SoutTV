@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -924,6 +925,45 @@ class AerioExoPlayerHolder @Inject constructor(
                 else -> "UNKNOWN($playbackState)"
             }
             Log.i(TAG, "ExoPlayer state -> $label")
+        }
+
+        // GH #8 diagnostic (release-safe, so it lands in a user's captured
+        // debug log): "No Sound / no audio track" on some devices (e.g.
+        // Chromecast with Google TV). When the stream carries an audio track
+        // the device can decode in neither hardware nor the bundled FFmpeg
+        // software decoder, ExoPlayer exposes the group but marks it
+        // unsupported, and the track selector offers nothing -- silent
+        // playback with "no audio track available". Logging every audio group
+        // with its codec + per-track support pins the exact culprit codec
+        // (e.g. ac-3 support=UNSUPPORTED_TYPE) from a user's log, which the
+        // AnalyticsListener format hooks cannot show because no audio renderer
+        // ever selects the track. Distinguishes that from "stream has no audio
+        // group at all" (a demux/remux problem, not a decoder gap).
+        override fun onTracksChanged(tracks: Tracks) {
+            val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            if (audioGroups.isEmpty()) {
+                Log.w(TAG, "ExoPlayer audio: stream exposes NO audio track group")
+                return
+            }
+            audioGroups.forEachIndexed { g, group ->
+                for (i in 0 until group.length) {
+                    val f = group.getTrackFormat(i)
+                    val support = when (group.getTrackSupport(i)) {
+                        C.FORMAT_HANDLED -> "HANDLED"
+                        C.FORMAT_EXCEEDS_CAPABILITIES -> "EXCEEDS_CAPABILITIES"
+                        C.FORMAT_UNSUPPORTED_DRM -> "UNSUPPORTED_DRM"
+                        C.FORMAT_UNSUPPORTED_SUBTYPE -> "UNSUPPORTED_SUBTYPE"
+                        C.FORMAT_UNSUPPORTED_TYPE -> "UNSUPPORTED_TYPE"
+                        else -> "UNKNOWN"
+                    }
+                    Log.i(
+                        TAG,
+                        "ExoPlayer audio track g$g:$i -> ${f.sampleMimeType} " +
+                            "codecs=${f.codecs} ${f.channelCount}ch ${f.sampleRate}Hz " +
+                            "support=$support selected=${group.isTrackSelected(i)}",
+                    )
+                }
+            }
         }
     }
 
