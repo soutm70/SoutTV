@@ -260,17 +260,64 @@ fun MultiviewScreen(
     // Derived spotlight index (null when the spotlit channel is no longer
     // tiled -- the contains-guard iOS applies to spotlightTileID).
     val spotlightIndex = selected.indexOfFirst { it.id == spotlightId }.takeIf { it >= 0 }
+    // iOS MultiviewStore.remove(id:) clears spotlightTileID on removal, so a
+    // re-added channel never inherits an old spotlight. Android removals can
+    // also happen OUTSIDE this screen's remove paths (the re-entrant picker's
+    // toggle, the memory-pressure shed), so reconcile against the list itself:
+    // once the spotlit id is gone, drop it for good instead of leaving it
+    // latent to silently re-engage when the same channel is re-added.
+    LaunchedEffect(selected) {
+        if (spotlightId != null && selected.none { it.id == spotlightId }) spotlightId = null
+    }
     // If the tile count shrinks under an open per-tile sheet, drop the stale
     // index so the sheet cannot re-attach to a future tile at that position.
     LaunchedEffect(selected.size) {
         if ((subtitleTileIndex ?: -1) >= selected.size) subtitleTileIndex = null
         if ((audioTrackTileIndex ?: -1) >= selected.size) audioTrackTileIndex = null
         if ((tileMenuIndex ?: -1) >= selected.size) tileMenuIndex = null
+        // Store-side removals (picker toggle, memory shed) bypass removeTileAt:
+        // if fullscreen points past the end, clear it so the grid can never
+        // wedge in the everything-parked-off-screen state.
+        if ((fullscreenIndex ?: -1) >= selected.size) fullscreenIndex = null
         // Drop Finished overlays for tile positions that no longer exist (a
         // removal shifted the grid), so a stale checkmark never paints over a
         // different tile that slid into the slot.
         finishedTiles = finishedTiles.filter { it < selected.size }.toSet()
         scrubberTiles = scrubberTiles.filter { it < selected.size }.toSet()
+    }
+
+    // Single removal path for both screen-level removers (the tile menu's
+    // Remove and the Finished overlay's Remove). The tiles are POSITIONAL:
+    // removing index i slides every higher channel down one slot, so all
+    // position-keyed state must slide with it or it re-attaches to whichever
+    // tile lands in the slot. iOS removes by stable tile id
+    // (MultiviewStore.remove(id:), which also clears fullscreen/spotlight),
+    // so this reconciliation is the positional-Android equivalent.
+    val removeTileAt: (Int) -> Unit = { idx ->
+        if (spotlightId == selected.getOrNull(idx)?.id) spotlightId = null
+        relocatingIndex = null
+        // Clear fullscreen when the fullscreen tile itself is removed (iOS
+        // MultiviewStore.swift remove(id:)); shift it down when a lower tile
+        // is removed so the SAME tile stays fullscreen. Without this, the
+        // stale index either promotes the wrong tile or -- when the removed
+        // tile was last -- parks every tile off-screen (black, silent grid).
+        fullscreenIndex = fullscreenIndex?.let { f ->
+            when {
+                f == idx -> null
+                f > idx -> f - 1
+                else -> f
+            }
+        }
+        fun shift(set: Set<Int>): Set<Int> = set.mapNotNull {
+            when {
+                it == idx -> null
+                it > idx -> it - 1
+                else -> it
+            }
+        }.toSet()
+        finishedTiles = shift(finishedTiles)
+        scrubberTiles = shift(scrubberTiles)
+        storeHandle.removeAt(idx)
     }
 
     if (selected.isEmpty()) {
@@ -323,11 +370,7 @@ fun MultiviewScreen(
                 finishedTiles = finishedTiles - idx
                 tilePlayers[idx]?.let { p -> p.seekTo(0L); p.playWhenReady = true }
             },
-            onRemoveTile = { idx ->
-                if (spotlightId == selected.getOrNull(idx)?.id) spotlightId = null
-                relocatingIndex = null
-                storeHandle.removeAt(idx)
-            },
+            onRemoveTile = removeTileAt,
             onTileFocused = {
                 // D-pad moved onto a tile: re-show the channel names + count
                 // chip and re-arm the auto-hide so they stay up while the
@@ -349,8 +392,11 @@ fun MultiviewScreen(
             onTileLongPress = { idx ->
                 // Long-press picks up the tile (drag-to-reorder start, or the
                 // tap-to-swap fallback if released in place). No-op in
-                // fullscreen mode -- nothing else on screen to reorder against.
-                if (fullscreenIndex != null) return@TileGrid
+                // fullscreen mode -- nothing else on screen to reorder against
+                // -- and at N=1 (iOS gates relocate behind the N>1 menu; a
+                // sole tile has nothing to swap with, so picking it up only
+                // shows a stuck "Tap a tile to swap" and eats a BACK).
+                if (fullscreenIndex != null || selected.size <= 1) return@TileGrid
                 relocatingIndex = idx
             },
             onReorder = { from, to ->
@@ -361,7 +407,12 @@ fun MultiviewScreen(
             },
             onTileDoubleTap = { idx ->
                 // Toggle fullscreen for this tile. Audio focus rides along
-                // so the fullscreened tile is the one playing sound.
+                // so the fullscreened tile is the one playing sound. Gated on
+                // N>1 like iOS (MultiviewTileView "Gate on N>1: at N=1
+                // there's nothing to zoom into"): a sole tile already fills
+                // the screen, so latching the mode would only hide the "+"
+                // button and eat the next BACK press invisibly.
+                if (fullscreenIndex == null && selected.size <= 1) return@TileGrid
                 fullscreenIndex = if (fullscreenIndex == idx) null else idx
                 if (fullscreenIndex != null) {
                     storeHandle.setAudioFocus(idx)
@@ -577,12 +628,19 @@ fun MultiviewScreen(
                 // spotlight can't override the choice and make the switch a
                 // no-op (iOS MultiviewTileView layout rows).
                 val availableModes = MultiviewLayoutMode.available(selected.size)
-                // If the persisted mode isn't offered at this count (e.g. a
-                // Hero + Corner choice after dropping below 6 tiles), rects()
-                // falls back to Default -- so mark Default active rather than
-                // leaving no row checkmarked.
+                // Checkmark = the layout actually being RENDERED. Exact match
+                // like iOS, with ONE exception: Hero + Corner away from 6
+                // tiles is the sole case rects() falls back to the Default
+                // table, so mark Default active there (iOS shows no checkmark;
+                // marking the truly-rendered layout is strictly truthful).
+                // EvenGrid/Spotlight render at ANY count, so when one of them
+                // is persisted but not offered (e.g. Even Grid grown to 7
+                // tiles) NO row is checkmarked -- matching iOS, and never
+                // mislabeling Default while a non-default grid is on screen.
                 val effectiveMode =
-                    if (layoutMode in availableModes) layoutMode else MultiviewLayoutMode.Auto
+                    if (layoutMode == MultiviewLayoutMode.HeroCorner &&
+                        layoutMode !in availableModes
+                    ) MultiviewLayoutMode.Auto else layoutMode
                 availableModes.forEach { mode ->
                     val activeMode = effectiveMode == mode
                     add(
@@ -647,14 +705,12 @@ fun MultiviewScreen(
                         icon = Icons.Outlined.Close,
                         destructive = true,
                         onClick = {
-                            // iOS MultiviewStore.remove(id:) semantics live in
-                            // removeAt (audio promotes to the newest remaining
-                            // tile). Spotlight/relocate that pointed at the
-                            // removed tile are cleared here.
+                            // iOS MultiviewStore.remove(id:) semantics: audio
+                            // promotes in removeAt; ALL position-keyed screen
+                            // state (spotlight, relocate, fullscreen, overlay
+                            // sets) reconciles in removeTileAt.
                             val removingLast = selected.size <= 1
-                            if (spotlightId == menuTile.id) spotlightId = null
-                            relocatingIndex = null
-                            storeHandle.removeAt(menuIdx)
+                            removeTileAt(menuIdx)
                             if (removingLast) onClose()
                         },
                     ),
