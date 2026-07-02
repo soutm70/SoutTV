@@ -7,39 +7,56 @@ import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Marks the host Activity's window as "keep screen on" for the duration of
- * the calling composable. When the composable leaves composition (user backs
- * out of the player, switches tabs, etc.) the flag is cleared and normal
- * screen-timeout rules resume.
+ * App-wide reference count of composables that currently want the screen kept
+ * on. This is the crux of the ref-counting: `Window.addFlags` /
+ * `clearFlags(FLAG_KEEP_SCREEN_ON)` set/clear a SINGLE window bit and are NOT
+ * ref-counted by the framework (a widely-held misconception). Two overlapping
+ * owners -- e.g. the fullscreen player and the multiview grid during the
+ * Live TV -> "+" -> Multiview navigation transition -- both set the same bit,
+ * so when the LEAVING screen's onDispose ran clearFlags it wiped the flag the
+ * ENTERING screen had just set, and the display slept mid-stream (issue #12).
+ * Counting here so the bit is cleared only when the LAST owner leaves mirrors
+ * iOS `IdleTimerRefCount` (Aerio/Shared/IdleTimerRefCount.swift), which this
+ * was always meant to be.
+ */
+private val keepScreenOnRefCount = AtomicInteger(0)
+
+/**
+ * Keeps the host Activity's window awake for the lifetime of the calling
+ * composable, ref-counted so concurrent owners (player, VOD player, multiview,
+ * mini <-> fullscreen swaps) can't clear each other's request. When the last
+ * owner leaves composition the flag is cleared and normal screen-timeout
+ * rules resume.
  *
- * Ports iOS `IdleTimerRefCount.increment()` / `decrement()` from
- * Aerio/Shared/IdleTimerRefCount.swift, which iOS calls on playback start
- * and stop. Same intent: don't let the display dim/sleep while the user
- * is watching video. Without this, the system screen-timeout fires after
- * its configured idle window (often 30s-2min on Samsung / OEM defaults)
- * mid-stream, the panel sleeps, and the user has to wake the phone to keep
- * watching -- exactly the symptom the user reported.
+ * Ports iOS `IdleTimerRefCount.increment()` / `decrement()`: don't let the
+ * display dim/sleep while video is playing. Without it the system
+ * screen-timeout (often 30s-2min on Samsung / OEM defaults) fires mid-stream.
  *
- * Implementation note: the canonical Android pattern is
- * `Window.addFlags(FLAG_KEEP_SCREEN_ON)` rather than a `PowerManager.WakeLock`.
- * The flag approach is honored by the system without any permission, doesn't
- * touch the audio/CPU subsystems, and automatically tracks Activity
- * lifecycle (cleared when the Activity goes to background by the OS).
- * Multiple composables can request the flag concurrently and the system
- * coalesces them; on dispose this composable removes its own request, but
- * if another player composable is still mounted (e.g. mini-player + main
- * player swap) the flag stays in place via Android's internal counter.
+ * Uses the `FLAG_KEEP_SCREEN_ON` window flag rather than a `PowerManager`
+ * wake lock: honored without any permission, doesn't touch the audio/CPU
+ * subsystems, and the OS still clears it automatically when the Activity
+ * backgrounds. The flag is re-asserted on every increment so it survives an
+ * Activity window swap while at least one owner is active.
  */
 @Composable
 fun KeepScreenOnWhilePlaying() {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         val activity = context.findActivityCompat()
+        keepScreenOnRefCount.incrementAndGet()
+        // Re-assert on every entry (idempotent) so a new owner restores the
+        // flag even if the window changed since the last one set it.
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
-            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Clear ONLY when this was the last owner; another mounted player
+            // composable keeps the flag alive.
+            if (keepScreenOnRefCount.decrementAndGet() <= 0) {
+                keepScreenOnRefCount.set(0)
+                activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
 }
