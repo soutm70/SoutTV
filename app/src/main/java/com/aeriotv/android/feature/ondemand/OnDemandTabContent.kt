@@ -4,6 +4,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -42,6 +44,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Search
@@ -120,9 +123,42 @@ fun OnDemandTabContent(
     onMovieClick: (DispatcharrVODMovie) -> Unit = {},
     onSeriesClick: (DispatcharrVODSeries) -> Unit = {},
     onEpisodeResume: (String) -> Unit = {},
+    // Issue #9: resume an in-progress MOVIE by id from the Continue Watching
+    // tab (opens the movie detail, which surfaces the Resume button). Episodes
+    // use onEpisodeResume.
+    onResumeMovie: (String) -> Unit = {},
     viewModel: OnDemandViewModel = hiltViewModel(),
+    watchVm: WatchProgressViewModel = hiltViewModel(),
 ) {
     var section by rememberSaveable { mutableStateOf(OnDemandSection.Movies) }
+
+    // Issue #9: Continue Watching is its own On Demand sub-tab now (movies +
+    // episodes), replacing the rails that sat squished atop the Movies / Series
+    // grids. Its pill only appears when there is in-progress content. Rows are
+    // self-contained (title/poster/position/duration/vodType) so no library
+    // join is needed; an item is "in progress" if it has a position, is not
+    // flagged finished, and is not within 5 minutes of the end (the same
+    // heuristic the old rails and iOS use).
+    val recentProgress by watchVm.observeRecent(30).collectAsStateWithLifecycle(initialValue = emptyList())
+    val continueWatchingRows = remember(recentProgress) {
+        recentProgress.filter { row ->
+            row.positionMs > 0L && !row.isFinished &&
+                (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L)
+        }
+    }
+    val availableSections = remember(continueWatchingRows.isNotEmpty()) {
+        buildList {
+            if (continueWatchingRows.isNotEmpty()) add(OnDemandSection.ContinueWatching)
+            add(OnDemandSection.Movies)
+            add(OnDemandSection.Series)
+        }
+    }
+    // If Continue Watching empties while it is the selected tab (last item
+    // finished / removed), fall back to Movies so the pill can disappear
+    // without stranding the user on a vanished tab.
+    LaunchedEffect(availableSections) {
+        if (section !in availableSections) section = OnDemandSection.Movies
+    }
     // XC libraries are probed cheaply at init but the heavy per-category walk is
     // deferred until the tab is actually shown -- kick it off here (no-op for
     // non-XC sources and once already loaded).
@@ -138,9 +174,11 @@ fun OnDemandTabContent(
     // saveable, so the detail-return scroll restore keeps working unchanged.
     val moviesGridState = rememberLazyGridState()
     val seriesGridState = rememberLazyGridState()
+    val continueGridState = rememberLazyGridState()
     val activeGridState = when (section) {
         OnDemandSection.Movies -> moviesGridState
         OnDemandSection.Series -> seriesGridState
+        OnDemandSection.ContinueWatching -> continueGridState
     }
     // TV chrome collapse: once the user scrolls past the first poster row,
     // report "collapsed" to the shell (top tab bar) and shrink the segment
@@ -200,12 +238,22 @@ fun OnDemandTabContent(
             },
         ) {
             SegmentPills(
+                sections = availableSections,
                 current = section,
                 onSelect = { section = it },
             )
         }
 
         when (section) {
+            OnDemandSection.ContinueWatching -> ContinueWatchingSubScreen(
+                viewModel = viewModel,
+                movieRows = continueWatchingRows.filter { it.vodType != "episode" },
+                episodeRows = continueWatchingRows.filter { it.vodType == "episode" },
+                onResumeMovie = onResumeMovie,
+                onEpisodeResume = onEpisodeResume,
+                onSeriesClick = onSeriesClick,
+                onRemove = { watchVm.delete(it) },
+            )
             OnDemandSection.Movies -> MoviesSubScreen(
                 viewModel = viewModel,
                 onMovieClick = onMovieClick,
@@ -224,6 +272,7 @@ fun OnDemandTabContent(
 
 @Composable
 private fun SegmentPills(
+    sections: List<OnDemandSection>,
     current: OnDemandSection,
     onSelect: (OnDemandSection) -> Unit,
 ) {
@@ -244,7 +293,7 @@ private fun SegmentPills(
         horizontalArrangement = if (isTv) Arrangement.Center else Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        OnDemandSection.entries.forEachIndexed { index, entry ->
+        sections.forEachIndexed { index, entry ->
             if (isTv && index > 0) Spacer(Modifier.width(12.dp))
             SegmentPill(
                 label = entry.label,
@@ -308,6 +357,66 @@ private fun SegmentPill(
     }
 }
 
+/**
+ * Continue Watching sub-tab (issue #9). Two horizontal shelves -- in-progress
+ * Movies and in-progress TV Shows -- reusing the same rail + card components
+ * that used to sit squished atop the Movies / Series grids. The reporter asked
+ * for exactly this ("a separate tab ... horizontal scrolling 2 rows"). The pill
+ * that leads here is only shown when at least one shelf has content, so this is
+ * never reached empty; the guard is defensive.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ContinueWatchingSubScreen(
+    viewModel: OnDemandViewModel,
+    movieRows: List<WatchProgressEntity>,
+    episodeRows: List<WatchProgressEntity>,
+    onResumeMovie: (String) -> Unit,
+    onEpisodeResume: (String) -> Unit,
+    onSeriesClick: (DispatcharrVODSeries) -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val seriesById = remember(state.series) { state.series.associateBy { it.id } }
+    if (movieRows.isEmpty() && episodeRows.isEmpty()) {
+        EmptyState(
+            title = "Nothing in progress",
+            body = "Movies and shows you start will show up here so you can pick up where you left off.",
+        )
+        return
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        if (movieRows.isNotEmpty()) {
+            ContinueWatchingRail(
+                title = "Movies",
+                items = movieRows,
+                posterFor = { it.posterUrl },
+                // Resume by id: opens the movie detail (with its Resume button),
+                // so it works even for a movie that hasn't paged into the grid.
+                onItemClick = { onResumeMovie(it.videoId) },
+                onRemove = { onRemove(it.videoId) },
+            )
+        }
+        if (episodeRows.isNotEmpty()) {
+            SeriesContinueWatchingRail(
+                title = "TV Shows",
+                items = episodeRows,
+                seriesById = seriesById,
+                onItemClick = { onEpisodeResume(it.videoId) },
+                onRemove = { onRemove(it.videoId) },
+                onOpenSeries = { row ->
+                    row.seriesId?.toIntOrNull()?.let { seriesById[it] }?.let(onSeriesClick)
+                },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MoviesSubScreen(
@@ -318,7 +427,6 @@ private fun MoviesSubScreen(
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val recentProgress by watchVm.observeRecent(20).collectAsStateWithLifecycle(initialValue = emptyList())
     val isTv = rememberLiveTvFormFactor().isTv
     // VOD group hide filter (iOS MoviesView hiddenMovieGroups, MoviesView.swift:74).
     // Categories are tagged on each movie row by OnDemandViewModel (from the XC
@@ -383,18 +491,7 @@ private fun MoviesSubScreen(
         return
     }
 
-    // Continue Watching: filter the recent rows down to the ones whose videoId
-    // is in the loaded movies cache AND that aren't within 5 minutes of the end.
-    // iOS uses the same "5 min from end = completed" heuristic in VODDetailView.
-    val movieIds = remember(state.movies) { state.movies.asSequence().map { it.uuid }.toSet() }
-    val continueWatching = remember(recentProgress, movieIds) {
-        recentProgress.filter { row ->
-            row.videoId in movieIds &&
-                    row.positionMs > 0L &&
-                    (row.durationMs <= 0L || row.positionMs < row.durationMs - 5 * 60 * 1000L)
-        }.take(8)
-    }
-    val movieByUuid = remember(state.movies) { state.movies.associateBy { it.uuid } }
+    // (Continue Watching moved to its own On Demand sub-tab, issue #9.)
 
     // Apply the hide filter once at this point in the pipeline; everything
     // below renders from `visibleFiltered`. The total still reflects the
@@ -421,19 +518,6 @@ private fun MoviesSubScreen(
                 "${visibleFiltered.size} / $total"
             },
         )
-
-        // Whether the Continue Watching rail should render. tvOS keeps this rail
-        // INSIDE the same vertical scroll as the library grid (it is the first
-        // child of the scroll content, the LazyVGrid is the second), so the rail
-        // scrolls off the top as you move down into the grid. We mirror that by
-        // rendering the rail as a full-span header ITEM of the LazyVerticalGrid
-        // below (see the `if (showContinueWatching) item(span = full) {...}`),
-        // NOT as a sibling Column child. That is the structural fix for the old
-        // overlap bug (#8): the rail is no longer a wrap-content sibling sitting
-        // above a fillMaxSize grid that over-claimed the Column height -- it is
-        // index 0 of the grid's own layout, so the first poster row is always
-        // measured and placed cleanly BELOW it.
-        val showContinueWatching = continueWatching.isNotEmpty() && state.searchQuery.isBlank()
 
         val countLabel = state.totalCount.takeIf { it > 0 }?.let { total ->
             "${visibleFiltered.size} / $total"
@@ -504,38 +588,7 @@ private fun MoviesSubScreen(
             verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
             horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
         ) {
-            // Continue Watching rail as a full-span header item -- the tvOS
-            // structure (rail is the first child of the SAME scroll as the
-            // grid, scrolls away with it). Spanning maxLineSpan makes it own a
-            // full row so the A-Z posters always begin on the row beneath it;
-            // there is no separate sibling to overlap.
-            if (showContinueWatching) {
-                item(
-                    key = "continue-watching",
-                    span = { GridItemSpan(maxLineSpan) },
-                ) {
-                    ContinueWatchingRail(
-                        items = continueWatching,
-                        // The stored row often has no posterUrl (Navigation
-                        // captures movie?.posterUrl before the route-scoped
-                        // library finishes loading, and many Dispatcharr rows
-                        // carry no logo at all), so fall back to the loaded
-                        // library's poster for the card.
-                        posterFor = { row ->
-                            row.posterUrl?.takeIf { it.isNotBlank() }
-                                ?: movieByUuid[row.videoId]?.posterUrl
-                        },
-                        onItemClick = { progress ->
-                            movieByUuid[progress.videoId]?.let { movie ->
-                                returnFocus.arm("cw:${progress.videoId}")
-                                onMovieClick(movie)
-                            }
-                        },
-                        onRemove = { watchVm.delete(it.videoId) },
-                        focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
-                    )
-                }
-            }
+            // (Continue Watching is its own On Demand sub-tab now, issue #9.)
             itemsIndexed(items = visibleFiltered, key = { _, it -> it.id }) { index, movie ->
                 // Prefetch the next page as the user nears the end of what's
                 // loaded. Browse only -- search results aren't paginated here,
@@ -588,10 +641,7 @@ private fun SeriesSubScreen(
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val recentProgress by watchVm.observeRecent(20)
-        .collectAsStateWithLifecycle(initialValue = emptyList())
     val isTv = rememberLiveTvFormFactor().isTv
-    val seriesById = remember(state.series) { state.series.associateBy { it.id } }
     // Series-side group hide filter, mirrors MoviesSubScreen above.
     val hiddenSeriesGroups by settingsVm.hiddenSeriesGroups
         .collectAsStateWithLifecycle(initialValue = emptySet())
@@ -633,12 +683,7 @@ private fun SeriesSubScreen(
             }
         }
     }
-    // Continue Watching for series = unfinished episode rows. Includes the next
-    // episode the up-next queue seeded (positionMs 0) after finishing one, so a
-    // binge keeps surfacing the next episode (iOS Issue #19).
-    val continueWatchingEpisodes = remember(recentProgress) {
-        recentProgress.filter { it.vodType == "episode" && !it.isFinished }.take(8)
-    }
+    // (Continue Watching episodes moved to the Continue Watching sub-tab, #9.)
 
     if (state.unsupportedSource) {
         EmptyState(
@@ -670,15 +715,6 @@ private fun SeriesSubScreen(
                 "${visibleSeriesFiltered.size} / $total"
             },
         )
-
-        // tvOS keeps this rail INSIDE the same vertical scroll as the grid (see
-        // the long note in MoviesSubScreen). We render it as a full-span header
-        // ITEM of the LazyVerticalGrid below, not a sibling Column child, which
-        // is the structural fix for the old Series overlap bug (#8): the rail is
-        // index 0 of the grid's layout, so episode/series posters always begin
-        // on the row beneath it.
-        val showContinueWatching =
-            continueWatchingEpisodes.isNotEmpty() && state.seriesSearchQuery.isBlank()
 
         val countLabel = state.seriesTotalCount.takeIf { it > 0 }?.let { total ->
             "${visibleSeriesFiltered.size} / $total"
@@ -746,31 +782,7 @@ private fun SeriesSubScreen(
             verticalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
             horizontalArrangement = Arrangement.spacedBy(if (isTv) 16.dp else 12.dp),
         ) {
-            // Continue Watching rail as a full-span header item (mirrors tvOS:
-            // rail shares the grid's scroll and scrolls away with it). See the
-            // MoviesSubScreen note for why this kills the overlap bug.
-            if (showContinueWatching) {
-                item(
-                    key = "continue-watching",
-                    span = { GridItemSpan(maxLineSpan) },
-                ) {
-                    SeriesContinueWatchingRail(
-                        items = continueWatchingEpisodes,
-                        seriesById = seriesById,
-                        onItemClick = { row ->
-                            returnFocus.arm("cw:${row.videoId}")
-                            onEpisodeResume(row.videoId)
-                        },
-                        onRemove = { watchVm.delete(it.videoId) },
-                        onOpenSeries = { row ->
-                            row.seriesId?.toIntOrNull()?.let { id ->
-                                seriesById[id]?.let(onSeriesClick)
-                            }
-                        },
-                        focusRequesterFor = { row -> returnFocus.requesterFor("cw:${row.videoId}") },
-                    )
-                }
-            }
+            // (Continue Watching episodes are on the Continue Watching sub-tab, #9.)
             itemsIndexed(items = visibleSeriesFiltered, key = { _, it -> it.id }) { index, series ->
                 if (state.seriesNextCursor != null &&
                     state.seriesSearchQuery.isBlank() &&
@@ -1081,13 +1093,14 @@ private fun ContinueWatchingRail(
     posterFor: (WatchProgressEntity) -> String?,
     onItemClick: (WatchProgressEntity) -> Unit,
     onRemove: (WatchProgressEntity) -> Unit,
+    title: String = "Continue Watching",
     /** BACK-from-detail refocus hook: non-null only for the card the focus
      *  restore should land on (see VodReturnFocusState). */
     focusRequesterFor: (WatchProgressEntity) -> FocusRequester? = { null },
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Text(
-            text = "Continue Watching",
+            text = title,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
@@ -1278,6 +1291,7 @@ private fun SeriesContinueWatchingRail(
     seriesById: Map<Int, DispatcharrVODSeries>,
     onItemClick: (WatchProgressEntity) -> Unit,
     onRemove: (WatchProgressEntity) -> Unit,
+    title: String = "Continue Watching",
     // iOS parity: long-press -> Open Series jumps to the full show page.
     onOpenSeries: (WatchProgressEntity) -> Unit = {},
     /** BACK-from-player refocus hook: non-null only for the card the focus
@@ -1286,7 +1300,7 @@ private fun SeriesContinueWatchingRail(
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Text(
-            text = "Continue Watching",
+            text = title,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
@@ -1558,6 +1572,9 @@ private fun EmptyState(title: String, body: String) {
 }
 
 private enum class OnDemandSection(val label: String, val icon: ImageVector) {
+    // Issue #9: a Continue Watching sub-tab, shown only when there is
+    // in-progress content (movies + episodes). Rendered first, before Movies.
+    ContinueWatching(label = "Continue", icon = Icons.Outlined.History),
     Movies(label = "Movies", icon = Icons.Outlined.Movie),
     Series(label = "Series", icon = Icons.Outlined.Tv),
 }

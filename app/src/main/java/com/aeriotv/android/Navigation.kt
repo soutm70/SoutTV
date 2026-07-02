@@ -518,6 +518,11 @@ fun AerioTVNavHost(
                     onEpisodeResume = { videoId ->
                         navController.navigate(Routes.vodEpisodePlayer(videoId))
                     },
+                    // #9: resume an in-progress movie from Continue Watching by
+                    // opening its detail (which offers the Resume button).
+                    onResumeMovie = { videoId ->
+                        navController.navigate(Routes.movieDetail(videoId))
+                    },
                     onPlayRecording = { playbackUrl, title ->
                         navController.navigate(Routes.recordingPlayer(playbackUrl, title))
                     },

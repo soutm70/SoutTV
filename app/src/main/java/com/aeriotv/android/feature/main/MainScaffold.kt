@@ -127,6 +127,7 @@ fun MainScaffold(
     onMovieClick: (String) -> Unit = {},
     onSeriesClick: (Int) -> Unit = {},
     onEpisodeResume: (String) -> Unit = {},
+    onResumeMovie: (String) -> Unit = {},
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
     onLaunchMultiview: () -> Unit = {},
     onWatchLive: (String, String, Boolean) -> Unit = { _, _, _ -> },
@@ -399,6 +400,7 @@ fun MainScaffold(
                     onMovieClick = onMovieClick,
                     onSeriesClick = onSeriesClick,
                     onEpisodeResume = onEpisodeResume,
+                    onResumeMovie = onResumeMovie,
                     onPlayRecording = onPlayRecording,
                     onLaunchMultiview = onLaunchMultiview,
                     onWatchLive = onWatchLive,
@@ -516,6 +518,7 @@ fun MainScaffold(
                 onMovieClick = onMovieClick,
                 onSeriesClick = onSeriesClick,
                 onEpisodeResume = onEpisodeResume,
+                onResumeMovie = onResumeMovie,
                 onPlayRecording = onPlayRecording,
                 onLaunchMultiview = onLaunchMultiview,
                 onWatchLive = onWatchLive,
@@ -550,6 +553,7 @@ private fun MainTabContent(
     onMovieClick: (String) -> Unit,
     onSeriesClick: (Int) -> Unit,
     onEpisodeResume: (String) -> Unit,
+    onResumeMovie: (String) -> Unit,
     onPlayRecording: (String, String) -> Unit,
     onLaunchMultiview: () -> Unit,
     onWatchLive: (String, String, Boolean) -> Unit,
@@ -574,6 +578,7 @@ private fun MainTabContent(
                 onMovieClick = { movie -> onMovieClick(movie.uuid) },
                 onSeriesClick = { series -> onSeriesClick(series.id) },
                 onEpisodeResume = onEpisodeResume,
+                onResumeMovie = onResumeMovie,
             )
             AppTab.Settings -> SettingsTabContent()
         }
