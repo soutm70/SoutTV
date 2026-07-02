@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,7 +52,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.aeriotv.android.feature.livetv.rememberLiveTvFormFactor
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -437,6 +440,30 @@ fun MainScaffold(
                     .align(Alignment.TopStart)
                     .padding(start = 24.dp, top = 18.dp),
             )
+            // #10 tvOS Menu/Back gesture hints (HomeView guideMenuHint parity).
+            // Rendered at the Home level -- NOT inside the guide -- so they land
+            // in the top-left corner at the nav bar's height, left of the
+            // centered tab bar and ABOVE the group pills, exactly like tvOS.
+            // Gated to the Live TV tab and to idle-or-mini (Pending == the
+            // fullscreen player is up, which draws its own player hints). A1
+            // (resume) only while the mini is Active; drops below the sync pill
+            // when background work is running (tvOS isAnyBackgroundWork branch).
+            if (selectedTab == AppTab.LiveTV &&
+                miniPlayerState !is MiniPlayerSession.State.Pending
+            ) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 24.dp, top = if (anyBackgroundWork) 60.dp else 18.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+                ) {
+                    if (miniPlayerState is MiniPlayerSession.State.Active) {
+                        TvGuideHintChip("Press Menu/Back or Play/Pause to resume playback.")
+                    }
+                    TvGuideHintChip("Double press Menu/Back to return to top channel.")
+                    TvGuideHintChip("Hold left on remote to return to the All group pill.")
+                }
+            }
             }
         }
         return
@@ -539,6 +566,24 @@ fun MainScaffold(
             )
         }
     }
+}
+
+/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): medium
+ *  white@0.55 on a black@0.4 pill. 10sp (not tvOS's raw 15pt) so the longest
+ *  line clears the centered top-nav in the top-left corner on Android's denser
+ *  TV density. Non-interactive; state-gated by the caller. */
+@Composable
+private fun TvGuideHintChip(text: String) {
+    Text(
+        text = text,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Medium,
+        color = Color.White.copy(alpha = 0.55f),
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.4f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 /**

@@ -106,7 +106,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -588,8 +587,7 @@ fun GuideScreen(
         )
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(modifier = modifier.fillMaxSize().statusBarsPadding()) {
         // Audit task #22: multiview staging banner. Visible only when at
         // least one channel has been added to Multiview. Tapping the Play
         // button launches the dedicated Multiview screen; tapping the chip
@@ -1492,28 +1490,6 @@ fun GuideScreen(
                 HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
         }
-        }
-    }
-        // #10 tvOS parity: Menu/Back gesture hints, top-left of the Live TV
-        // guide, floating over the grid (HomeView guideMenuHint copy). A1 only
-        // shows while the corner mini is Active; non-interactive.
-        if (isTv) {
-            // Sits below the Android-only controls/pills row + time header (tvOS
-            // has no pills row here, so its hints float over an empty top-left)
-            // so the interactive group pills stay visible; the chips then float
-            // over the grid's top-left corner like tvOS.
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 16.dp, top = 88.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (miniActive) {
-                    GuideHintChip("Press Menu/Back or Play/Pause to resume playback.")
-                }
-                GuideHintChip("Double press Menu/Back to return to top channel.")
-                GuideHintChip("Hold left on remote to return to the All group pill.")
-            }
         }
     }
 
@@ -2517,22 +2493,6 @@ private const val HOLD_SCROLL_MIN_INTERVAL_MS = 120L
  *  tvOS's 0.5s UILongPressGestureRecognizer. A tap only ever sends count 0, so
  *  the short-Left timeline scroll never trips it. */
 private const val HOLD_LEFT_ALL_PILL_REPEAT = 4
-
-/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): 15pt medium
- *  white@0.55 on a black@0.4 pill. Non-interactive; state-gated by the caller. */
-@Composable
-private fun GuideHintChip(text: String) {
-    Text(
-        text = text,
-        fontSize = 15.sp,
-        fontWeight = FontWeight.Medium,
-        color = Color.White.copy(alpha = 0.55f),
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.4f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-    )
-}
 
 /** Off-screen pre-render pad (each side) for the horizontal viewport clip. Cells
  *  whose visible span lies entirely within this pad are composed but not actually
