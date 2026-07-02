@@ -516,6 +516,37 @@ fun PlayerScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Blank-screen guard after a Picture-in-Picture close. MainActivity's
+    // onPictureInPictureModeChanged tears playback down on an X-dismiss
+    // (exoHolder.stop() + exoWindowState.hide()) but has no NavController to
+    // pop THIS route, so the app is left sitting on a live PlayerScreen whose
+    // video window is now Hidden (0dp) and whose chrome has auto-hidden -- a
+    // blank screen that only a force-stop cleared (Z Fold 5 tester repro:
+    // play -> HOME/auto-PiP -> close PiP with its X -> reopen app = blank).
+    // Every IN-APP teardown (explicit chrome X, phone Back-to-mini, multiview
+    // launch) already pairs hide() with onClose(); this catches the one path
+    // that can't reach the NavController. Guarded by windowWasShown so the
+    // initial mount -- Hidden until LaunchedEffect(Unit) requestFullscreen()s
+    // -- never self-pops, and scoped to ON_RESUME so it only fires when we
+    // return to a screen whose window was pulled out from under it while away.
+    var windowWasShown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        exoWindowState.mode.collect { if (it != ExoWindowState.Mode.Hidden) windowWasShown = true }
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                windowWasShown &&
+                exoWindowState.mode.value == ExoWindowState.Mode.Hidden
+            ) {
+                Log.i(TAG, "resumed onto a hidden player window (PiP X-dismiss) -> popping player")
+                onClose()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     // The video PlayerView is mounted at MainActivity root via
     // PersistentExoWindow (state-driven Fullscreen / Mini / Hidden).
     // Our chrome (controls, tap-target, dim, sheets) renders ABOVE
