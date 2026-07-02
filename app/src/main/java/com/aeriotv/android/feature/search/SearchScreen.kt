@@ -2,7 +2,10 @@ package com.aeriotv.android.feature.search
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,9 +42,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -71,6 +81,7 @@ fun SearchScreen(
     BackHandler { onBack() }
 
     val fieldFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(Unit) { runCatching { fieldFocus.requestFocus() } }
 
     Column(
@@ -95,7 +106,20 @@ fun SearchScreen(
                 onValueChange = viewModel::onQueryChange,
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(fieldFocus),
+                    .focusRequester(fieldFocus)
+                    // On Android TV the field otherwise traps D-pad DOWN, so once
+                    // the on-screen keyboard is dismissed there is no way to reach
+                    // the scope chips / results with the remote. Hand focus down
+                    // to the content instead.
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown &&
+                            event.key == Key.DirectionDown
+                        ) {
+                            focusManager.moveFocus(FocusDirection.Down)
+                        } else {
+                            false
+                        }
+                    },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 placeholder = { Text("Search movies, shows, programs…") },
@@ -156,6 +180,8 @@ fun SearchScreen(
 
 @Composable
 private fun ScopeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Text(
         text = label,
         style = MaterialTheme.typography.labelLarge,
@@ -166,7 +192,13 @@ private fun ScopeChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 if (selected) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
             )
-            .clickable(onClick = onClick)
+            // White ring on D-pad focus (the app-wide TV convention) so the
+            // remote user can see which scope is highlighted.
+            .then(
+                if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(50))
+                else Modifier,
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }
@@ -174,11 +206,23 @@ private fun ScopeChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun ResultRow(result: SearchViewModel.Result, onClick: () -> Unit) {
     val (title, subtitle, poster, icon) = resultDisplay(result)
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            // Highlight the D-pad-focused result (fill + white ring) so it is
+            // clear which row Select will act on.
+            .background(
+                if (focused) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+                else Color.Transparent,
+            )
+            .then(
+                if (focused) Modifier.border(2.dp, Color.White, RoundedCornerShape(10.dp))
+                else Modifier,
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 8.dp, horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
