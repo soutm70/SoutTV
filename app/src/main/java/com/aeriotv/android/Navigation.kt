@@ -982,10 +982,10 @@ fun AerioTVNavHost(
         }
         val miniExoHolder = remember { miniEntry.exoPlayerHolder() }
         val miniExoWindowState = remember { miniEntry.exoWindowState() }
-        // The TV mini is a static chip (hold Back to resume, short Back to
-        // close). The video continues to be drawn by the activity-lifetime
-        // PersistentExoWindow at MainActivity root, which the mini
-        // BackHandler dismiss flips into Hidden mode + stop()'s.
+        // tvOS-parity mini Back: SINGLE Back expands to fullscreen, DOUBLE
+        // Back jumps the guide to the top channel (mini keeps playing). There
+        // is no Back-to-close (tvOS only stops via the player's X); the video
+        // is drawn by the activity-lifetime PersistentExoWindow at root.
         TvMiniPlayerOverlay(
             state = miniState,
             onResume = {
@@ -994,16 +994,10 @@ fun AerioTVNavHost(
                     navController.navigate(Routes.player(resumed.id))
                 }
             },
-            onDismiss = {
-                // Mini dismiss: stop the persistent player, hide its
-                // window, kill the MediaSessionService. The session +
-                // notification go away. Next channel tap goes through
-                // a fresh acquireOrCreate path.
-                miniPlayerVm.dismiss()
-                miniExoWindowState.hide()
-                miniExoHolder.stop()
-                com.aeriotv.android.core.playback.AerioMediaPlaybackService
-                    .stop(miniContext)
+            onJumpToTop = {
+                // Mini stays Active; the guide (composed under the mini on the
+                // Live TV tab) scrolls + focuses its top channel.
+                miniPlayerVm.session.requestGuideTop()
             },
         )
         // Double-press D-pad Select event - MainActivity emits into the

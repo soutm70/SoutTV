@@ -1142,6 +1142,15 @@ fun GuideScreen(
                 showExitDialog = true
             }
         }
+        // tvOS parity: DOUBLE-Back on the corner mini jumps the guide to the
+        // top channel (the mini keeps playing). Same scroll + focus as the
+        // Back-at-not-top branch above.
+        LaunchedEffect(Unit) {
+            miniPlayerVm.session.guideTopRequests.collect {
+                listState.animateScrollToItem(0)
+                if (isTv) guideNav.focusChannelAtNow(0, nowMillis, listState)
+            }
+        }
         if (showExitDialog) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { showExitDialog = false },

@@ -81,6 +81,19 @@ class MainActivity : ComponentActivity() {
         // (Coolwolf report). OK now always reaches Compose, so selecting any
         // channel in the guide plays it fullscreen and supersedes the mini.
         // Resume = just select the channel that's playing in the corner.
+        //
+        // tvOS parity: Play/Pause on the mini EXPANDS to fullscreen (tvOS
+        // NowPlayingManager). Intercept it BEFORE the MediaSession would pause
+        // playback, but only while the mini is Active on TV. Single BACK also
+        // resumes (handled by the mini overlay's BackHandler).
+        if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
+            (event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY) &&
+            miniPlayerSession.state.value is MiniPlayerSession.State.Active
+        ) {
+            miniPlayerSession.requestResume()
+            return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -107,13 +120,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice() &&
-            miniPlayerSession.state.value is MiniPlayerSession.State.Active
-        ) {
-            android.util.Log.i("MiniPlayerResume", "long-press BACK -> resume mini-player")
-            miniPlayerSession.requestResume()
-            return true // consumed; the framework cancels the following key-up
-        }
+        // tvOS parity: a SINGLE Back now resumes the mini (mini overlay's
+        // BackHandler) and a DOUBLE Back jumps to the top channel, so long-Back
+        // no longer has a special role. Let it fall through: onKeyUp runs the
+        // normal Back through the dispatcher (the mini overlay's single/double
+        // debounce), so holding Back behaves like a single Back = resume.
         return super.onKeyLongPress(keyCode, event)
     }
 
