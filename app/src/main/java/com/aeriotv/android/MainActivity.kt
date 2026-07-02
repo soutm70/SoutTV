@@ -160,6 +160,11 @@ class MainActivity : ComponentActivity() {
             runCatching { miniPlayerSession.dismiss() }
             runCatching { exoWindowState.hide() }
             runCatching { exoHolder.stop() }
+            // VOD/DVR own a screen-local ExoPlayer the live holder above can't
+            // reach; the mounted player screen registers a stop hook so closing
+            // its PiP with the X stops it too instead of playing on at the
+            // launcher (#120).
+            runCatching { PipState.onPipDismissed?.invoke() }
             AerioMediaPlaybackService.stop(this)
         }
     }

@@ -247,8 +247,8 @@ fun VODPlayerScreen(
     // its OWN ExoPlayer (not the live holder MainActivity.onUserLeaveHint tears
     // down), and a TV has no PiP, so HOME left this player decoding audio at
     // the launcher. Pause on ON_STOP when on a TV (also covers screen-off).
-    // Phone is untouched -- it keeps the existing PiP / continue behavior. The
-    // player stays built, so returning resumes from where it paused.
+    // Phone keeps the existing PiP / continue behavior. The player stays built,
+    // so returning resumes from where it paused.
     if (isTvForm) {
         val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner, exoPlayer) {
@@ -260,6 +260,19 @@ fun VODPlayerScreen(
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
+    }
+
+    // Phone (#120): HOME auto-enters PiP and VOD SHOULD keep playing in that
+    // window, but CLOSING the PiP with its X must stop it -- mirroring the live
+    // #106 fix. MainActivity's onPictureInPictureModeChanged X-dismiss branch
+    // fires at the right moment (activity already CREATED) but reaches only the
+    // live holder, so it invokes PipState.onPipDismissed; register this VOD
+    // player's stop here. (onStop can't detect the X-dismiss: it runs BEFORE
+    // onPictureInPictureModeChanged flips inPictureInPicture.) Cleared on
+    // dispose so a backgrounded VOD screen is never stopped by a later live PiP.
+    DisposableEffect(exoPlayer) {
+        PipState.onPipDismissed = { exoPlayer?.playWhenReady = false }
+        onDispose { PipState.onPipDismissed = null }
     }
 
     // Step the scrub preview one increment. Mirrors iOS PlayerView.scrubStep

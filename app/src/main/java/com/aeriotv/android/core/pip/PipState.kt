@@ -45,6 +45,21 @@ object PipState {
 
     /** Now-playing channel logo URL, shown as the notification's large icon. */
     @Volatile var nowPlayingLogo: String? = null
+
+    /**
+     * Stop hook for a per-screen player that MainActivity's PiP-close teardown
+     * cannot otherwise reach. The live path uses the process-scoped
+     * AerioExoPlayerHolder, which MainActivity stops directly on an X-dismiss;
+     * but VOD/DVR playback owns a screen-local ExoPlayer, so closing its PiP
+     * with the X would leave it decoding audio at the launcher (#120). That
+     * screen sets this to `{ player.playWhenReady = false }` while mounted and
+     * clears it on dispose; MainActivity.onPictureInPictureModeChanged invokes
+     * it in the same X-dismiss branch that stops the live holder. Detecting the
+     * X-dismiss from the screen's own onStop is not possible -- onStop runs
+     * BEFORE onPictureInPictureModeChanged flips [inPictureInPicture], so at
+     * onStop the screen still looks like it is in PiP.
+     */
+    @Volatile var onPipDismissed: (() -> Unit)? = null
 }
 
 /** Walk a Compose context chain to the host Activity. */
