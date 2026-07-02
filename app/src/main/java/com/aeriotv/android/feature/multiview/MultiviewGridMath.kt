@@ -32,20 +32,19 @@ enum class MultiviewLayoutMode(val key: String, val displayName: String) {
             entries.firstOrNull { it.key == key } ?: Auto
 
         /**
-         * iOS `available(forTileCount:)`. The modes worth offering at a given
-         * count (duplicates of `.auto` omitted where the default already IS an
-         * even grid). Empty for counts with no real choice (<= 1) so the picker
-         * hides. Note N=3's `.auto` is already the spotlight shape, so 3 offers
-         * only Default + Even Grid (the per-tile Spotlight action still exists).
+         * The grid-SHAPE modes worth offering at a given tile count. Spotlight is
+         * deliberately NOT a grid-shape option: it is exposed only as the per-tile
+         * "Spotlight This Tile" action (which picks a specific hero), because a
+         * grid-wide Spotlight was just "Spotlight on the first tile" and duplicated
+         * that action. So the picker only appears where a real alternative shape
+         * exists: 3/5 (Even Grid) and 6 (Hero + Corner). Every other count (2, 4,
+         * 7, 8, 9 and <= 1) has only Default, so it returns empty and the picker
+         * hides.
          */
-        fun available(forTileCount: Int): List<MultiviewLayoutMode> = when {
-            forTileCount < 2 -> emptyList()
-            forTileCount == 2 -> listOf(Auto, Spotlight)
-            forTileCount == 3 -> listOf(Auto, EvenGrid)
-            forTileCount == 4 -> listOf(Auto, Spotlight)
-            forTileCount == 5 -> listOf(Auto, EvenGrid, Spotlight)
-            forTileCount == 6 -> listOf(Auto, HeroCorner, Spotlight)
-            else -> listOf(Auto, Spotlight) // 7, 8, 9
+        fun available(forTileCount: Int): List<MultiviewLayoutMode> = when (forTileCount) {
+            3, 5 -> listOf(Auto, EvenGrid)
+            6 -> listOf(Auto, HeroCorner)
+            else -> emptyList()
         }
     }
 }

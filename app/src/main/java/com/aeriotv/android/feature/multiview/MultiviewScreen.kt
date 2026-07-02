@@ -158,7 +158,12 @@ fun MultiviewScreen(
     // Spotlight / Hero + Corner). Picked from the tile context menu; one global
     // value for all tile counts, mirroring iOS @AppStorage multiviewLayoutMode.
     val layoutModeKey by settingsVm.multiviewLayoutMode.collectAsState(initial = "auto")
+    // Spotlight is a per-tile action only (see MultiviewLayoutMode.available); it is
+    // no longer a grid-wide shape. Coerce any legacy persisted "spotlight" value to
+    // Default so it can't leave a stuck grid-wide spotlight at counts where the
+    // layout picker no longer appears. Per-tile spotlight still works via spotlightId.
     val layoutMode = MultiviewLayoutMode.from(layoutModeKey)
+        .let { if (it == MultiviewLayoutMode.Spotlight) MultiviewLayoutMode.Auto else it }
 
     var chromeVisible by remember { mutableStateOf(true) }
     // Bumped whenever the user navigates between tiles (D-pad focus change)
@@ -607,7 +612,7 @@ fun MultiviewScreen(
                 )
                 add(
                     TvMenuAction(
-                        label = if (isSpotlit) "Remove Spotlight" else "Spotlight",
+                        label = if (isSpotlit) "Remove Spotlight" else "Spotlight This Tile",
                         icon = Icons.Filled.ViewSidebar,
                         onClick = {
                             if (isSpotlit) {
@@ -621,22 +626,20 @@ fun MultiviewScreen(
                         },
                     ),
                 )
-                // Issue #48: grid layout picker. Grid-wide (any tile sets the
-                // shared, persisted layout); hidden when there is no real choice
-                // (<= 1 tile). The active mode shows a checkmark. Picking any
-                // NON-spotlight mode clears the per-tile spotlight so a leftover
-                // spotlight can't override the choice and make the switch a
-                // no-op (iOS MultiviewTileView layout rows).
+                // Issue #48: grid SHAPE picker. Grid-wide (any tile sets the
+                // shared, persisted layout); only appears where a real alternative
+                // shape exists (3/5 Even Grid, 6 Hero + Corner). Spotlight is not a
+                // shape here -- it is the per-tile "Spotlight This Tile" action
+                // above. The active shape shows a checkmark; picking any shape
+                // clears the per-tile spotlight so a leftover hero can't override
+                // the chosen shape and make the switch a no-op.
                 val availableModes = MultiviewLayoutMode.available(selected.size)
-                // Checkmark = the layout actually being RENDERED. Exact match
-                // like iOS, with ONE exception: Hero + Corner away from 6
-                // tiles is the sole case rects() falls back to the Default
-                // table, so mark Default active there (iOS shows no checkmark;
-                // marking the truly-rendered layout is strictly truthful).
-                // EvenGrid/Spotlight render at ANY count, so when one of them
-                // is persisted but not offered (e.g. Even Grid grown to 7
-                // tiles) NO row is checkmarked -- matching iOS, and never
-                // mislabeling Default while a non-default grid is on screen.
+                // Checkmark = the layout actually being RENDERED. Hero + Corner
+                // away from 6 tiles falls back to the Default table, so mark
+                // Default active there. Even Grid renders at any count, so when it
+                // is persisted but not offered (e.g. grown to 7 tiles) NO row is
+                // checkmarked -- never mislabeling Default while a non-default grid
+                // is on screen.
                 val effectiveMode =
                     if (layoutMode == MultiviewLayoutMode.HeroCorner &&
                         layoutMode !in availableModes
@@ -649,7 +652,7 @@ fun MultiviewScreen(
                             icon = if (activeMode) Icons.Filled.Check else mode.menuIcon(),
                             onClick = {
                                 settingsVm.setMultiviewLayoutMode(mode.key)
-                                if (mode != MultiviewLayoutMode.Spotlight) spotlightId = null
+                                spotlightId = null
                             },
                         ),
                     )
