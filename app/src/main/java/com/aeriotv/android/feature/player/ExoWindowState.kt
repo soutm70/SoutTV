@@ -38,4 +38,17 @@ class ExoWindowState @Inject constructor() {
     fun requestFullscreen() { _mode.value = Mode.Fullscreen }
     fun requestMini() { _mode.value = Mode.Mini }
     fun hide() { _mode.value = Mode.Hidden }
+
+    /**
+     * Live channel-flip hook for the hardware-key path. The fullscreen live
+     * PlayerScreen registers this while mounted (cleared on dispose); MainActivity
+     * .dispatchKeyEvent invokes it on D-pad UP/DOWN while [mode] == Fullscreen so
+     * channel surfing works even when the player controls overlay is on screen
+     * (Compose focus traversal otherwise swallows UP/DOWN among the chrome pills).
+     * Delta is +1 for UP (next channel) / -1 for DOWN (previous). Returns true if
+     * the flip was consumed; PlayerScreen returns false while a menu/sheet is open
+     * so UP/DOWN fall through to normal menu navigation there. Mirrors the
+     * PipState.onPipDismissed shared-hook pattern.
+     */
+    @Volatile var onLiveChannelFlip: ((Int) -> Boolean)? = null
 }

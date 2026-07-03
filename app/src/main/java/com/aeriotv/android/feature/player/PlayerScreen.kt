@@ -28,17 +28,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -72,6 +69,10 @@ import kotlin.math.abs
 private const val TAG = "PlayerScreen"
 private const val AUTO_HIDE_MS = 4_000L
 private const val SWIPE_THRESHOLD_PX = 120f
+// Min gap between two hardware D-pad channel flips. Auto-repeat on a held UP/DOWN
+// fires rapidly; this paces it so a hold surfs one channel at a time instead of
+// skipping several, while a normal press cadence still flips immediately.
+private const val FLIP_DEBOUNCE_MS = 120L
 
 /**
  * Live-stream player screen. Hosts the MPV view + chrome overlay. Tap toggles
@@ -565,42 +566,13 @@ fun PlayerScreen(
                 if (chromeVisible) {
                     lastInteractionAt = android.os.SystemClock.uptimeMillis()
                 }
-                // Android TV: D-pad up/down flips channels during fullscreen
-                // playback (tvOS Siri Remote parity; up = next, matching the
-                // touch swipe). onPreviewKeyEvent sees the key BEFORE any
-                // focused chrome button, so consuming up/down here flips no
-                // matter where focus sits.
-                if (isTvForm && appleTVChannelFlip &&
-                    channels.size >= 2 && event.type == KeyEventType.KeyDown
-                ) {
-                    val delta = when (event.key) {
-                        Key.DirectionUp -> 1
-                        Key.DirectionDown -> -1
-                        else -> 0
-                    }
-                    // Flip when chrome is hidden OR when the chrome on screen is
-                    // just the banner a prior flip raised. The old `!chromeVisible`
-                    // gate meant every flip (which force-shows chrome) swallowed
-                    // the NEXT up/down as chrome navigation until the banner
-                    // faded, so users couldn't change channels rapidly. A
-                    // non-flip key clears the latch so the transport controls
-                    // stay reachable with up/down.
-                    if (delta != 0 && (!chromeVisible || chromeFromFlip)) {
-                        if (currentIndex >= 0 && channels.isNotEmpty()) {
-                            val next = (currentIndex + delta).coerceIn(0, channels.lastIndex)
-                            if (next != currentIndex) {
-                                currentIndex = next
-                                chromeVisible = true
-                                chromeFromFlip = true
-                            }
-                            return@onPreviewKeyEvent true
-                        }
-                    } else if (delta == 0 && chromeVisible && chromeFromFlip) {
-                        // OK / Left / Right / Back on the flip banner = the user
-                        // wants the controls; hand chrome nav back (don't consume).
-                        chromeFromFlip = false
-                    }
-                }
+                // TV D-pad UP/DOWN channel-flip is handled by MainActivity
+                // .dispatchKeyEvent via exoWindowState.onLiveChannelFlip (see the
+                // DisposableEffect below). Routing it at the activity level makes
+                // it win over the chrome pill row + Options DropdownMenu popup,
+                // which used to swallow UP/DOWN when the controls were visible.
+                // Non-flip keys (LEFT / RIGHT / OK / Back) still fall through here
+                // to operate the visible controls: return false, don't consume.
                 false
             },
     ) {
@@ -797,6 +769,40 @@ fun PlayerScreen(
     // latch so the next explicitly-opened chrome starts in navigation mode.
     LaunchedEffect(chromeVisible) {
         if (!chromeVisible) chromeFromFlip = false
+    }
+
+    // TV live channel surf via the hardware-key path. MainActivity.dispatchKeyEvent
+    // invokes exoWindowState.onLiveChannelFlip on D-pad UP/DOWN while THIS player
+    // is the frontmost Fullscreen window, so channel flip works even with the
+    // controls overlay visible (Compose focus traversal otherwise consumed UP/DOWN
+    // among the chrome pills / Options popup). currentIndex stays the single source
+    // of truth here. rememberUpdatedState so the long-lived lambda always sees
+    // fresh state without re-registering. Debounced so a held key surfs one channel
+    // per ~120ms instead of skipping wildly. Declines (returns false) while a
+    // menu/sheet is open (interactionLocked) so UP/DOWN navigate those instead.
+    val flipEnabled by rememberUpdatedState(isTvForm && appleTVChannelFlip && channels.size >= 2)
+    val flipLocked by rememberUpdatedState(interactionLocked)
+    val flipIndex by rememberUpdatedState(currentIndex)
+    val flipChannels by rememberUpdatedState(channels)
+    var lastFlipAt by remember { mutableStateOf(0L) }
+    DisposableEffect(exoWindowState) {
+        exoWindowState.onLiveChannelFlip = flip@{ delta ->
+            if (!flipEnabled || flipLocked) return@flip false
+            val list = flipChannels
+            val cur = flipIndex
+            if (cur < 0 || list.isEmpty()) return@flip false
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastFlipAt < FLIP_DEBOUNCE_MS) return@flip true // eat repeats, stay responsive
+            val next = (cur + delta).coerceIn(0, list.lastIndex)
+            if (next != cur) {
+                lastFlipAt = now
+                currentIndex = next
+                chromeVisible = true
+                chromeFromFlip = true
+            }
+            true
+        }
+        onDispose { exoWindowState.onLiveChannelFlip = null }
     }
 
     // On TV, when the chrome hides (fullscreen video), pull D-pad focus to the

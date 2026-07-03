@@ -573,22 +573,22 @@ fun MainScaffold(
     }
 }
 
-/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): subtle
- *  white@0.55 on a black@0.4 pill. 8sp keeps them small like tvOS AND narrow
- *  enough that the longest line clears the centered top-nav in the top-left
- *  corner (Android's TV density renders sp larger than tvOS points).
- *  Non-interactive; state-gated by the caller. */
+/** tvOS guide gesture-hint capsule (HomeView.guideMenuHint parity): near-white
+ *  text (white@0.9) on a black@0.4 pill with tight padding so the bubble hugs
+ *  the text. 8sp keeps them small like tvOS AND narrow enough that the longest
+ *  line clears the centered top-nav in the top-left corner (Android's TV density
+ *  renders sp larger than tvOS points). Non-interactive; state-gated by the caller. */
 @Composable
 private fun TvGuideHintChip(text: String) {
     Text(
         text = text,
         fontSize = 8.sp,
         fontWeight = FontWeight.Medium,
-        color = Color.White.copy(alpha = 0.55f),
+        color = Color.White.copy(alpha = 0.9f),
         modifier = Modifier
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.4f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
 

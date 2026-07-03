@@ -217,6 +217,25 @@ fun GuideScreen(
     // group pill. This requester is attached to that pill (the first item in
     // the group row) and fired from the grid's key handler.
     val allPillFocus = remember { FocusRequester() }
+    // #10/#14 overshoot fix: once a HOLD Left lands focus on the "All" pill, the
+    // still-held Left keeps auto-repeating and Compose focus traversal walks
+    // straight PAST All onto the leading Guide/Search/List circles. Pin focus to
+    // All for the duration of the hold: while this is true the top control row's
+    // onPreviewKeyEvent (parent of BOTH the circles and the pill row) swallows
+    // every further Left and re-requests All, until the key is RELEASED
+    // (ACTION_UP) or the safety timeout fires. Mirrors the tvOS leftHoldPinningAll
+    // flag (ChannelListView.swift).
+    var leftHoldPinningAll by remember { mutableStateOf(false) }
+    // Backstop so focus is never permanently trapped on All if the key-release
+    // event is missed: unpin after 2.5s. During an actual ongoing hold events
+    // keep arriving, so the pin re-engages on the next repeat -- this is a
+    // self-heal for a dropped release, not a hard cap on hold length.
+    LaunchedEffect(leftHoldPinningAll) {
+        if (leftHoldPinningAll) {
+            delay(2_500L)
+            leftHoldPinningAll = false
+        }
+    }
     val isTvDevice = rememberIsTvDevice()
     // Guards the banner's launch clicks: armed by the focus pull below (the
     // Streamer's spurious OK-release lands on the newly-focused banner and
@@ -691,7 +710,41 @@ fun GuideScreen(
                 // the row grow to 56dp WHILE the inline channel-search field is
                 // shown (parity with the phone path, which is 56dp already).
                 .height(if (isTv && !searchActive) 44.dp else 56.dp)
-                .padding(horizontal = if (isTv) 20.dp else 4.dp),
+                .padding(horizontal = if (isTv) 20.dp else 4.dp)
+                // #10/#14 overshoot fix: pin a HOLD Left to the "All" pill. This
+                // handler sits on the common ancestor of BOTH the leading control
+                // circles AND the group-pill row, so it keeps seeing Left even
+                // after focus lands on All -- swallowing further repeats and
+                // re-requesting All until the key is released. A short/step Left
+                // (no long-press, repeatCount < threshold) falls through as normal
+                // single-pill navigation. Inert on touch (no key events).
+                .onPreviewKeyEvent { event ->
+                    if (!isTv || event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                    when (event.type) {
+                        KeyEventType.KeyUp -> {
+                            // Release ends the pin; don't consume the up itself.
+                            leftHoldPinningAll = false
+                            false
+                        }
+                        KeyEventType.KeyDown -> when {
+                            leftHoldPinningAll -> {
+                                // Already pinned: swallow every further Left and
+                                // keep focus glued to All until release.
+                                runCatching { allPillFocus.requestFocus() }
+                                true
+                            }
+                            event.nativeKeyEvent.isLongPress ||
+                                event.nativeKeyEvent.repeatCount >= HOLD_LEFT_ALL_PILL_REPEAT -> {
+                                // Hold threshold reached: jump to All and pin.
+                                leftHoldPinningAll = true
+                                runCatching { allPillFocus.requestFocus() }
+                                true
+                            }
+                            else -> false
+                        }
+                        else -> false
+                    }
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // List / Guide view switcher, to the LEFT of Search. On TV it uses
@@ -928,25 +981,10 @@ fun GuideScreen(
                 LazyRow(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight()
-                        // #14 tvOS parity: a HOLD Left while focus is on the
-                        // group pills jumps straight to the "All" pill (the same
-                        // gesture the guide grid uses), instead of walking pill
-                        // by pill. A tap Left still steps one pill. isLongPress
-                        // fires at the ~0.5s long-press timeout; repeatCount>=4
-                        // is the fallback. Inert on touch (no key events).
-                        .onPreviewKeyEvent { event ->
-                            if (isTv && event.type == KeyEventType.KeyDown &&
-                                event.key == Key.DirectionLeft &&
-                                (event.nativeKeyEvent.isLongPress ||
-                                    event.nativeKeyEvent.repeatCount >= HOLD_LEFT_ALL_PILL_REPEAT)
-                            ) {
-                                runCatching { allPillFocus.requestFocus() }
-                                true
-                            } else {
-                                false
-                            }
-                        },
+                        // The HOLD-Left-to-"All" gesture (and its overshoot pin)
+                        // now lives on the parent control Row's onPreviewKeyEvent
+                        // so it keeps working after focus lands on the All pill.
+                        .fillMaxHeight(),
                     contentPadding = PaddingValues(end = if (isTv) 20.dp else 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (isTv) 5.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,

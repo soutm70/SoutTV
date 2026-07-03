@@ -115,6 +115,25 @@ class MainActivity : ComponentActivity() {
             AerioMediaPlaybackService.stop(this)
             return true
         }
+        // Live channel surf: D-pad UP/DOWN flips prev/next channel while the
+        // FULLSCREEN live player is frontmost, even when its controls overlay is
+        // visible. Routing here (before Compose focus) is what makes UP/DOWN win
+        // over the chrome pill row + the Options DropdownMenu popup, which would
+        // otherwise consume the keys. Gated on exoWindowState.mode == Fullscreen
+        // (only the live PlayerScreen sets that; VOD owns its own per-screen
+        // player and never touches exoWindowState), so this never fires for VOD
+        // or on the guide. Auto-repeat delivers repeated ACTION_DOWNs; the hook's
+        // own debounce paces them so a held key surfs one channel at a time. If
+        // the hook is null / declines (menu open, setting off, single channel) we
+        // fall through so nothing else breaks.
+        if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) &&
+            exoWindowState.mode.value == ExoWindowState.Mode.Fullscreen
+        ) {
+            val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) 1 else -1
+            if (exoWindowState.onLiveChannelFlip?.invoke(delta) == true) return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
