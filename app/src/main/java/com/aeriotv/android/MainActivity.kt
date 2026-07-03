@@ -63,6 +63,13 @@ class MainActivity : ComponentActivity() {
      *  doesn't trigger twice. */
     private var lastSelectPressMs = 0L
 
+    /** Deadline (uptimeMillis) until which a held D-pad Right is swallowed after
+     *  it closed the corner mini-player, so the still-held Right can't scroll the
+     *  guide once the mini is gone ("hold position until released"). 0 = not
+     *  pinning; cleared on Right release, and self-expires after RIGHT_HOLD_PIN_MS
+     *  as a backstop if the release event is missed. */
+    private var rightHoldPinUntil = 0L
+
     /**
      * Audit task #22 mini-player resume. The Google TV Streamer remote has
      * no dedicated play/pause key, so we repurpose a double-press of D-pad
@@ -94,26 +101,42 @@ class MainActivity : ComponentActivity() {
             miniPlayerSession.requestResume()
             return true
         }
-        // Long-press D-pad RIGHT while the corner mini-player is Active closes
-        // it: stop playback and drop back to a clean guide (tvOS parity; the
-        // mini otherwise had no close affordance -- Freyguy report). dispatchKey
-        // Event sees the key BEFORE Compose focus consumes Right, so we can act
-        // on a sustained hold while leaving ordinary Right navigation untouched:
-        // individual/short Rights (repeatCount below the threshold) fall through
-        // to super and still move focus; only a deliberate hold past
-        // MINI_CLOSE_HOLD_REPEAT (~0.5s, mirroring the guide's hold-Left) fires
-        // the close. Gated to a live mini so this never intercepts Right
-        // anywhere else. Same teardown order as the chrome X-close / PiP dismiss.
+        // Hold D-pad RIGHT while the corner mini-player is Active to close it:
+        // stop playback and drop back to a clean guide (tvOS parity; the mini
+        // otherwise had no close affordance -- Freyguy report). dispatchKeyEvent
+        // sees the key BEFORE Compose focus consumes Right. "Hold position until
+        // released" is honored (parity with the guide's hold-Left pin): a single
+        // tap (repeatCount 0) still navigates the guide, but the moment Right is
+        // HELD (repeatCount >= 1) with the mini up we swallow every repeat so
+        // guide focus doesn't scroll during the hold, fire the close at the
+        // threshold (isLongPress || repeatCount past MINI_CLOSE_HOLD_REPEAT,
+        // ~0.5s), and keep swallowing afterwards (rightHoldPinUntil) until the key
+        // is RELEASED, so the still-held Right can't fly focus across the guide
+        // once the mini is gone. The pin self-expires after RIGHT_HOLD_PIN_MS as a
+        // backstop for a missed release. Same teardown as the X-close / PiP dismiss.
+        if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && event.action == KeyEvent.ACTION_UP) {
+            rightHoldPinUntil = 0L
+        }
         if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
-            event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT &&
-            (event.isLongPress || event.repeatCount >= MINI_CLOSE_HOLD_REPEAT) &&
-            miniPlayerSession.state.value is MiniPlayerSession.State.Active
+            event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
         ) {
-            runCatching { miniPlayerSession.dismiss() }
-            runCatching { exoWindowState.hide() }
-            runCatching { exoHolder.stop() }
-            AerioMediaPlaybackService.stop(this)
-            return true
+            if (android.os.SystemClock.uptimeMillis() < rightHoldPinUntil) {
+                return true   // pinned after close: hold position until release
+            }
+            if (miniPlayerSession.state.value is MiniPlayerSession.State.Active) {
+                if (event.isLongPress || event.repeatCount >= MINI_CLOSE_HOLD_REPEAT) {
+                    runCatching { miniPlayerSession.dismiss() }
+                    runCatching { exoWindowState.hide() }
+                    runCatching { exoHolder.stop() }
+                    AerioMediaPlaybackService.stop(this)
+                    rightHoldPinUntil = android.os.SystemClock.uptimeMillis() + RIGHT_HOLD_PIN_MS
+                    return true
+                }
+                if (event.repeatCount >= 1) {
+                    return true   // held below threshold: hold position, don't scroll
+                }
+                // repeatCount 0 (a tap): fall through so a short Right still navigates.
+            }
         }
         // Live channel surf: D-pad UP/DOWN flips prev/next channel while the
         // FULLSCREEN live player is frontmost, even when its controls overlay is
@@ -510,5 +533,12 @@ class MainActivity : ComponentActivity() {
          *  HOLD_LEFT_ALL_PILL_REPEAT (Android starts auto-repeating ~400ms after
          *  the press, so 4 repeats is ~0.5s -- a hold, not a tap). */
         const val MINI_CLOSE_HOLD_REPEAT = 4
+
+        /** How long (ms) a held D-pad Right stays pinned after it closed the mini
+         *  player, so the still-held Right holds guide focus in place until the
+         *  key is released. Backstop only -- the release event normally clears the
+         *  pin first; this bounds a missed release. Mirrors the guide hold-Left
+         *  pin's 2.5s safety timeout. */
+        const val RIGHT_HOLD_PIN_MS = 2_500L
     }
 }
