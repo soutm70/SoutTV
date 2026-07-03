@@ -94,6 +94,27 @@ class MainActivity : ComponentActivity() {
             miniPlayerSession.requestResume()
             return true
         }
+        // Long-press D-pad RIGHT while the corner mini-player is Active closes
+        // it: stop playback and drop back to a clean guide (tvOS parity; the
+        // mini otherwise had no close affordance -- Freyguy report). dispatchKey
+        // Event sees the key BEFORE Compose focus consumes Right, so we can act
+        // on a sustained hold while leaving ordinary Right navigation untouched:
+        // individual/short Rights (repeatCount below the threshold) fall through
+        // to super and still move focus; only a deliberate hold past
+        // MINI_CLOSE_HOLD_REPEAT (~0.5s, mirroring the guide's hold-Left) fires
+        // the close. Gated to a live mini so this never intercepts Right
+        // anywhere else. Same teardown order as the chrome X-close / PiP dismiss.
+        if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
+            event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT &&
+            (event.isLongPress || event.repeatCount >= MINI_CLOSE_HOLD_REPEAT) &&
+            miniPlayerSession.state.value is MiniPlayerSession.State.Active
+        ) {
+            runCatching { miniPlayerSession.dismiss() }
+            runCatching { exoWindowState.hide() }
+            runCatching { exoHolder.stop() }
+            AerioMediaPlaybackService.stop(this)
+            return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -464,5 +485,11 @@ class MainActivity : ComponentActivity() {
          *  sluggish window that matches typical "double-tap" expectations on
          *  TV remotes. */
         const val DOUBLE_PRESS_THRESHOLD_MS = 350L
+
+        /** D-pad Right auto-repeat count that counts as a deliberate "hold" to
+         *  close the corner mini-player. Mirrors the guide's
+         *  HOLD_LEFT_ALL_PILL_REPEAT (Android starts auto-repeating ~400ms after
+         *  the press, so 4 repeats is ~0.5s -- a hold, not a tap). */
+        const val MINI_CLOSE_HOLD_REPEAT = 4
     }
 }

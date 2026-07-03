@@ -463,6 +463,7 @@ fun MainScaffold(
                 ) {
                     if (miniPlayerState is MiniPlayerSession.State.Active) {
                         TvGuideHintChip("Press Menu/Back or Play/Pause to resume playback.")
+                        TvGuideHintChip("Hold right on remote to close the mini player.")
                     }
                     TvGuideHintChip("Double press Menu/Back to return to top channel.")
                     TvGuideHintChip("Hold left on remote to return to the All group pill.")
