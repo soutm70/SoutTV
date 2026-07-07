@@ -72,12 +72,6 @@ class MainActivity : ComponentActivity() {
      */
     private val showExitConfirm = androidx.compose.runtime.mutableStateOf(false)
 
-    /** Wall-clock timestamp of the last Select/OK press (uptimeMillis), latched
-     *  only while the mini-player is Active, for issue #18's double-OK-to-stop
-     *  gesture. Reset to 0 after a stop fires (and when the mini is not Active)
-     *  so a fast triple or a stale latch can't trigger twice. */
-    private var lastSelectPressMs = 0L
-
     /** Deadline (uptimeMillis) until which a held D-pad Right is swallowed after
      *  it closed the corner mini-player, so the still-held Right can't scroll the
      *  guide once the mini is gone ("hold position until released"). 0 = not
@@ -152,35 +146,6 @@ class MainActivity : ComponentActivity() {
                 }
                 // repeatCount 0 (a tap): fall through so a short Right still navigates.
             }
-        }
-        // Issue #18: DOUBLE-click Select (D-pad OK) fully STOPS the corner
-        // mini-player. Single OK must keep playing the focused guide cell (the
-        // old always-consume-OK trapped users -- Coolwolf report), so we NEVER
-        // consume the FIRST press: while the mini is Active, a first OK just
-        // latches its timestamp (and still plays whatever's focused, briefly
-        // flipping the mini Active -> Pending). A SECOND OK within
-        // DOUBLE_PRESS_THRESHOLD_MS then tears playback down for good -- keyed off
-        // the latched timestamp, NOT the live state (which is now Pending). Same
-        // teardown as the hold-Right close.
-        if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
-            (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                event.keyCode == KeyEvent.KEYCODE_ENTER ||
-                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
-        ) {
-            val now = android.os.SystemClock.uptimeMillis()
-            if (lastSelectPressMs != 0L && now - lastSelectPressMs < DOUBLE_PRESS_THRESHOLD_MS) {
-                lastSelectPressMs = 0L
-                runCatching { miniPlayerSession.dismiss() }
-                runCatching { exoWindowState.hide() }
-                runCatching { exoHolder.stop() }
-                AerioMediaPlaybackService.stop(this)
-                return true
-            }
-            // First OK: arm the double ONLY if the mini is currently Active;
-            // otherwise clear any stale latch. Never consumed, so a single OK
-            // still plays the focused channel everywhere.
-            lastSelectPressMs =
-                if (miniPlayerSession.state.value is MiniPlayerSession.State.Active) now else 0L
         }
         // Live channel surf: D-pad UP/DOWN flips prev/next channel while the
         // FULLSCREEN live player is frontmost, even when its controls overlay is
@@ -591,12 +556,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        /** Max gap between two D-pad Select presses to count as a double-press
-         *  for the mini-player resume action. 350ms is a comfortable but not
-         *  sluggish window that matches typical "double-tap" expectations on
-         *  TV remotes. */
-        const val DOUBLE_PRESS_THRESHOLD_MS = 350L
-
         /** D-pad Right auto-repeat count that counts as a deliberate "hold" to
          *  close the corner mini-player. Mirrors the guide's
          *  HOLD_LEFT_ALL_PILL_REPEAT (Android starts auto-repeating ~400ms after
