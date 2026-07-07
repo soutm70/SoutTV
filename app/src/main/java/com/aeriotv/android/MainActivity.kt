@@ -26,6 +26,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
+import com.aeriotv.android.core.tv.TvActionMenuDialog
+import com.aeriotv.android.core.tv.TvMenuAction
+import com.aeriotv.android.core.tv.rememberTvMenuGuard
 import androidx.compose.ui.Modifier
 import com.aeriotv.android.core.pip.PipState
 import com.aeriotv.android.core.playback.AerioExoPlayerHolder
@@ -58,9 +64,18 @@ class MainActivity : ComponentActivity() {
      */
     private val deepLinkTarget = androidx.compose.runtime.mutableStateOf<DeepLinkTarget?>(null)
 
-    /** Wall-clock timestamp of the last DPAD_CENTER press (uptimeMillis).
-     *  Reset to 0 after a successful double-press detection so a fast triple
-     *  doesn't trigger twice. */
+    /**
+     * Flipped true by [onKeyLongPress] when BACK is HELD on Android TV, to
+     * surface the "Would you like to close AerioTV?" confirm (issue #16: the
+     * 0.3.0 short-Back rework removed the old exit popup). Read by the Compose
+     * tree in [onCreate]; Cancel/dismiss sets it back to false, Close calls finish().
+     */
+    private val showExitConfirm = androidx.compose.runtime.mutableStateOf(false)
+
+    /** Wall-clock timestamp of the last Select/OK press (uptimeMillis), latched
+     *  only while the mini-player is Active, for issue #18's double-OK-to-stop
+     *  gesture. Reset to 0 after a stop fires (and when the mini is not Active)
+     *  so a fast triple or a stale latch can't trigger twice. */
     private var lastSelectPressMs = 0L
 
     /** Deadline (uptimeMillis) until which a held D-pad Right is swallowed after
@@ -138,6 +153,35 @@ class MainActivity : ComponentActivity() {
                 // repeatCount 0 (a tap): fall through so a short Right still navigates.
             }
         }
+        // Issue #18: DOUBLE-click Select (D-pad OK) fully STOPS the corner
+        // mini-player. Single OK must keep playing the focused guide cell (the
+        // old always-consume-OK trapped users -- Coolwolf report), so we NEVER
+        // consume the FIRST press: while the mini is Active, a first OK just
+        // latches its timestamp (and still plays whatever's focused, briefly
+        // flipping the mini Active -> Pending). A SECOND OK within
+        // DOUBLE_PRESS_THRESHOLD_MS then tears playback down for good -- keyed off
+        // the latched timestamp, NOT the live state (which is now Pending). Same
+        // teardown as the hold-Right close.
+        if (event.action == KeyEvent.ACTION_DOWN && isTelevisionDevice() &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER)
+        ) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (lastSelectPressMs != 0L && now - lastSelectPressMs < DOUBLE_PRESS_THRESHOLD_MS) {
+                lastSelectPressMs = 0L
+                runCatching { miniPlayerSession.dismiss() }
+                runCatching { exoWindowState.hide() }
+                runCatching { exoHolder.stop() }
+                AerioMediaPlaybackService.stop(this)
+                return true
+            }
+            // First OK: arm the double ONLY if the mini is currently Active;
+            // otherwise clear any stale latch. Never consumed, so a single OK
+            // still plays the focused channel everywhere.
+            lastSelectPressMs =
+                if (miniPlayerSession.state.value is MiniPlayerSession.State.Active) now else 0L
+        }
         // Live channel surf: D-pad UP/DOWN flips prev/next channel while the
         // FULLSCREEN live player is frontmost, even when its controls overlay is
         // visible. Routing here (before Compose focus) is what makes UP/DOWN win
@@ -161,16 +205,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Long-press BACK on Android TV = resume the mini-player to fullscreen.
-     * Google TV remotes have no play/pause key, and a single OK has to keep
-     * opening the focused channel (the old double-press-OK resume hijacked OK
-     * and trapped users -- Coolwolf report), so the resume affordance is moved
-     * onto a gesture nothing else uses: holding BACK. A SHORT back is left
-     * untouched -- it's routed through the OnBackPressedDispatcher so every
-     * existing BackHandler still fires (the mini's dismiss, the player's
-     * 3-press flow, nav-up). Only armed on TV, and only resumes while the
-     * mini-player is Active. Predictive back is off, so this legacy key path is
-     * authoritative.
+     * Android TV BACK handling. A SHORT back is routed through the
+     * OnBackPressedDispatcher (onKeyUp) so every existing BackHandler still
+     * fires (mini resume/dismiss, the guide's double-Back-to-top ladder, nav-up).
+     * A LONG back (onKeyLongPress) surfaces the "close AerioTV?" confirm (issue
+     * #16). onKeyDown must startTracking() for the long-press to fire at all.
+     * Predictive back is off, so this legacy key path is authoritative.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice()) {
@@ -183,11 +223,16 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
-        // tvOS parity: a SINGLE Back now resumes the mini (mini overlay's
-        // BackHandler) and a DOUBLE Back jumps to the top channel, so long-Back
-        // no longer has a special role. Let it fall through: onKeyUp runs the
-        // normal Back through the dispatcher (the mini overlay's single/double
-        // debounce), so holding Back behaves like a single Back = resume.
+        // Issue #16: holding BACK on Android TV surfaces the "close AerioTV?"
+        // confirm. The 0.3.0 short-Back rework (double-Back -> top channel, then
+        // finish() with no prompt) left exit undiscoverable and easy to trigger
+        // by accident; a deliberate hold restores a confirmable exit. Consuming
+        // the long-press cancels the follow-up onKeyUp (event.isCanceled), so the
+        // short-Back paths (mini resume, guide back-to-top, nav-up) are untouched.
+        if (keyCode == KeyEvent.KEYCODE_BACK && isTelevisionDevice()) {
+            showExitConfirm.value = true
+            return true
+        }
         return super.onKeyLongPress(keyCode, event)
     }
 
@@ -514,6 +559,30 @@ class MainActivity : ComponentActivity() {
                                 deepLinkTarget = deepLinkTarget.value,
                                 onDeepLinkConsumed = { deepLinkTarget.value = null },
                             )
+                            // Issue #16: long-press BACK on Android TV opens this
+                            // confirm (onKeyLongPress flips showExitConfirm). Rendered
+                            // as a sibling of the NavHost so it overlays every screen.
+                            if (showExitConfirm.value) {
+                                val exitGuard = rememberTvMenuGuard()
+                                TvActionMenuDialog(
+                                    title = "Would you like to close AerioTV?",
+                                    guard = exitGuard,
+                                    onDismiss = { showExitConfirm.value = false },
+                                    actions = listOf(
+                                        TvMenuAction(
+                                            label = "Cancel",
+                                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                                            onClick = {},
+                                        ),
+                                        TvMenuAction(
+                                            label = "Close AerioTV",
+                                            icon = Icons.Outlined.Close,
+                                            destructive = true,
+                                            onClick = { finish() },
+                                        ),
+                                    ),
+                                )
+                            }
                         }
                     }
                 }
