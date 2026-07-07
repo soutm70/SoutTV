@@ -290,6 +290,18 @@ class AerioExoPlayerHolder @Inject constructor(
     // which also lets Dispatcharr re-select a live stream), then surface
     // "unavailable" instead of hanging.
     private val noDataStartupThresholdMs = 15_000L
+    // Issue #17: for a LIVE Dispatcharr channel whose top source is dead, the
+    // proxy fails that source over to a working one SERVER-SIDE on the same open
+    // connection (~20-40s: MAX_RETRIES x CONNECTION_TIMEOUT + health monitor).
+    // libmpv survives the silent gap on iOS via network-timeout=30 + deep cache;
+    // ExoPlayer must be given the same patience or its 30s read timeout tears the
+    // connection down and shows "Channel unavailable" before the waterfall
+    // completes. So live gets a longer read timeout (kept ABOVE the ceiling) and
+    // a longer no-data ceiling; and for live we DON'T reconnect at the ceiling (a
+    // fresh GET would only abandon the connection the proxy is still advancing
+    // on) -- if nothing arrived by then the whole channel is dead.
+    private val liveNoDataStartupThresholdMs = 50_000L
+    private val liveReadTimeoutMs = 55_000
     private var noDataHealAttempts = 0
     private val _streamUnavailable = MutableStateFlow(false)
     /** True when a freshly-tuned live stream produced no data even after a
@@ -527,7 +539,7 @@ class AerioExoPlayerHolder @Inject constructor(
         subtitle: String? = null,
         artworkUri: android.net.Uri? = null,
     ): MediaSource {
-        val dataSourceFactory = httpDataSourceFactory()
+        val dataSourceFactory = httpDataSourceFactory(isRawTsUrl(url))
 
         // Force-route raw .ts URLs through ProgressiveMediaSource +
         // TsExtractor. Without this, DefaultMediaSourceFactory looks at
@@ -635,11 +647,14 @@ class AerioExoPlayerHolder @Inject constructor(
         p.playWhenReady = true
     }
 
-    private fun httpDataSourceFactory(): DataSource.Factory {
+    private fun httpDataSourceFactory(isLive: Boolean = false): DataSource.Factory {
         val factory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(30_000)
+            // Issue #17: live (raw-TS Dispatcharr proxy) gets a long read timeout
+            // so a silent connection survives the server-side dead-source failover
+            // instead of erroring out mid-waterfall. VOD/Auto keep the tight 30s.
+            .setReadTimeoutMs(if (isLive) liveReadTimeoutMs else 30_000)
         // Apply Dispatcharr API-key / custom User-Agent. Headers are
         // applied verbatim; the User-Agent header (if present) replaces
         // the default.
@@ -757,18 +772,35 @@ class AerioExoPlayerHolder @Inject constructor(
                 // -- a fresh GET to the same /proxy/ts/stream/<uuid> url, which also
                 // gives Dispatcharr a chance to re-select a live stream -- and (2)
                 // if still no bytes, surface "Channel unavailable" instead of black.
-                if (lastPlayUrl != null && p.playWhenReady && !hasReachedPlaybackRestart &&
+                // Issue #17: give a live Dispatcharr channel a MUCH longer ceiling
+                // (the held-open connection is where the proxy fails a dead source
+                // over to a working one server-side); VOD/other keep the tight net.
+                val coldStartUrl = lastPlayUrl
+                val coldStartIsLive = coldStartUrl != null && isRawTsUrl(coldStartUrl)
+                val coldStartCeilingMs =
+                    if (coldStartIsLive) liveNoDataStartupThresholdMs else noDataStartupThresholdMs
+                if (coldStartUrl != null && p.playWhenReady && !hasReachedPlaybackRestart &&
                     !videoFrameRendered && p.playbackState == Player.STATE_BUFFERING &&
                     p.currentPosition <= 0L && p.bufferedPosition <= 0L &&
-                    now - streamPrimedAtMs >= noDataStartupThresholdMs
+                    now - streamPrimedAtMs >= coldStartCeilingMs
                 ) {
                     val deadMs = now - streamPrimedAtMs
-                    when (noDataHealAttempts) {
-                        0 -> if (forceReload("startup-no-data=${deadMs}ms")) noDataHealAttempts = 1
-                        else -> {
-                            noDataHealAttempts = 2
-                            Log.w(TAG, "[NO-DATA] no bytes after reconnect ch=$currentChannelId (${deadMs}ms); surfacing unavailable")
-                            markStreamUnavailable()
+                    if (coldStartIsLive) {
+                        // The long read timeout already held this connection open
+                        // across the server-side failover. Nothing arrived by the
+                        // ceiling => the whole channel is dead. Reconnecting here
+                        // would only abandon the connection the proxy is advancing
+                        // on, so surface "unavailable" directly.
+                        Log.w(TAG, "[NO-DATA] live no bytes after ${deadMs}ms ch=$currentChannelId; surfacing unavailable")
+                        markStreamUnavailable()
+                    } else {
+                        when (noDataHealAttempts) {
+                            0 -> if (forceReload("startup-no-data=${deadMs}ms")) noDataHealAttempts = 1
+                            else -> {
+                                noDataHealAttempts = 2
+                                Log.w(TAG, "[NO-DATA] no bytes after reconnect ch=$currentChannelId (${deadMs}ms); surfacing unavailable")
+                                markStreamUnavailable()
+                            }
                         }
                     }
                     continue
