@@ -807,7 +807,10 @@ internal fun ChannelRow(
                             Text(
                                 text = num.toString(),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                // iOS parity: numbers sit on the DIM textTertiary
+                                // rung (ChannelListView.swift iOSRow .textTertiary)
+                                // so they recede behind name/title.
+                                color = MaterialTheme.colorScheme.tertiary,
                             )
                         }
                     }
@@ -883,7 +886,10 @@ internal fun ChannelRow(
                     Text(
                         text = nowProgramme?.title ?: " ",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        // iOS parity: the program-title line is accent at 0.85,
+                        // not full strength (ChannelListView.swift MarqueeText
+                        // accentPrimary.opacity(0.85)).
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -1249,7 +1255,9 @@ private fun UpcomingProgrammeRow(
             Text(
                 text = formatTimeRange(programme),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // iOS parity: schedule time ranges are textTertiary
+                // (epgEntryRow), a rung dimmer than the description.
+                color = MaterialTheme.colorScheme.tertiary,
             )
         }
         // One source of truth for the long-press actions; rendered as an

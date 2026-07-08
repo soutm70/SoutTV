@@ -1769,7 +1769,9 @@ private fun ChannelGuideRow(
                         Text(
                             text = num.toString(),
                             style = numberStyle,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // iOS parity: rail numbers on the dim textTertiary
+                            // rung (EPGGuideView channelLabel .textTertiary).
+                            color = MaterialTheme.colorScheme.tertiary,
                             textAlign = TextAlign.End,
                             maxLines = 1,
                             modifier = Modifier.width(numberWidth),
@@ -1839,7 +1841,8 @@ private fun ChannelGuideRow(
                         Text(
                             text = num.toString(),
                             style = numberStyle,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // iOS parity: textTertiary rung, see TV branch.
+                            color = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.width(numberWidth),
                         )
                     }
@@ -2512,8 +2515,11 @@ private fun ProgrammeCell(
                     Text(
                         text = timeRange,
                         style = MaterialTheme.typography.labelSmall,
+                        // iOS parity: guide-cell time lines sit on the
+                        // textTertiary rung (EPGGuideView tvOS branch), a
+                        // full step dimmer than the description.
                         color = if (focused) Color.White.copy(alpha = 0.7f)
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        else MaterialTheme.colorScheme.tertiary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
