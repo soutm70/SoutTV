@@ -7,10 +7,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -75,52 +77,75 @@ fun SplashGate(
 }
 
 /**
- * Plays the iOS AerioSplash.mp4 intro (ported into res/raw) centered on black.
- * The clip is portrait (720x1280), so on a landscape TV it pillarboxes, but
- * since it animates a centered logo on black the bars are invisible. Muted,
- * plays once, dismisses on completion. Falls back to the static brand card if
- * the device can't decode it.
+ * Plays the iOS AerioSplash.mp4 intro (ported into res/raw) scaled to COVER
+ * the screen. The clip is portrait 720x1280 with its background baked in
+ * (#0A1426). It used to render fit-scaled over colorScheme.background, but
+ * the pillarbox bars never truly matched the frame: the theme background
+ * differs per preset, and the video pipeline shifts the decoded color a step
+ * (#0A1426 file -> #091527 on the Fold), so any screen wider than 9:16
+ * (unfolded foldables, tablets, TVs) showed a phone-shaped rectangle around
+ * the clip (user report). Crop-fill removes the bars instead of chasing an
+ * exact color match. Safe to crop: the animation content spans only
+ * x 23-77% / y 38-63% of the frame (measured across the whole clip), so even
+ * a 16:9 TV, which keeps just the center 32% of the height, shows all of it.
+ * Muted, plays once, dismisses on completion. Falls back to the static brand
+ * card if the device can't decode it.
  */
 @Composable
 private fun SplashVideo(onPlaybackDone: () -> Unit) {
     var failed by remember { mutableStateOf(false) }
-    Box(
+    if (failed) {
+        SplashContent()
+        return
+    }
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            // The clip's own background color, for the brief pre-decode gap:
+            // the screen is then a single uniform surface with no edge to see.
+            .background(Color(0xFF0A1426)),
         contentAlignment = Alignment.Center,
     ) {
-        if (failed) {
-            SplashContent()
+        val videoAspect = 720f / 1280f
+        val coverWidth: androidx.compose.ui.unit.Dp
+        val coverHeight: androidx.compose.ui.unit.Dp
+        if (maxWidth / maxHeight > videoAspect) {
+            coverWidth = maxWidth
+            coverHeight = maxWidth / videoAspect
         } else {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    android.widget.VideoView(ctx).apply {
-                        setZOrderOnTop(true)
-                        setVideoURI(
-                            android.net.Uri.parse(
-                                "android.resource://${ctx.packageName}/${R.raw.aerio_splash}",
-                            ),
-                        )
-                        setOnPreparedListener { mp ->
-                            mp.setVolume(0f, 0f)
-                            mp.isLooping = false
-                            start()
-                        }
-                        setOnCompletionListener { onPlaybackDone() }
-                        setOnErrorListener { _, _, _ -> failed = true; true }
-                    }
-                },
-                // Release the underlying MediaPlayer + surface when the splash
-                // dismisses (finished -> SplashVideo leaves composition) or
-                // falls back to the static card (failed flips). Without this the
-                // VideoView's MediaPlayer + Surface leak for the process
-                // lifetime on every cold launch. stopPlayback() is VideoView's
-                // documented teardown.
-                onRelease = { view -> runCatching { view.stopPlayback() } },
-            )
+            coverHeight = maxHeight
+            coverWidth = maxHeight * videoAspect
         }
+        AndroidView(
+            // requiredSize deliberately exceeds the screen on the shorter
+            // axis; the centered overflow just runs off the display edge,
+            // which is what crops the video.
+            modifier = Modifier.requiredSize(coverWidth, coverHeight),
+            factory = { ctx ->
+                android.widget.VideoView(ctx).apply {
+                    setZOrderOnTop(true)
+                    setVideoURI(
+                        android.net.Uri.parse(
+                            "android.resource://${ctx.packageName}/${R.raw.aerio_splash}",
+                        ),
+                    )
+                    setOnPreparedListener { mp ->
+                        mp.setVolume(0f, 0f)
+                        mp.isLooping = false
+                        start()
+                    }
+                    setOnCompletionListener { onPlaybackDone() }
+                    setOnErrorListener { _, _, _ -> failed = true; true }
+                }
+            },
+            // Release the underlying MediaPlayer + surface when the splash
+            // dismisses (finished -> SplashVideo leaves composition) or
+            // falls back to the static card (failed flips). Without this the
+            // VideoView's MediaPlayer + Surface leak for the process
+            // lifetime on every cold launch. stopPlayback() is VideoView's
+            // documented teardown.
+            onRelease = { view -> runCatching { view.stopPlayback() } },
+        )
     }
 }
 
