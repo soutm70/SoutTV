@@ -1142,7 +1142,7 @@ private fun ContinueWatchingRail(
         Text(
             text = title,
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(
                 horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
@@ -1342,7 +1342,7 @@ private fun SeriesContinueWatchingRail(
         Text(
             text = title,
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(
                 horizontal = if (rememberLiveTvFormFactor().isTv) 48.dp else 20.dp,
