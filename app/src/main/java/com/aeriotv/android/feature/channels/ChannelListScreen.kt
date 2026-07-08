@@ -382,7 +382,39 @@ fun ChannelListScreen(
             enter = expandVertically(),
             exit = shrinkVertically(),
         ) {
-            LazyRow(
+            // #45: collection pills join the group row -- placement
+            // "beginning" renders before All, "end" after the last group.
+            // Hoisted so both the TV row and the shared phone row use it.
+            val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
+                val token = ChannelCollection.token(c.id)
+                CollectionPill(
+                    collection = c,
+                    selected = state.selectedGroup == token,
+                    isTv = isTv,
+                    onSelect = { viewModel.onGroupSelected(token) },
+                    onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
+                    onDelete = {
+                        if (state.selectedGroup == token) {
+                            viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
+                        }
+                        collectionsVm.delete(c.id)
+                    },
+                )
+            }
+            // Phone renders the SAME shared row as the Guide so the two views
+            // match pixel-for-pixel (user report: the Tune button and pills
+            // shifted slightly between views). TV keeps its own row below
+            // because the Guide / Search / Sort circles live in it.
+            if (!isTv) com.aeriotv.android.feature.livetv.LiveTvPillsRow(
+                groups = groups,
+                selectedGroup = state.selectedGroup,
+                onSelectGroup = { viewModel.onGroupSelected(it) },
+                collections = collections,
+                hiddenGroupsCount = hiddenGroups.size,
+                onManageGroups = { manageGroupsOpen = true },
+                collectionPillItem = collectionPillItem,
+            )
+            else LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -456,24 +488,6 @@ fun ChannelListScreen(
                             )
                         }
                     }
-                }
-                // #45: collection pills join the group row -- placement
-                // "beginning" renders before All, "end" after the last group.
-                val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
-                    val token = ChannelCollection.token(c.id)
-                    CollectionPill(
-                        collection = c,
-                        selected = state.selectedGroup == token,
-                        isTv = isTv,
-                        onSelect = { viewModel.onGroupSelected(token) },
-                        onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
-                        onDelete = {
-                            if (state.selectedGroup == token) {
-                                viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
-                            }
-                            collectionsVm.delete(c.id)
-                        },
-                    )
                 }
                 items(
                     collections.filter { it.placement == ChannelCollection.PLACEMENT_BEGINNING },

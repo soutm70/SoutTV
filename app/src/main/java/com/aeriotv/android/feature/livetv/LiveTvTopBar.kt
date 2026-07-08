@@ -1,23 +1,39 @@
 package com.aeriotv.android.feature.livetv
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.aeriotv.android.core.data.ChannelCollection
 
 /**
  * Centered "Live TV" title bar whose trailing actions SHRINK on narrow
@@ -92,5 +108,91 @@ fun LiveTvTopBar(
         ) {
             actions(buttonSize, iconSize)
         }
+    }
+}
+
+/**
+ * Phone filter + group-pills row shared by the List and Guide views so the
+ * two render pixel-identically (user reports: first the pill shape, then a
+ * positional shift when toggling views). Geometry is the List view's
+ * original: one 56dp LazyRow, 16dp/8dp content padding, 8dp item spacing,
+ * with the Manage Groups circle scrolling as the first item. Phone-only;
+ * both TV paths keep their own tvOS-style rows.
+ */
+@Composable
+fun LiveTvPillsRow(
+    groups: List<String>,
+    selectedGroup: String,
+    onSelectGroup: (String) -> Unit,
+    collections: List<ChannelCollection>,
+    hiddenGroupsCount: Int,
+    onManageGroups: () -> Unit,
+    collectionPillItem: @Composable (ChannelCollection) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    .clickable(onClick = onManageGroups),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Tune,
+                    contentDescription = if (hiddenGroupsCount == 0) "Manage groups"
+                    else "Manage groups ($hiddenGroupsCount hidden)",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                // iOS parity: warning dot flags that at least one group is
+                // hidden (ManageGroupsSheet.swift's ManageGroupsButton).
+                if (hiddenGroupsCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 6.dp, end = 6.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFFA502)),
+                    )
+                }
+            }
+        }
+        // #45: collection pills join the group row -- placement "beginning"
+        // renders before All, "end" after the last group.
+        items(
+            collections.filter { it.placement == ChannelCollection.PLACEMENT_BEGINNING },
+            key = { "coll_${it.id}" },
+        ) { c -> collectionPillItem(c) }
+        items(groups, key = { "grp_$it" }) { group ->
+            FilterChip(
+                selected = selectedGroup == group,
+                onClick = { onSelectGroup(group) },
+                label = { Text(group, style = MaterialTheme.typography.labelLarge) },
+                shape = CircleShape,
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = selectedGroup == group,
+                ),
+            )
+        }
+        items(
+            collections.filter { it.placement != ChannelCollection.PLACEMENT_BEGINNING },
+            key = { "coll_${it.id}" },
+        ) { c -> collectionPillItem(c) }
     }
 }

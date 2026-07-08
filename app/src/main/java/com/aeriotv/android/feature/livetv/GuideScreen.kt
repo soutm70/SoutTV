@@ -716,6 +716,30 @@ fun GuideScreen(
         // suspend; matches iOS EPGGuideView's "scroll back to now" button
         // which snaps the time axis so the now-indicator sits ~1/4 of the
         // way across the viewport.
+        // #45: collection pills join the group row -- placement "beginning"
+        // renders before All, "end" after the last group (iOS
+        // beginningCollections / endCollections). One shared renderer keeps
+        // select / manage behavior identical across the TV row and the shared
+        // phone pills row.
+        val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
+            val token = ChannelCollection.token(c.id)
+            CollectionPill(
+                collection = c,
+                selected = state.selectedGroup == token,
+                isTv = isTv,
+                onSelect = { viewModel.onGroupSelected(token) },
+                onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
+                onDelete = {
+                    // Mirror the hidden-group reset: if we're filtered
+                    // to this collection, drop back to All before its
+                    // pill vanishes (iOS collectionManageActions).
+                    if (state.selectedGroup == token) {
+                        viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
+                    }
+                    collectionsVm.delete(c.id)
+                },
+            )
+        }
         // Phone/tablet: the Guide adopts the List view's two-row header (user
         // request): a centered "Live TV" title bar with the view-toggle /
         // global-search / channel-search / sort actions on the trailing edge,
@@ -798,12 +822,28 @@ fun GuideScreen(
                     ),
                 )
             }
+            // Filter + pills: the SAME shared row the List view renders, so
+            // the two views match pixel-for-pixel (user report: the Tune
+            // button and pills shifted slightly between views). Gated like
+            // the List view: hidden when there is only the All group and no
+            // collections.
+            if (groups.size > 1 || collections.isNotEmpty()) {
+                LiveTvPillsRow(
+                    groups = groups,
+                    selectedGroup = state.selectedGroup,
+                    onSelectGroup = { viewModel.onGroupSelected(it) },
+                    collections = collections,
+                    hiddenGroupsCount = hiddenGroups.size,
+                    onManageGroups = { showManageGroups = true },
+                    collectionPillItem = collectionPillItem,
+                )
+            }
         }
-        // Control + filter row, mirroring the tvOS guide: List/Guide switcher,
-        // search toggle, and a group on/off filter on the left, then the
-        // channel-group pills (or an inline search field) filling the rest.
-        // On phone the leading controls live in the app bar above; this row
-        // carries only the Manage Groups button + the pills.
+        // Control + filter row (TV only), mirroring the tvOS guide:
+        // List/Guide switcher, search toggle, and a group on/off filter on
+        // the left, then the channel-group pills (or an inline search field)
+        // filling the rest. Phone renders the shared LiveTvPillsRow above
+        // instead.
         // Control circle sizing. TV values are tvOS-pt x 0.5 (the 960dp canvas
         // is half tvOS's 1920pt, so the same physical size => all the group
         // pills fit across the row exactly like tvOS, no horizontal scroll).
@@ -813,8 +853,9 @@ fun GuideScreen(
         // keeps a clean ring around the 16dp glyph while leaving ~9dp clearance
         // in the 44dp row so the ring no longer crowds the pills above / time
         // axis below.
-        val controlCircle = if (isTv) 26.dp else 24.dp
-        val controlIcon = if (isTv) 16.dp else 18.dp
+        if (isTv) {
+        val controlCircle = 26.dp
+        val controlIcon = 16.dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -822,9 +863,9 @@ fun GuideScreen(
                 // axis from crowding. A Material OutlinedTextField, however, needs
                 // its ~56dp min height or the entered text clips vertically, so let
                 // the row grow to 56dp WHILE the inline channel-search field is
-                // shown (parity with the phone path, which is 56dp already).
-                .height(if (isTv && !searchActive) 44.dp else 56.dp)
-                .padding(horizontal = if (isTv) 20.dp else 12.dp)
+                // shown.
+                .height(if (!searchActive) 44.dp else 56.dp)
+                .padding(horizontal = 20.dp)
                 // #10/#14 overshoot fix: pin a HOLD Left to the "All" pill. This
                 // handler sits on the common ancestor of BOTH the leading control
                 // circles AND the group-pill row, so it keeps seeing Left even
@@ -1047,38 +1088,8 @@ fun GuideScreen(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        .clickable { showManageGroups = true },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Tune,
-                        contentDescription = if (hiddenGroups.isEmpty()) "Manage groups"
-                        else "Manage groups (${hiddenGroups.size} hidden)",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    // iOS parity: warning dot flags that at least one group is
-                    // hidden (same as the List view's Tune button).
-                    if (filterActive) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 6.dp, end = 6.dp)
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFFFA502)),
-                        )
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
             }
-            if (searchActive && isTv) {
+            if (searchActive) {
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = viewModel::onSearchQueryChange,
@@ -1094,29 +1105,6 @@ fun GuideScreen(
                     modifier = Modifier.weight(1f),
                 )
             } else if (groups.size > 1 || collections.isNotEmpty()) {
-                // #45: collection pills join the group row -- placement
-                // "beginning" renders before All, "end" after the last group
-                // (iOS beginningCollections / endCollections). One shared
-                // renderer keeps select / manage behavior identical.
-                val collectionPillItem: @Composable (ChannelCollection) -> Unit = { c ->
-                    val token = ChannelCollection.token(c.id)
-                    CollectionPill(
-                        collection = c,
-                        selected = state.selectedGroup == token,
-                        isTv = isTv,
-                        onSelect = { viewModel.onGroupSelected(token) },
-                        onSetPlacement = { p -> collectionsVm.setPlacement(c.id, p) },
-                        onDelete = {
-                            // Mirror the hidden-group reset: if we're filtered
-                            // to this collection, drop back to All before its
-                            // pill vanishes (iOS collectionManageActions).
-                            if (state.selectedGroup == token) {
-                                viewModel.onGroupSelected(PlaylistViewModel.ALL_GROUPS)
-                            }
-                            collectionsVm.delete(c.id)
-                        },
-                    )
-                }
                 LazyRow(
                     modifier = Modifier
                         .weight(1f)
@@ -1180,26 +1168,6 @@ fun GuideScreen(
                                     maxLines = 1,
                                 )
                             }
-                        } else {
-                            FilterChip(
-                                selected = pillSelected,
-                                onClick = { viewModel.onGroupSelected(group) },
-                                interactionSource = pillInteraction,
-                                label = {
-                                    Text(group, style = MaterialTheme.typography.labelLarge)
-                                },
-                                shape = CircleShape,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = Color.Transparent,
-                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    enabled = true,
-                                    selected = pillSelected,
-                                ),
-                            )
                         }
                     }
                     items(
@@ -1208,6 +1176,7 @@ fun GuideScreen(
                     ) { c -> collectionPillItem(c) }
                 }
             }
+        }
         }
 
         HorizontalDivider(color = guideDivider, thickness = 0.5.dp)
