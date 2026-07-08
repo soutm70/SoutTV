@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -91,7 +90,6 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -135,6 +133,7 @@ import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import com.aeriotv.android.feature.multiview.MultiviewStoreHandle
 import com.aeriotv.android.feature.multiview.rememberMultiviewStoreHandle
 import com.aeriotv.android.feature.playlist.PlaylistViewModel
+import com.aeriotv.android.feature.playlist.SortMode
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -425,7 +424,10 @@ fun GuideScreen(
         }
     }
 
-    val filteredChannels by remember(state.channels, state.selectedGroup, allGroupNames, groupSortMode, collections) {
+    val filteredChannels by remember(
+        state.channels, state.selectedGroup, allGroupNames, groupSortMode, collections,
+        state.sortMode, favoriteIds,
+    ) {
         derivedStateOf {
             val query = state.searchQuery.trim()
             // #45: a "collection:<id>" sentinel filters to exactly the curated
@@ -470,12 +472,28 @@ fun GuideScreen(
                     }
                 }
                 .filter { query.isEmpty() || it.name.contains(query, ignoreCase = true) }
+                // Same Sort menu contract as the List view (user report: the
+                // Number / Name / Favorites toggle was missing from the
+                // Guide): group clustering stays the primary key, then the
+                // selected mode orders within it.
                 .sortedWith(
-                    compareBy(
-                        { if (clusterByGroup) groupRankIndex[it.groupTitle] ?: Int.MAX_VALUE else 0 },
-                        { it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE },
-                        { it.name.lowercase() },
-                    ),
+                    when (state.sortMode) {
+                        SortMode.ByName -> compareBy(
+                            { if (clusterByGroup) groupRankIndex[it.groupTitle] ?: Int.MAX_VALUE else 0 },
+                            { it.name.lowercase() },
+                        )
+                        SortMode.FavoritesFirst -> compareBy(
+                            { if (clusterByGroup) groupRankIndex[it.groupTitle] ?: Int.MAX_VALUE else 0 },
+                            { it.id !in favoriteIds }, // false (favorited) sorts first
+                            { it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE },
+                            { it.name.lowercase() },
+                        )
+                        SortMode.ByNumber -> compareBy(
+                            { if (clusterByGroup) groupRankIndex[it.groupTitle] ?: Int.MAX_VALUE else 0 },
+                            { it.channelNumber?.toDoubleOrNull() ?: Double.MAX_VALUE },
+                            { it.name.lowercase() },
+                        )
+                    },
                 )
                 .toList()
         }
@@ -700,59 +718,63 @@ fun GuideScreen(
         // way across the viewport.
         // Phone/tablet: the Guide adopts the List view's two-row header (user
         // request): a centered "Live TV" title bar with the view-toggle /
-        // global-search / channel-search actions on the trailing edge, then
-        // the filter + group pills on their own full-width row below. The
-        // pills previously shared one row with four leading icon circles,
+        // global-search / channel-search / sort actions on the trailing edge,
+        // then the filter + group pills on their own full-width row below.
+        // The pills previously shared one row with four leading icon circles,
         // which left them little width on compact screens. TV keeps the
         // single tvOS-style control row (its focus/key-event model lives on
-        // that Row). Mirrors ChannelListScreen's CenterAlignedTopAppBar,
-        // except windowInsets zero: this Column already statusBarsPadding()s.
+        // that Row). LiveTvTopBar (shared with ChannelListScreen) keeps the
+        // title truly screen-centered by shrinking the action cluster on
+        // narrow displays like the Fold cover screen.
         if (!isTv) {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = "Live TV",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                actions = {
-                    if (canToggleViewMode) {
-                        IconButton(onClick = onToggleViewMode) {
-                            Icon(
-                                imageVector = if (viewMode == LiveTVViewMode.Guide)
-                                    Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
-                                contentDescription = if (viewMode == LiveTVViewMode.Guide)
-                                    "Switch to List" else "Switch to Guide",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                    IconButton(onClick = onOpenSearch) {
+            LiveTvTopBar(
+                actionCount = if (canToggleViewMode) 4 else 3,
+            ) { buttonSize, iconSize ->
+                if (canToggleViewMode) {
+                    IconButton(onClick = onToggleViewMode, modifier = Modifier.size(buttonSize)) {
                         Icon(
-                            imageVector = Icons.Filled.TravelExplore,
-                            contentDescription = "Search",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            imageVector = if (viewMode == LiveTVViewMode.Guide)
+                                Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
+                            contentDescription = if (viewMode == LiveTVViewMode.Guide)
+                                "Switch to List" else "Switch to Guide",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(iconSize),
                         )
                     }
-                    IconButton(onClick = {
+                }
+                IconButton(onClick = onOpenSearch, modifier = Modifier.size(buttonSize)) {
+                    Icon(
+                        imageVector = Icons.Filled.TravelExplore,
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(iconSize),
+                    )
+                }
+                IconButton(
+                    onClick = {
                         searchActive = !searchActive
                         if (!searchActive) viewModel.onSearchQueryChange("")
-                    }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Search,
-                            contentDescription = if (searchActive) "Close search" else "Search channels",
-                            tint = if (searchActive) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                windowInsets = WindowInsets(0),
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                ),
-            )
+                    },
+                    modifier = Modifier.size(buttonSize),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Search,
+                        contentDescription = if (searchActive) "Close search" else "Search channels",
+                        tint = if (searchActive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(iconSize),
+                    )
+                }
+                // User report: the Sort by Number / Name / Favorites menu was
+                // missing from the Guide. Same menu, same ViewModel state as
+                // the List view; the guide's row ordering honors it below.
+                com.aeriotv.android.feature.channels.SortMenu(
+                    currentMode = state.sortMode,
+                    onSelect = viewModel::onSortModeChange,
+                    buttonSize = buttonSize,
+                    iconSize = iconSize,
+                )
+            }
             if (searchActive) {
                 OutlinedTextField(
                     value = state.searchQuery,

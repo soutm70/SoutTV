@@ -279,56 +279,53 @@ fun ChannelListScreen(
         // Android TV drops the "Live TV" title bar entirely (wasted 10-foot
         // space): the Guide / Search / Sort controls move down onto the group-pill
         // control row (see below). Phone / tablet keep the titled app bar.
-        if (!isTv) CenterAlignedTopAppBar(
-            title = {
-                Text(
-                    text = "Live TV",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            },
-            actions = {
-                if (canToggleViewMode) {
-                    IconButton(onClick = onToggleViewMode) {
-                        Icon(
-                            imageVector = if (viewMode == LiveTVViewMode.Guide)
-                                Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
-                            contentDescription = if (viewMode == LiveTVViewMode.Guide)
-                                "Switch to List" else "Switch to Guide",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-                // Global Search (parity #41): the full Search screen (movies /
-                // shows / EPG). Distinct from the channel-name filter beside it.
-                IconButton(onClick = onOpenSearch) {
+        if (!isTv) com.aeriotv.android.feature.livetv.LiveTvTopBar(
+            actionCount = if (canToggleViewMode) 4 else 3,
+        ) { buttonSize, iconSize ->
+            if (canToggleViewMode) {
+                IconButton(onClick = onToggleViewMode, modifier = Modifier.size(buttonSize)) {
                     Icon(
-                        imageVector = Icons.Filled.TravelExplore,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        imageVector = if (viewMode == LiveTVViewMode.Guide)
+                            Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
+                        contentDescription = if (viewMode == LiveTVViewMode.Guide)
+                            "Switch to List" else "Switch to Guide",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(iconSize),
                     )
                 }
-                IconButton(onClick = {
+            }
+            // Global Search (parity #41): the full Search screen (movies /
+            // shows / EPG). Distinct from the channel-name filter beside it.
+            IconButton(onClick = onOpenSearch, modifier = Modifier.size(buttonSize)) {
+                Icon(
+                    imageVector = Icons.Filled.TravelExplore,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(iconSize),
+                )
+            }
+            IconButton(
+                onClick = {
                     searchActive = !searchActive
                     if (!searchActive) viewModel.onSearchQueryChange("")
-                }) {
-                    Icon(
-                        imageVector = Icons.Outlined.Search,
-                        contentDescription = if (searchActive) "Close search" else "Search channels",
-                        tint = if (searchActive) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                SortMenu(
-                    currentMode = state.sortMode,
-                    onSelect = viewModel::onSortModeChange,
+                },
+                modifier = Modifier.size(buttonSize),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Search,
+                    contentDescription = if (searchActive) "Close search" else "Search channels",
+                    tint = if (searchActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(iconSize),
                 )
-            },
-            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.background,
-                titleContentColor = MaterialTheme.colorScheme.onBackground,
-            ),
-        )
+            }
+            SortMenu(
+                currentMode = state.sortMode,
+                onSelect = viewModel::onSortModeChange,
+                buttonSize = buttonSize,
+                iconSize = iconSize,
+            )
+        }
 
         if (searchActive) OutlinedTextField(
             value = state.searchQuery,
@@ -609,11 +606,15 @@ private fun ListControlCircle(
     }
 }
 
+/** Shared with GuideScreen's phone app bar, hence not private. The size
+ *  params let LiveTvTopBar's shrink-to-fit math drive the button. */
 @Composable
-private fun SortMenu(
+internal fun SortMenu(
     currentMode: SortMode,
     onSelect: (SortMode) -> Unit,
     circular: Boolean = false,
+    buttonSize: androidx.compose.ui.unit.Dp? = null,
+    iconSize: androidx.compose.ui.unit.Dp? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -624,11 +625,15 @@ private fun SortMenu(
                 onClick = { expanded = true },
             )
         } else {
-            IconButton(onClick = { expanded = true }) {
+            IconButton(
+                onClick = { expanded = true },
+                modifier = if (buttonSize != null) Modifier.size(buttonSize) else Modifier,
+            ) {
                 Icon(
                     imageVector = Icons.Filled.SwapVert,
                     contentDescription = "Sort channels",
                     tint = MaterialTheme.colorScheme.primary,
+                    modifier = if (iconSize != null) Modifier.size(iconSize) else Modifier,
                 )
             }
         }
