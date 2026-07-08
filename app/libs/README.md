@@ -19,6 +19,14 @@ renderer (`EXTENSION_RENDERER_MODE_ON`) in `core/playback/AerioRenderers.kt`.
 - NDK `25.1.8937393`, cmake `3.31.x`, nasm (for the x86_64 build)
 - module `minSdkVersion` raised to 21 so every ABI links at >= 21 (the app's
   own minSdk is 26)
+- `libraries/decoder_ffmpeg/src/main/jni/CMakeLists.txt` patched with
+  `target_link_options(ffmpegJNI PRIVATE "-Wl,-z,max-page-size=16384")` so the
+  .so links with 16 KB ELF page alignment (Android 15+/16 requirement; NDK r26
+  and below default to 4 KB and Android 16 then runs the app in "page size
+  compatible mode" with a launch warning). The ffmpeg static libs need no
+  rebuild for this; alignment is fixed at the final shared-object link. Verify
+  with `llvm-readelf -l libffmpegJNI.so`: every LOAD segment must show align
+  `0x4000`.
 
 ```
 # in the media3 checkout, from libraries/decoder_ffmpeg/src/main/jni
