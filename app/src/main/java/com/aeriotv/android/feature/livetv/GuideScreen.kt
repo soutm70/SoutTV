@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -42,6 +43,8 @@ import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Notifications
@@ -88,7 +91,9 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -693,9 +698,90 @@ fun GuideScreen(
         // suspend; matches iOS EPGGuideView's "scroll back to now" button
         // which snaps the time axis so the now-indicator sits ~1/4 of the
         // way across the viewport.
+        // Phone/tablet: the Guide adopts the List view's two-row header (user
+        // request): a centered "Live TV" title bar with the view-toggle /
+        // global-search / channel-search actions on the trailing edge, then
+        // the filter + group pills on their own full-width row below. The
+        // pills previously shared one row with four leading icon circles,
+        // which left them little width on compact screens. TV keeps the
+        // single tvOS-style control row (its focus/key-event model lives on
+        // that Row). Mirrors ChannelListScreen's CenterAlignedTopAppBar,
+        // except windowInsets zero: this Column already statusBarsPadding()s.
+        if (!isTv) {
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = "Live TV",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                actions = {
+                    if (canToggleViewMode) {
+                        IconButton(onClick = onToggleViewMode) {
+                            Icon(
+                                imageVector = if (viewMode == LiveTVViewMode.Guide)
+                                    Icons.Filled.ViewList else Icons.Filled.CalendarMonth,
+                                contentDescription = if (viewMode == LiveTVViewMode.Guide)
+                                    "Switch to List" else "Switch to Guide",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(
+                            imageVector = Icons.Filled.TravelExplore,
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = {
+                        searchActive = !searchActive
+                        if (!searchActive) viewModel.onSearchQueryChange("")
+                    }) {
+                        Icon(
+                            imageVector = Icons.Outlined.Search,
+                            contentDescription = if (searchActive) "Close search" else "Search channels",
+                            tint = if (searchActive) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                windowInsets = WindowInsets(0),
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
+            )
+            if (searchActive) {
+                OutlinedTextField(
+                    value = state.searchQuery,
+                    onValueChange = viewModel::onSearchQueryChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    singleLine = true,
+                    placeholder = { Text("Search channels") },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    trailingIcon = if (state.searchQuery.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    } else null,
+                    shape = RoundedCornerShape(14.dp),
+                    keyboardOptions = com.aeriotv.android.ui.textfield.aerioTextFieldKeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                    ),
+                )
+            }
+        }
         // Control + filter row, mirroring the tvOS guide: List/Guide switcher,
         // search toggle, and a group on/off filter on the left, then the
         // channel-group pills (or an inline search field) filling the rest.
+        // On phone the leading controls live in the app bar above; this row
+        // carries only the Manage Groups button + the pills.
         // Control circle sizing. TV values are tvOS-pt x 0.5 (the 960dp canvas
         // is half tvOS's 1920pt, so the same physical size => all the group
         // pills fit across the row exactly like tvOS, no horizontal scroll).
@@ -716,7 +802,7 @@ fun GuideScreen(
                 // the row grow to 56dp WHILE the inline channel-search field is
                 // shown (parity with the phone path, which is 56dp already).
                 .height(if (isTv && !searchActive) 44.dp else 56.dp)
-                .padding(horizontal = if (isTv) 20.dp else 4.dp)
+                .padding(horizontal = if (isTv) 20.dp else 12.dp)
                 // #10/#14 overshoot fix: pin a HOLD Left to the "All" pill. This
                 // handler sits on the common ancestor of BOTH the leading control
                 // circles AND the group-pill row, so it keeps seeing Left even
@@ -753,16 +839,17 @@ fun GuideScreen(
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // List / Guide view switcher, to the LEFT of Search. On TV it uses
-            // the same bare-glyph + white-focus-ring circle as the Search /
-            // Filter controls (parity with tvOS, which offers a List / Guide
-            // switch here); on phone / tablet it stays a plain tinted icon.
-            if (canToggleViewMode) {
+            // List / Guide view switcher, to the LEFT of Search. TV-only: it
+            // uses the same bare-glyph + white-focus-ring circle as the
+            // Search / Filter controls (parity with tvOS, which offers a
+            // List / Guide switch here); the phone toggle lives in the app
+            // bar above.
+            if (canToggleViewMode && isTv) {
                 val switchesToList = viewMode == LiveTVViewMode.Guide
                 val toggleIcon = if (switchesToList)
                     Icons.Filled.ViewList else Icons.Filled.CalendarMonth
                 val toggleDesc = if (switchesToList) "Switch to List" else "Switch to Guide"
-                if (isTv) {
+                run {
                     val toggleInteraction = remember { MutableInteractionSource() }
                     val toggleFocused by toggleInteraction.collectIsFocusedAsState()
                     Box(
@@ -796,24 +883,14 @@ fun GuideScreen(
                         }
                     }
                     Spacer(Modifier.width(8.dp))
-                } else {
-                    IconButton(
-                        onClick = onToggleViewMode,
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = toggleIcon,
-                            contentDescription = toggleDesc,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
                 }
             }
             // Search toggle: reveals an inline channel-name search field. On TV
             // it has NO resting fill or ring -- just the bare glyph -- and only
             // shows the SAME 2dp white ring as a focused program cell WHEN it is
             // focused (active = search open fills it accent regardless).
+            // TV-only: the phone search toggle lives in the app bar above.
+            if (isTv) {
             val searchInteraction = remember { MutableInteractionSource() }
             val searchFocused by searchInteraction.collectIsFocusedAsState()
             val searchContainer = when {
@@ -866,7 +943,8 @@ fun GuideScreen(
             // Global Search (parity #41): opens the full Search screen (movies /
             // shows / EPG programmes). Distinct from the channel-name filter to
             // its left -- a globe-magnifier icon so it doesn't read as a
-            // duplicate search box.
+            // duplicate search box. TV-only: the phone globe lives in the app
+            // bar above.
             val globalSearchInteraction = remember { MutableInteractionSource() }
             val globalSearchFocused by globalSearchInteraction.collectIsFocusedAsState()
             Box(
@@ -901,26 +979,28 @@ fun GuideScreen(
                 }
             }
             // Gap between the two control circles.
-            Spacer(Modifier.width(if (isTv) 8.dp else 8.dp))
+            Spacer(Modifier.width(8.dp))
+            }
             // Filter toggle: opens the group on/off picker (Manage Groups).
-            // Same treatment as Search: no resting fill/ring on TV, white focus
+            // TV: same treatment as Search, no resting fill/ring, white focus
             // ring only when focused; active (some groups hidden) fills accent.
+            // Phone: the List view's 36dp Tune circle + hidden-groups warning
+            // dot, so both Live TV views lead their pill row identically.
             val filterActive = hiddenGroups.isNotEmpty()
+            if (isTv) {
             val filterInteraction = remember { MutableInteractionSource() }
             val filterFocused by filterInteraction.collectIsFocusedAsState()
             val filterContainer = when {
                 filterActive -> MaterialTheme.colorScheme.primary
-                isTv && filterFocused -> Color.White.copy(alpha = 0.15f)
-                isTv -> Color.Transparent
-                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                filterFocused -> Color.White.copy(alpha = 0.15f)
+                else -> Color.Transparent
             }
             Box(
                 modifier = Modifier
                     .clickable(
                         interactionSource = filterInteraction,
                         indication = null,
-                    ) { showManageGroups = true }
-                    .padding(if (isTv) 0.dp else 8.dp),
+                    ) { showManageGroups = true },
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
@@ -929,7 +1009,7 @@ fun GuideScreen(
                         .clip(CircleShape)
                         .background(filterContainer)
                         .then(
-                            if (isTv && filterFocused)
+                            if (filterFocused)
                                 Modifier.border(2.dp, Color.White, CircleShape)
                             else Modifier,
                         ),
@@ -944,8 +1024,39 @@ fun GuideScreen(
                     )
                 }
             }
-            Spacer(Modifier.width(if (isTv) 10.dp else 6.dp))
-            if (searchActive) {
+            Spacer(Modifier.width(10.dp))
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        .clickable { showManageGroups = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Tune,
+                        contentDescription = if (hiddenGroups.isEmpty()) "Manage groups"
+                        else "Manage groups (${hiddenGroups.size} hidden)",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    // iOS parity: warning dot flags that at least one group is
+                    // hidden (same as the List view's Tune button).
+                    if (filterActive) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 6.dp, end = 6.dp)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFFA502)),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+            if (searchActive && isTv) {
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = viewModel::onSearchQueryChange,
@@ -1344,6 +1455,13 @@ fun GuideScreen(
         val bringIntoViewSpec = remember {
             GuideLeadingEdgeBringIntoViewSpec { guideNav.leadingEdgeTargetPx }
         }
+        // Pull-to-refresh parity with the List view (user report: it only
+        // worked in List view). Same contract as ChannelListScreen: the
+        // spinner tracks state.isLoading and refreshPlaylist() re-fetches the
+        // channel list, then chains the EPG refresh. TV renders the grid bare:
+        // there is no pull gesture on D-pad, and the indicator would hang
+        // mid-screen while a background refresh runs.
+        val guideGrid: @Composable () -> Unit = {
         CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoViewSpec) {
         LazyColumn(
             state = listState,
@@ -1587,6 +1705,16 @@ fun GuideScreen(
                 HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
         }
+        }
+        }
+        if (isTv) {
+            guideGrid()
+        } else {
+            PullToRefreshBox(
+                isRefreshing = state.isLoading,
+                onRefresh = { viewModel.refreshPlaylist() },
+                modifier = Modifier.fillMaxSize(),
+            ) { guideGrid() }
         }
     }
 
