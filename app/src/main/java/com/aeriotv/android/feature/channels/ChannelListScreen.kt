@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -281,6 +282,11 @@ fun ChannelListScreen(
         // control row (see below). Phone / tablet keep the titled app bar.
         if (!isTv) com.aeriotv.android.feature.livetv.LiveTvTopBar(
             actionCount = if (canToggleViewMode) 4 else 3,
+            // The old CenterAlignedTopAppBar applied the status-bar inset
+            // itself; LiveTvTopBar is inset-neutral (the Guide's Column
+            // already statusBarsPadding()s), so THIS screen adds it here or
+            // the bar rides up under the camera cutout (user report).
+            modifier = Modifier.statusBarsPadding(),
         ) { buttonSize, iconSize ->
             if (canToggleViewMode) {
                 IconButton(onClick = onToggleViewMode, modifier = Modifier.size(buttonSize)) {
