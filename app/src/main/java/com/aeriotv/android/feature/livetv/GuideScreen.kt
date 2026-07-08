@@ -1438,22 +1438,30 @@ fun GuideScreen(
                 }
             }
         }
-        // GH #5: anchor a focused cell's LEADING edge so an oversized programme
-        // (wider than the timeline viewport) doesn't fling the horizontal scroll
-        // to its END on D-pad focus. Flows down into each row's horizontalScroll;
-        // vertical row scrolling is unaffected (rows are shorter than the viewport).
-        // The spec also returns 0 while a vertical move is in flight (see Bug 1).
-        val bringIntoViewSpec = remember {
-            GuideLeadingEdgeBringIntoViewSpec { guideNav.leadingEdgeTargetPx }
-        }
         // Pull-to-refresh parity with the List view (user report: it only
         // worked in List view). Same contract as ChannelListScreen: the
         // spinner tracks state.isLoading and refreshPlaylist() re-fetches the
         // channel list, then chains the EPG refresh. TV renders the grid bare:
         // there is no pull gesture on D-pad, and the indicator would hang
         // mid-screen while a background refresh runs.
+        // The vertical axis gets an EXPLICIT minimal-scroll spec. History:
+        // GuideLeadingEdgeBringIntoViewSpec used to wrap this LazyColumn, but
+        // LocalBringIntoViewSpec applies to EVERY axis of every scrollable
+        // beneath it, so the spec's vertical-move x-pin also ran against the
+        // VERTICAL axis and glued the focused row to the TOP of the guide
+        // from the first D-pad DOWN (user report: "scrolling is stuck to the
+        // top row"). That spec now wraps each row's horizontal programme
+        // strip only (see ChannelGuideRow). But simply falling back to the
+        // default is not enough either: on television uiMode Compose's
+        // DEFAULT spec pivots the focused item to ~1/3 of the viewport, so
+        // focus parked three rows from the top and the list scrolled under
+        // it. The minimal spec below gives the classic guide model the user
+        // asked for: focus WALKS down the screen to the bottom row first,
+        // and only then does the guide scroll, a row per press, from there.
         val guideGrid: @Composable () -> Unit = {
-        CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoViewSpec) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides GuideVerticalMinimalBringIntoViewSpec,
+        ) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -2130,6 +2138,16 @@ private fun ChannelGuideRow(
 
         visibleCellSpans.clear()
 
+        // GH #5 / stable-highlight: the custom bring-into-view spec (leading
+        // edge anchoring + the vertical-move x-pin) must ONLY govern this
+        // HORIZONTAL strip. It used to be provided around the whole guide
+        // LazyColumn, where its vertical-move branch also hijacked the
+        // VERTICAL axis and glued the focused row to the top of the guide
+        // (user report: scrolling stuck to the top row).
+        val stripBringIntoViewSpec = remember(guideNav) {
+            GuideLeadingEdgeBringIntoViewSpec { guideNav.leadingEdgeTargetPx }
+        }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides stripBringIntoViewSpec) {
         // Programme strip - horizontally scrolled with the header.
         Box(
             modifier = Modifier
@@ -2253,6 +2271,7 @@ private fun ChannelGuideRow(
                     )
                 }
             }
+        }
         }
     }
 
@@ -3103,6 +3122,27 @@ private class GuideVerticalNavState {
  * It returns null on LEFT/RIGHT and when no vertical move is in flight, where the
  * leading-edge / minimal-nudge logic below runs exactly as before.
  */
+/**
+ * Vertical bring-into-view for the guide's channel LazyColumn: the classic
+ * "walk to the edge, then scroll" model. A fully visible focused row never
+ * scrolls; a row past an edge gets the minimal nudge that reveals it. This
+ * exists because Compose's DEFAULT spec on television uiMode instead pivots
+ * the focused item to ~1/3 of the viewport, which parked the guide highlight
+ * three rows from the top while the list scrolled under it (user request:
+ * focus should reach the bottom row before the guide scrolls).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private object GuideVerticalMinimalBringIntoViewSpec : BringIntoViewSpec {
+    override fun calculateScrollDistance(
+        offset: Float,
+        size: Float,
+        containerSize: Float,
+    ): Float {
+        if (offset >= 0f && offset + size <= containerSize) return 0f
+        return if (offset < 0f) offset else offset + size - containerSize
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 private class GuideLeadingEdgeBringIntoViewSpec(
     private val verticalMoveLeadingEdgeTargetPx: () -> Float?,
