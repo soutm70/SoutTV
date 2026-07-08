@@ -106,6 +106,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -314,14 +315,16 @@ fun GuideScreen(
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     // The channel rail must stay a small slice of the viewport or it eats the
     // programme grid. tvOS uses channelColumnWidth = 240pt / 1920 = 12.5% of width;
-    // on the 960dp-wide Android-TV canvas that is 120dp. Phone branches unchanged
-    // (the 168dp default was ~half the screen on a compact width — phones, and the
-    // Fold cover screen at ~344dp — so we clamp to a narrower rail there).
-    val railWidth = when {
-        isTv -> 120.dp
-        screenWidthDp < 600 -> 118.dp
-        else -> GuideMetrics.RAIL_WIDTH
-    }
+    // on the 960dp-wide Android-TV canvas that is 120dp. iOS uses a FIXED 100pt
+    // column on every iPhone AND iPad (EPGGuideView.swift channelColumnWidth,
+    // no size-class branching) and fits it by stacking the rail cell vertically
+    // (logo over a one-line name over the number); the phone cell below mirrors
+    // that stack, so the phone/tablet rail can match the iOS width. 104dp
+    // (vs 100pt) offsets the cell's 8dp side padding. The old side-by-side
+    // number+logo+name cell needed 168dp, a quarter of an unfolded-Fold guide
+    // (user report). Unlike iOS the width deliberately ignores the guide zoom
+    // [scale], which on Android scales the time axis only.
+    val railWidth = if (isTv) 120.dp else 104.dp
     // Row + time-header sized to tvOS PROPORTIONS on the 960x540dp Android-TV
     // canvas (NOT copied from tvOS point values, which would be ~2x too big).
     // tvOS rowHeight 110pt / 1080 = 10.19% -> 540dp * 0.1019 = 55dp;
@@ -1702,21 +1705,17 @@ private fun ChannelGuideRow(
 
     // Compact rail sizing. On TV we keep it tight (narrow rail, small logo) so
     // more channels fit; legibility comes from the name/cell text, not bulk.
-    val numberStyle = if (isTv) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall
-    // Channel numbers run up to 5 digits on large IPTV playlists. Size the
-    // column for "12345" at the rail's type scale so nothing clips (24dp/28dp
-    // rendered "5200" as "520", user reports). The few extra dp for low
-    // numbers is a fair trade for never truncating a channel number.
-    val numberWidth = if (isTv) 40.dp else 36.dp
-    // logoBox/logoImage are the PHONE rail's square logo. TV uses a landscape
-    // logo-over-name VStack (the isTv branch below) so the channel name gets its
-    // own full-width line and shows in full, mirroring tvOS channelLabel.
-    val logoBox = 36.dp
-    val logoImage = 32.dp
-    // TV name uses labelSmall (~9.9sp at the 0.9 type scale) - a touch smaller
-    // than labelMedium (10.8sp) per user request to free a little more rail width
-    // for long names while staying legible at 10 feet. Phone keeps labelMedium.
-    val nameStyle = if (isTv) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
+    // The number column is TV-only: the phone cell stacks its number UNDER the
+    // name (iOS channelLabel) so it needs no reserved width. Channel numbers
+    // run up to 5 digits on large IPTV playlists; size the TV column for
+    // "12345" at the rail's type scale so nothing clips (24dp/28dp rendered
+    // "5200" as "520", user reports).
+    val numberStyle = MaterialTheme.typography.labelMedium
+    val numberWidth = 40.dp
+    // Rail name is labelSmall on both form factors: ~9.9sp at the TV 0.9 type
+    // scale (per user request, frees rail width for long names) and 11sp on
+    // phone, matching the iOS channelLabel 10pt name.
+    val nameStyle = MaterialTheme.typography.labelSmall
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1837,57 +1836,86 @@ private fun ChannelGuideRow(
                     )
                 }
             } else {
-                // GH #19: same collapse on the phone rail.
-                if (showNumber) {
-                    channel.channelNumber?.let { num ->
-                        Text(
-                            text = num.toString(),
-                            style = numberStyle,
-                            // iOS parity: textTertiary rung, see TV branch.
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.width(numberWidth),
-                        )
-                    }
-                    Spacer(Modifier.width(4.dp))
-                }
-                if (showLogo) {
-                Box(
-                    modifier = Modifier
-                        .size(logoBox)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.background),
-                    contentAlignment = Alignment.Center,
+                // iOS EPGGuideView channelLabel (EPGGuideView.swift:3459): a
+                // centered stack of logo (40x28) over a single-line name over
+                // the channel number, which is how iOS holds the rail at 100pt
+                // on iPhone AND iPad. The old side-by-side number+logo+name row
+                // needed the 168dp rail that ate a quarter of an unfolded-Fold
+                // guide (user report) and left long names ~20dp on the cover
+                // screen.
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
                 ) {
-                    if (channel.tvgLogo.isNotBlank()) {
-                        val ctx2 = androidx.compose.ui.platform.LocalContext.current
-                        // Phase 174: sharper logo decode (see neighbour
-                        // AsyncImage rationale above).
-                        AsyncImage(
-                            model = coil3.request.ImageRequest.Builder(ctx2)
-                                .data(channel.tvgLogo)
-                                .size(128, 128)
-                                .build(),
-                            contentDescription = null,
-                            modifier = Modifier.size(logoImage),
-                        )
-                    } else {
-                        Text(
-                            text = channel.name.take(2).uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                        )
+                    // "Show Channel Logos" off hides the logo so the name takes
+                    // the full space. (Android extension: the iOS GUIDE ignores
+                    // that toggle and gates on logoURL presence only; the
+                    // Android guide honored the toggle before this restyle, so
+                    // keep it.)
+                    if (showLogo) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 40.dp, height = 28.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.background),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (channel.tvgLogo.isNotBlank()) {
+                            val ctx2 = androidx.compose.ui.platform.LocalContext.current
+                            // Phase 174: sharper logo decode (see neighbour
+                            // AsyncImage rationale above).
+                            AsyncImage(
+                                model = coil3.request.ImageRequest.Builder(ctx2)
+                                    .data(channel.tvgLogo)
+                                    .size(128, 128)
+                                    .build(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(2.dp),
+                            )
+                        } else {
+                            Text(
+                                text = channel.name.take(2).uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(3.dp))
+                    }
+                    Text(
+                        text = channel.name,
+                        style = nameStyle,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // GH #19: the number line collapses when the toggle is off.
+                    if (showNumber) {
+                        channel.channelNumber?.let { num ->
+                            Text(
+                                text = num.toString(),
+                                // iOS channelLabel number: 8pt bold textTertiary
+                                // under the name. lineHeight override because the
+                                // style's 16sp line box would float the number
+                                // ~6dp below the name (iOS hugs it, spacing 1)
+                                // and could clip the stack out of the 80dp row
+                                // at large accessibility font scales.
+                                style = numberStyle,
+                                fontSize = 9.sp,
+                                lineHeight = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    text = channel.name,
-                    style = nameStyle,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
             DropdownMenu(
                 expanded = railMenuOpen,
@@ -2573,7 +2601,6 @@ private fun ProgrammeCell(
  * guide zoom (iOS guideScale) multiplies it and everything time-axis derives
  * from the scaled value via [msToDp]. */
 private object GuideMetrics {
-    val RAIL_WIDTH = 168.dp
     val HEADER_HEIGHT = 36.dp
     val ROW_HEIGHT = 80.dp
     /** Base (1.0x) width of one hour column. Scaled by guideScale at render. */
