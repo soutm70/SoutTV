@@ -202,51 +202,47 @@ private object WhatsNewContent {
      *  versionName in build.gradle.kts to surface a new sheet on next launch. */
     val CURRENT = listOf(
         WhatsNewItem(
-            title = "Global Search",
-            body = "One search covers everything. Look across live channels and " +
-                "the guide, movies, and series at once, and narrow the results " +
-                "with the scope chips at the top.",
+            title = "A cleaner, calmer look",
+            body = "Text now steps back in layers the way it should: quieter " +
+                "numbers and times, dimmer section headers, flatter guide " +
+                "cells, rating badges on posters, and a denser On Demand grid " +
+                "on TV.",
         ),
         WhatsNewItem(
-            title = "Channel Collections",
-            body = "Build your own channel groups (Favorites, Kids, Sports, " +
-                "anything you like) and they show up as pills right on Live TV.",
+            title = "Floating tab bar",
+            body = "On phones the bottom bar is now a compact floating pill " +
+                "that slides away while you scroll, so your content gets the " +
+                "whole screen.",
         ),
         WhatsNewItem(
-            title = "List or Guide, your choice",
-            body = "Switch Live TV between a clean channel list and the classic " +
-                "grid guide with one tap.",
+            title = "Channel numbers, your call",
+            body = "A new Show Channel Numbers toggle sits next to Show " +
+                "Channel Logos in Settings > Appearance. Both apply to the " +
+                "Live TV list and the guide.",
         ),
         WhatsNewItem(
-            title = "Multiview, upgraded",
-            body = "Pick a layout (Even Grid, Hero and Corner, and more), scrub " +
-                "each tile on its own, and mix live channels with movies, " +
-                "series, and recordings in the same view.",
+            title = "A slimmer guide",
+            body = "The guide's channel column is narrower, with the logo, " +
+                "name, and number stacked, so the programme grid gets far " +
+                "more room, especially on tablets and unfolded foldables.",
         ),
         WhatsNewItem(
-            title = "DVR that keeps up",
-            body = "Start watching a recording while it is still recording, see " +
-                "genre pills on your recordings, and get a Recording indicator " +
-                "the moment one starts.",
+            title = "Search from On Demand",
+            body = "The global search button now lives on the On Demand tab " +
+                "too, right beside the filter.",
         ),
         WhatsNewItem(
-            title = "On Demand, richer",
-            body = "A Continue Watching tab picks up where you left off, movie " +
-                "and series pages now show cast bios and Known For, and you can " +
-                "jump straight to a show with Open Series.",
+            title = "Android TV, steadier",
+            body = "Holding left on the remote works reliably again after " +
+                "leaving with Home and coming back, long-press Back asks " +
+                "before exiting the app, holding right closes the corner " +
+                "mini-player, and the Appearance toggles take focus again.",
         ),
         WhatsNewItem(
-            title = "Kid-safe channels",
-            body = "AerioTV now respects a Dispatcharr account's Channel " +
-                "Profile, so a child profile only ever sees the channels it is " +
-                "allowed to.",
-        ),
-        WhatsNewItem(
-            title = "Safer, smoother, more polished",
-            body = "Your server credentials are now encrypted on the device and " +
-                "kept out of logs. Plus smoother live playback, readable detail " +
-                "text on unfolded foldables, cleaner Picture-in-Picture, and a " +
-                "raft of Android TV navigation fixes.",
+            title = "Under the hood",
+            body = "Dead streams hand off to a working one faster, the splash " +
+                "screen fills every screen shape edge to edge, and the app is " +
+                "ready for Android's 16 KB memory page devices.",
         ),
     )
 }
