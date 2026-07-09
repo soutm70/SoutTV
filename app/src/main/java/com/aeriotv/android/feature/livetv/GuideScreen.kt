@@ -395,20 +395,24 @@ fun GuideScreen(
         }
     }
 
-    // Guide window: 1h of history before "now", then `epgWindowHours` ahead.
-    // The user picks the span in Settings > Network > EPG Window
+    // Guide window: the playlist's retained catch-up history before "now"
+    // (epgHistoryHours, task #135: epgRetentionDays * 24 once the deferred
+    // history merge lands; 1h during cold-launch paint), then `epgWindowHours`
+    // ahead. The forward span comes from Settings > Network > EPG Window
     // (6/12/24/36/48/72h or "All available"). iOS `epgWindowHours` parity.
-    val windowStart = remember(nowMillis) {
+    val historyMs = state.epgHistoryHours.coerceAtLeast(1).toLong() * 3_600_000L
+    val windowStart = remember(nowMillis, historyMs) {
         // Floor `now` to the start of the current hour to keep header labels clean.
         val hourMs = 3_600_000L
-        (nowMillis / hourMs) * hourMs - hourMs
+        (nowMillis / hourMs) * hourMs - historyMs
     }
     // "All available" (sentinel 0) spans from windowStart to the latest loaded
     // programme end, clamped to a 6h floor so a thin EPG still scrolls. A
-    // numeric hour value is just that many hours wide.
-    val windowDurationMs = remember(epgWindowHours, state.epgByChannel, windowStart) {
+    // numeric hour value spans that many hours past "now" (the history span
+    // is added on top so back-scroll never eats the forward window).
+    val windowDurationMs = remember(epgWindowHours, state.epgByChannel, windowStart, historyMs) {
         if (epgWindowHours > 0) {
-            epgWindowHours.toLong() * 3_600_000L
+            historyMs + epgWindowHours.toLong() * 3_600_000L
         } else {
             val latestEnd = state.epgByChannel.values.asSequence()
                 .flatten()
@@ -625,6 +629,28 @@ fun GuideScreen(
             .toInt()
             .coerceIn(0, maxScroll)
         horizontalScrollState.scrollTo(target)
+    }
+
+    // Task #135: when the deferred catch-up history merge widens
+    // epgHistoryHours, windowStart leaps days into the past while the strip's
+    // px scroll value is preserved, which would visually teleport the viewport
+    // back in time. Compensate by shifting the scroll by the same time delta
+    // (also keeps the view put when the hour ticks windowStart forward). The
+    // scroll range needs a frame or two to re-measure after the window
+    // widens, so wait until maxValue can accommodate the shifted target.
+    var lastWindowStart by remember { mutableStateOf(windowStart) }
+    LaunchedEffect(windowStart) {
+        val deltaMs = lastWindowStart - windowStart
+        lastWindowStart = windowStart
+        if (deltaMs == 0L) return@LaunchedEffect
+        val deltaPx = (deltaMs.toFloat() / 3_600_000f * hourWidthPx).toInt()
+        val target = (horizontalScrollState.value + deltaPx).coerceAtLeast(0)
+        if (deltaPx > 0) {
+            withTimeoutOrNull(1500L) {
+                snapshotFlow { horizontalScrollState.maxValue }.first { it >= target }
+            }
+        }
+        horizontalScrollState.scrollTo(target.coerceIn(0, horizontalScrollState.maxValue))
     }
 
     // The host Scaffold sets contentWindowInsets = WindowInsets(0,0,0,0), so each

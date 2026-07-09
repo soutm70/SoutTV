@@ -68,17 +68,33 @@ interface EpgProgrammeDao {
     @Query("DELETE FROM epg_programme WHERE playlistId = :playlistId")
     suspend fun deleteForPlaylist(playlistId: String)
 
-    /** Prune programmes that have already ended (hygiene across all sources). */
-    @Query("DELETE FROM epg_programme WHERE endMillis < :before")
-    suspend fun deleteEndedBefore(before: Long)
+    /** Prune one source's programmes that ended before its retention cutoff
+     *  (catch-up task #135: retention is per playlist now, so the old blanket
+     *  cross-source ended-1h-ago delete is gone). */
+    @Query("DELETE FROM epg_programme WHERE playlistId = :playlistId AND endMillis < :before")
+    suspend fun deleteEndedBeforeForPlaylist(playlistId: String, before: Long)
+
+    /** Delete only the rows the incoming feed's window covers (everything
+     *  ending after the feed's earliest start); [mergeForPlaylist]'s helper. */
+    @Query("DELETE FROM epg_programme WHERE playlistId = :playlistId AND endMillis > :fromMillis")
+    suspend fun deleteCoveredWindow(playlistId: String, fromMillis: Long)
 
     /**
-     * Replace the whole cached guide for one source in a single transaction so a
-     * reader never sees a half-written batch. Mirrors iOS GuideStore.saveToCache.
+     * Merge a fresh feed into one source's cached guide in a single
+     * transaction so a reader never sees a half-written batch. Unlike the old
+     * delete-all-and-insert (iOS GuideStore.saveToCache mirror), this KEEPS
+     * history rows the new feed no longer covers: only rows overlapping the
+     * feed's own window (ending after its earliest start) are replaced.
+     * That is what lets already-aired programmes accumulate for catch-up
+     * (task #135); upstream feeds usually carry little or no past data, so a
+     * full replace erased the browsable history on every refresh. No
+     * duplicate risk: any old row the feed still contains ends inside the
+     * deleted window, so it is replaced, never doubled.
      */
     @Transaction
-    suspend fun replaceForPlaylist(playlistId: String, rows: List<EpgProgrammeEntity>) {
-        deleteForPlaylist(playlistId)
+    suspend fun mergeForPlaylist(playlistId: String, rows: List<EpgProgrammeEntity>) {
+        val feedStart = rows.minOfOrNull { it.startMillis } ?: return
+        deleteCoveredWindow(playlistId, feedStart)
         insertAll(rows)
     }
 }

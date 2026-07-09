@@ -74,6 +74,9 @@ class PlaylistViewModel @Inject constructor(
          *  ConfigureSourceScreen / EditPlaylistScreen. Default true, threaded
          *  through SaveRequest into PlaylistEntity.vodEnabled. */
         val vodEnabled: Boolean = true,
+        /** Catch-up guide-history retention draft for the add flow (task
+         *  #135); threaded into SaveRequest.epgRetentionDays on submit. */
+        val epgRetentionDays: Int = 7,
         val playlist: PlaylistEntity? = null,
         /** Id of the row THIS add-draft created (null until its first successful
          *  Test Connection). Used as the loadAndPersist existingId so a re-test
@@ -84,6 +87,11 @@ class PlaylistViewModel @Inject constructor(
         val channels: List<M3UChannel> = emptyList(),
         val epgByChannel: Map<String, List<EPGProgramme>> = emptyMap(),
         val isEpgLoading: Boolean = false,
+        /** Hours of already-aired guide the grid can scroll back through:
+         *  the active playlist's epgRetentionDays * 24 once the deferred
+         *  history pass has merged (task #135); 1h before that so cold-launch
+         *  paint keeps its cheap narrow window. */
+        val epgHistoryHours: Int = 1,
         val searchQuery: String = "",
         val selectedGroup: String = ALL_GROUPS,
         val sortMode: SortMode = SortMode.ByNumber,
@@ -232,6 +240,7 @@ class PlaylistViewModel @Inject constructor(
                 username = "",
                 password = "",
                 vodEnabled = true,
+                epgRetentionDays = 7,
                 draftPlaylistId = null,
                 availableProfiles = emptyList(),
                 isLoading = false,
@@ -395,6 +404,11 @@ class PlaylistViewModel @Inject constructor(
     fun onVodEnabledChange(value: Boolean) {
         _state.update { it.copy(vodEnabled = value) }
     }
+    /** Bound to the "Guide History" picker in ConfigureSourceScreen (task
+     *  #135). Threaded into SaveRequest.epgRetentionDays on submit. */
+    fun onEpgRetentionDaysChange(value: Int) {
+        _state.update { it.copy(epgRetentionDays = value.coerceIn(1, 30)) }
+    }
     fun onSearchQueryChange(value: String) {
         _state.update { it.copy(searchQuery = value) }
     }
@@ -495,6 +509,7 @@ class PlaylistViewModel @Inject constructor(
                 username = s.username.trim().ifBlank { null },
                 password = s.password.ifBlank { null },
                 vodEnabled = s.vodEnabled,
+                epgRetentionDays = s.epgRetentionDays,
             )
             repository.loadAndPersist(request, existingId = s.draftPlaylistId).fold(
                 onSuccess = { (entity, channels) ->
@@ -530,7 +545,55 @@ class PlaylistViewModel @Inject constructor(
     }
 
     private fun loadEpgIfConfigured(playlist: PlaylistEntity, forceRefresh: Boolean = false) {
-        viewModelScope.launch { doLoadEpg(playlist, forceRefresh) }
+        viewModelScope.launch {
+            doLoadEpg(playlist, forceRefresh)
+            mergeEpgHistory(playlist)
+        }
+    }
+
+    /**
+     * Catch-up (task #135): deferred second-pass load of ALREADY-AIRED guide
+     * rows, kept out of [doLoadEpg]'s critical path so cold-launch paint keeps
+     * its cheap now-1h..+window read. The EPG cache retains up to the
+     * playlist's epgRetentionDays of ended programmes (see
+     * PlaylistRepository.saveEpgToCache); this merges them into
+     * [PlaylistUiState.epgByChannel] once the live grid is up, then widens
+     * [PlaylistUiState.epgHistoryHours] so the guide grid extends its
+     * back-scroll window to match. Dedup by (channel, start) keeps the edge
+     * where the fresh feed still overlaps history from doubling cells.
+     */
+    private suspend fun mergeEpgHistory(playlist: PlaylistEntity) {
+        val retentionDays = playlist.epgRetentionDays.coerceIn(1, 30)
+        val now = System.currentTimeMillis()
+        val fromMillis = now - retentionDays * 24L * 60L * 60L * 1000L
+        val toMillis = now - 60L * 60L * 1000L
+        val historyRaw = runCatching {
+            repository.loadCachedEpg(playlist.id, fromMillis, toMillis)
+        }.getOrDefault(emptyList())
+        val historyHours = retentionDays * 24
+        if (historyRaw.isEmpty()) {
+            // Nothing retained yet (fresh install / first refresh); still widen
+            // the grid so history starts accumulating visibly from day one.
+            _state.update { it.copy(epgHistoryHours = historyHours) }
+            return
+        }
+        val history = bridgeChannelIds(historyRaw, _state.value.channels)
+        _state.update { st ->
+            val merged = HashMap(st.epgByChannel)
+            for ((channelId, rows) in groupByChannel(history)) {
+                val existing = merged[channelId]
+                merged[channelId] = if (existing.isNullOrEmpty()) {
+                    rows
+                } else {
+                    val seen = existing.asSequence().map { it.startMillis }.toHashSet()
+                    val fresh = rows.filter { it.startMillis !in seen }
+                    if (fresh.isEmpty()) existing
+                    else (fresh + existing).sortedBy { it.startMillis }
+                }
+            }
+            st.copy(epgByChannel = merged, epgHistoryHours = historyHours)
+        }
+        Log.i(TAG, "mergeEpgHistory: merged ${history.size} past programmes (${retentionDays}d window)")
     }
 
     /**
@@ -946,6 +1009,10 @@ class PlaylistViewModel @Inject constructor(
                 .onFailure { Log.w(TAG, "purgeEpgCache failed", it) }
             _state.update { it.copy(epgByChannel = emptyMap()) }
             val outcome = doLoadEpg(active, forceRefresh = true)
+            // The purge above dropped retained history too; re-merge whatever
+            // survives (nothing on a true clean slate, task #135 semantics:
+            // "Refresh EPG Data" is the user's reset-everything hammer).
+            mergeEpgHistory(active)
             // Re-read the row so lastEpgRefreshedAt (stamped in Room by the
             // repo) reaches the detail card's "Last refreshed" footer.
             val updated = repository.activePlaylist()
@@ -1093,6 +1160,7 @@ class PlaylistViewModel @Inject constructor(
         password: String?,
         dispatcharrProfileId: Int?,
         vodEnabled: Boolean = true,
+        epgRetentionDays: Int = 7,
     ) {
         viewModelScope.launch {
             val active = repository.activePlaylist() ?: return@launch
@@ -1113,6 +1181,7 @@ class PlaylistViewModel @Inject constructor(
                 password = password?.ifBlank { null },
                 dispatcharrProfileId = dispatcharrProfileId,
                 vodEnabled = vodEnabled,
+                epgRetentionDays = epgRetentionDays.coerceIn(1, 30),
             )
             repository.loadAndPersist(request, existingId = active.id).fold(
                 onSuccess = { (entity, channels) ->

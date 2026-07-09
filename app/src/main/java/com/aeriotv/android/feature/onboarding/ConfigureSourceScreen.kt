@@ -224,6 +224,17 @@ fun ConfigureSourceScreen(
                 )
             }
 
+            // Catch-up guide-history retention (task #135): how many days of
+            // already-aired guide data this playlist keeps. Past shows on
+            // channels with catch-up can be replayed from the guide, so this
+            // doubles as the catch-up browse depth. Default 7 days; also
+            // editable later in Edit Playlist.
+            Spacer(Modifier.height(4.dp))
+            GuideHistoryRow(
+                selectedDays = state.epgRetentionDays,
+                onSelect = viewModel::onEpgRetentionDaysChange,
+            )
+
             val validation = validate(sourceType, state, dispatcharrAuthMode)
             if (validation != null) {
                 InfoBanner(text = validation)
@@ -708,6 +719,54 @@ private fun VodEnabledRow(
         }
         Text(
             text = "When off, this playlist's movies and TV shows aren't loaded into On Demand. Useful if you only want Live TV from this server, or if you have a second playlist that already provides On Demand. You can change this later in Settings.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/**
+ * Guide-history retention picker for Add Playlist (task #135): a compact pill
+ * row (1/3/7/14/30 days) matching the form's typography, with the same
+ * bodySmall help paragraph the other rows use. Each pill carries the D-pad
+ * focus wash so the choice is navigable on TV.
+ */
+@Composable
+private fun GuideHistoryRow(
+    selectedDays: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(
+            text = "Guide History",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(1, 3, 7, 14, 30).forEach { days ->
+                val selected = days == selectedDays
+                Text(
+                    text = if (days == 1) "1 Day" else "$days Days",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .dpadFocusWash()
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                        )
+                        .clickable { onSelect(days) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+        Text(
+            text = "How many days of already-aired guide data to keep. Past shows on channels with catch-up can be replayed from the guide.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),

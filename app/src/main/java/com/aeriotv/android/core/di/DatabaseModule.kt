@@ -196,6 +196,17 @@ object DatabaseModule {
         }
     }
 
+    /** Catch-up EPG history (task #135): per-playlist retention window for
+     *  already-aired guide rows. DEFAULT 7 must match the entity's
+     *  @ColumnInfo(defaultValue = "7"). */
+    private val MIGRATION_18_19 = object : Migration(18, 19) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `playlists` ADD COLUMN `epgRetentionDays` INTEGER NOT NULL DEFAULT 7",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AerioDatabase =
@@ -204,7 +215,7 @@ object DatabaseModule {
             // exists. Destructive fallback is scoped to ONLY pre-v10 dev builds
             // so an unmapped future migration can never silently wipe a real
             // user's saved servers and credentials in the field.
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
             .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
             .build()
 

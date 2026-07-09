@@ -155,6 +155,8 @@ class PlaylistRepository @Inject constructor(
          *  Default true. UI exposes this for Dispatcharr / Xtream sources; M3U
          *  doesn't carry VOD so the field is ignored downstream for it. */
         val vodEnabled: Boolean = true,
+        /** Days of already-aired EPG kept for catch-up browsing (task #135). */
+        val epgRetentionDays: Int = 7,
     )
 
     suspend fun activePlaylist(): PlaylistEntity? {
@@ -260,6 +262,7 @@ class PlaylistRepository @Inject constructor(
             dispatcharrUserLevel = dispatcharrUserLevel,
             dispatcharrAccountProfileIds = accountProfileIds.joinToString(","),
             vodEnabled = request.vodEnabled,
+            epgRetentionDays = request.epgRetentionDays.coerceIn(1, 30),
         )
         // New / re-loaded playlist becomes the active one. Mirrors iOS commit
         // f72b942 — wrap "deactivate others + upsert" in a transactional DAO
@@ -671,10 +674,18 @@ class PlaylistRepository @Inject constructor(
         val entities = withContext(Dispatchers.Default) {
             programmes.map { it.toCacheEntity(playlistId, now) }
         }
-        epgProgrammeDao.replaceForPlaylist(playlistId, entities)
-        // Hygiene: drop programmes that ended over an hour ago across all sources
-        // (mirrors GuideStore.saveToCache's stale-row delete).
-        epgProgrammeDao.deleteEndedBefore(now - 60L * 60L * 1000L)
+        // Catch-up (task #135): MERGE the feed instead of replacing the whole
+        // cache, so already-aired rows survive refreshes and accumulate into a
+        // browsable history, then prune to the playlist's retention window
+        // (default 7 days). The old behaviour (full replace + drop everything
+        // ended over an hour ago) erased exactly the programmes the catch-up
+        // "Watch" action needs.
+        epgProgrammeDao.mergeForPlaylist(playlistId, entities)
+        val retentionDays = (dao.byId(playlistId)?.epgRetentionDays ?: 7).coerceAtLeast(1)
+        epgProgrammeDao.deleteEndedBeforeForPlaylist(
+            playlistId,
+            now - retentionDays * 24L * 60L * 60L * 1000L,
+        )
     }
 
     /**

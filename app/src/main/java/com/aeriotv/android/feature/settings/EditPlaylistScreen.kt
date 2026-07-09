@@ -84,6 +84,11 @@ fun EditPlaylistScreen(
     // true so existing rows that pre-date the column still behave as before;
     // re-seeds when the user switches between playlists in this screen.
     var vodEnabled by remember(playlist?.id) { mutableStateOf(playlist?.vodEnabled ?: true) }
+    // Catch-up EPG history retention (task #135). Default 7 days; drives how
+    // far back the guide keeps (and can replay) already-aired programmes.
+    var epgRetentionDays by remember(playlist?.id) {
+        mutableStateOf(playlist?.epgRetentionDays ?: 7)
+    }
     var dispatcharrMode by remember(playlist?.id) {
         mutableStateOf(
             when (sourceType) {
@@ -142,6 +147,7 @@ fun EditPlaylistScreen(
             },
             dispatcharrProfileId = if (isDispatcharr) selectedProfileId else null,
             vodEnabled = vodEnabled,
+            epgRetentionDays = epgRetentionDays,
         )
         onBack()
     }
@@ -415,6 +421,28 @@ fun EditPlaylistScreen(
                                     checkedThumbColor = MaterialTheme.colorScheme.primary,
                                     checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                                 ),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Catch-up EPG history retention (task #135). Applies to every
+            // source type: even without catch-up, retained history keeps the
+            // guide browsable into the past.
+            item {
+                Section(
+                    header = "Guide History",
+                    footer = "How many days of already-aired guide data to keep. " +
+                        "Past shows on channels with catch-up can be replayed from the guide.",
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        listOf(1, 3, 7, 14, 30).forEach { days ->
+                            ProfileRow(
+                                label = if (days == 1) "1 Day" else "$days Days",
+                                detail = if (days == 7) "Default" else null,
+                                selected = epgRetentionDays == days,
+                                onClick = { epgRetentionDays = days },
                             )
                         }
                     }

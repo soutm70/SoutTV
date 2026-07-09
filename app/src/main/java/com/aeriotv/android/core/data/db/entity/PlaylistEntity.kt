@@ -120,6 +120,20 @@ data class PlaylistEntity(
      */
     @ColumnInfo(defaultValue = "")
     val dispatcharrAccountProfileIds: String = "",
+
+    /**
+     * How many days of ALREADY-AIRED guide data to keep in the EPG cache for
+     * this source. Past programmes are what the catch-up "Watch" action hangs
+     * off, so the cache must retain them after the upstream feed stops
+     * covering them (feeds typically carry little or no history). 7-day
+     * default matches the common provider catch-up window; user-configurable
+     * per playlist in setup/edit. Added in DB v19 (preserving migration).
+     *
+     * `@ColumnInfo(defaultValue = "7")` MUST match the v19 migration's
+     * `DEFAULT 7` (same schema-validation rule as the columns above).
+     */
+    @ColumnInfo(defaultValue = "7")
+    val epgRetentionDays: Int = 7,
 )
 // Credential columns (apiKey, username, password) are encrypted at rest via
 // CredentialCipher (AndroidKeystore AES-256-GCM), applied transparently by the
