@@ -2,19 +2,14 @@ package com.aeriotv.android.feature.splash
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,24 +20,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.R
 import com.aeriotv.android.feature.settings.SettingsViewModel
+import com.aeriotv.android.feature.settings.rememberIsTvDevice
 import kotlinx.coroutines.delay
 
 /**
- * Cold-launch splash. Mirrors iOS SplashView (Aerio/App/SplashView.swift):
- * a 96dp app-icon block above the bold "AerioTV" title and the cyan
- * "Live TV · Movies · Series" subtitle. Fades in 0.4s, holds 2.3s, fades
- * out 0.4s, dismisses at 2.8s.
+ * Cold-launch splash. Mirrors the CURRENT iOS/tvOS SplashView
+ * (Aerio/App/SplashView.swift), which is a STATIC layout, not the legacy
+ * AerioSplash.mp4 clip: black background, the rounded-square AerioLogo,
+ * bold "AerioTV", and the cyan "Live TV · Movies · Series" subtitle.
+ * Fades in 0.4s, holds to 2.3s, fades out 0.4s, dismisses at 2.8s.
+ *
+ * The Android port used to crop-fill the legacy portrait mp4, which on a
+ * 16:9 TV scaled the 720px-wide clip across the whole panel and kept only
+ * the middle third of the frame -- a gigantic, cropped "Aerio" (user
+ * report). The video is gone entirely; every form factor now renders the
+ * same layout iOS/tvOS draw, with the per-platform metrics from
+ * SplashView.swift (tvOS 160/72/28, iPhone 100/50/18, iPad 130/64/24).
  *
  * Gated on `appBehaviorsSkipLoadingScreen` (Phase 8b pref). When the user
  * has flipped that toggle on, the splash dismisses immediately so the
@@ -62,149 +65,73 @@ fun SplashGate(
             finished = true
             return@LaunchedEffect
         }
-        // Hard fallback so a stuck / unsupported clip never traps the user on
-        // the splash. AerioSplash.mp4 is ~4s; give it headroom.
-        delay(6_000L)
+        // iOS SplashView timing: dismiss at 2.8s (0.4 in + hold + 0.4 out).
+        delay(2_800L)
         finished = true
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         content()
         if (!finished && !skipLoading) {
-            SplashVideo(onPlaybackDone = { finished = true })
+            SplashContent()
         }
-    }
-}
-
-/**
- * Plays the iOS AerioSplash.mp4 intro (ported into res/raw) scaled to COVER
- * the screen. The clip is portrait 720x1280 with its background baked in
- * (#0A1426). It used to render fit-scaled over colorScheme.background, but
- * the pillarbox bars never truly matched the frame: the theme background
- * differs per preset, and the video pipeline shifts the decoded color a step
- * (#0A1426 file -> #091527 on the Fold), so any screen wider than 9:16
- * (unfolded foldables, tablets, TVs) showed a phone-shaped rectangle around
- * the clip (user report). Crop-fill removes the bars instead of chasing an
- * exact color match. Safe to crop: the animation content spans only
- * x 23-77% / y 38-63% of the frame (measured across the whole clip), so even
- * a 16:9 TV, which keeps just the center 32% of the height, shows all of it.
- * Muted, plays once, dismisses on completion. Falls back to the static brand
- * card if the device can't decode it.
- */
-@Composable
-private fun SplashVideo(onPlaybackDone: () -> Unit) {
-    var failed by remember { mutableStateOf(false) }
-    if (failed) {
-        SplashContent()
-        return
-    }
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            // The clip's own background color, for the brief pre-decode gap:
-            // the screen is then a single uniform surface with no edge to see.
-            .background(Color(0xFF0A1426)),
-        contentAlignment = Alignment.Center,
-    ) {
-        val videoAspect = 720f / 1280f
-        val coverWidth: androidx.compose.ui.unit.Dp
-        val coverHeight: androidx.compose.ui.unit.Dp
-        if (maxWidth / maxHeight > videoAspect) {
-            coverWidth = maxWidth
-            coverHeight = maxWidth / videoAspect
-        } else {
-            coverHeight = maxHeight
-            coverWidth = maxHeight * videoAspect
-        }
-        AndroidView(
-            // requiredSize deliberately exceeds the screen on the shorter
-            // axis; the centered overflow just runs off the display edge,
-            // which is what crops the video.
-            modifier = Modifier.requiredSize(coverWidth, coverHeight),
-            factory = { ctx ->
-                android.widget.VideoView(ctx).apply {
-                    setZOrderOnTop(true)
-                    setVideoURI(
-                        android.net.Uri.parse(
-                            "android.resource://${ctx.packageName}/${R.raw.aerio_splash}",
-                        ),
-                    )
-                    setOnPreparedListener { mp ->
-                        mp.setVolume(0f, 0f)
-                        mp.isLooping = false
-                        start()
-                    }
-                    setOnCompletionListener { onPlaybackDone() }
-                    setOnErrorListener { _, _, _ -> failed = true; true }
-                }
-            },
-            // Release the underlying MediaPlayer + surface when the splash
-            // dismisses (finished -> SplashVideo leaves composition) or
-            // falls back to the static card (failed flips). Without this the
-            // VideoView's MediaPlayer + Surface leak for the process
-            // lifetime on every cold launch. stopPlayback() is VideoView's
-            // documented teardown.
-            onRelease = { view -> runCatching { view.stopPlayback() } },
-        )
     }
 }
 
 @Composable
 private fun SplashContent(modifier: Modifier = Modifier) {
+    // iOS SplashView per-platform metrics: logo / title / subtitle.
+    // tvOS 160/72/28; iPhone (compact) 100/50/18; iPad (regular) 130/64/24.
+    val isTv = rememberIsTvDevice()
+    val compact = LocalConfiguration.current.smallestScreenWidthDp < 600
+    val logoSize = if (isTv) 160.dp else if (compact) 100.dp else 130.dp
+    val titleSize = if (isTv) 72.sp else if (compact) 50.sp else 64.sp
+    val subtitleSize = if (isTv) 28.sp else if (compact) 18.sp else 24.sp
+    val logoBottomPad = if (isTv) 40.dp else if (compact) 24.dp else 32.dp
+    val subtitleTopPad = if (isTv) 12.dp else 10.dp
+
+    // iOS fade envelope: easeIn 0.4s -> hold -> easeOut 0.4s starting at 2.3s.
+    var visible by remember { mutableStateOf(false) }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(durationMillis = 400),
+        label = "splashAlpha",
+    )
+    LaunchedEffect(Unit) {
+        visible = true
+        delay(2_300L)
+        visible = false
+    }
+
+    val accent = Color(0xFF1AC4D8)
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            // iOS splash sits on PURE BLACK, not the theme background.
+            .background(Color.Black)
+            .alpha(alpha),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            // Brand block — matches the WelcomeScreen BrandLogo so the splash
-            // and the onboarding entry feel like the same surface. The iOS
-            // rounded-square is baked into the PNG.
-            // Cyan glow halo behind the mark (iOS SplashView parity, same
-            // radial-gradient treatment as the WelcomeScreen BrandLogo).
-            val accent = MaterialTheme.colorScheme.primary
-            Box(
-                modifier = Modifier.size(160.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Canvas(modifier = Modifier.size(160.dp)) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colorStops = arrayOf(
-                                0.0f to accent.copy(alpha = 0.55f),
-                                0.35f to accent.copy(alpha = 0.28f),
-                                0.7f to accent.copy(alpha = 0.06f),
-                                1.0f to Color.Transparent,
-                            ),
-                            center = Offset(size.width / 2f, size.height / 2f + 8.dp.toPx()),
-                            radius = size.minDimension / 2f,
-                        ),
-                        center = Offset(size.width / 2f, size.height / 2f + 8.dp.toPx()),
-                        radius = size.minDimension / 2f,
-                    )
-                }
-                Image(
-                    painter = painterResource(id = R.drawable.aerio_logo),
-                    contentDescription = null,
-                    modifier = Modifier.size(108.dp),
-                )
-            }
-            Spacer(Modifier.height(24.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // The iOS rounded-square treatment is baked into the PNG.
+            Image(
+                painter = painterResource(id = R.drawable.aerio_logo),
+                contentDescription = null,
+                modifier = Modifier.size(logoSize),
+            )
+            Spacer(Modifier.height(logoBottomPad))
             Text(
                 text = "AerioTV",
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = titleSize,
                 fontWeight = FontWeight.Bold,
+                color = Color.White,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(subtitleTopPad))
             Text(
                 text = "Live TV  ·  Movies  ·  Series",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
+                fontSize = subtitleSize,
+                fontWeight = FontWeight.Light,
+                color = accent,
             )
         }
     }

@@ -927,6 +927,25 @@ fun AerioTVNavHost(
                 val title = Uri.decode(entry.arguments?.getString("title").orEmpty())
                 val isDvr = entry.arguments?.getBoolean("isDvr") ?: false
                 val fromStart = entry.arguments?.getBoolean("fromStart") ?: false
+                // A recording / catch-up playback must silence any LIVE session
+                // first: entering from the guide's Watch action (or DVR tab)
+                // skips PlayerScreen's launch teardown, so the persistent live
+                // window + mini-player decoder would keep streaming (and
+                // sounding) underneath. Same teardown order as the MULTIVIEW
+                // route above.
+                val rpMiniPlayerVm: MiniPlayerViewModel = hiltViewModel()
+                val rpContext = androidx.compose.ui.platform.LocalContext.current
+                LaunchedEffect(Unit) {
+                    val rpEntry = dagger.hilt.android.EntryPointAccessors.fromApplication(
+                        rpContext.applicationContext,
+                        MainScaffoldEntryPoint::class.java,
+                    )
+                    rpMiniPlayerVm.dismiss()
+                    rpEntry.exoWindowState().hide()
+                    rpEntry.exoPlayerHolder().stop()
+                    com.aeriotv.android.core.playback.AerioMediaPlaybackService
+                        .stop(rpContext.applicationContext)
+                }
                 val csStart = entry.arguments?.getLong("csStart") ?: 0L
                 val csEnd = entry.arguments?.getLong("csEnd") ?: 0L
                 val csTz = Uri.decode(entry.arguments?.getString("csTz").orEmpty())
