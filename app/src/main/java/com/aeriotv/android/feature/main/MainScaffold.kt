@@ -137,6 +137,8 @@ fun MainScaffold(
     onEpisodeResume: (String) -> Unit = {},
     onResumeMovie: (String) -> Unit = {},
     onPlayRecording: (String, String) -> Unit = { _, _ -> },
+    /** Catch-up (task #136): url, title, progStartMillis, progEndMillis, panelTz. */
+    onPlayCatchup: (String, String, Long, Long, String) -> Unit = { _, _, _, _, _ -> },
     onLaunchMultiview: () -> Unit = {},
     onWatchLive: (String, String, Boolean) -> Unit = { _, _, _ -> },
     onWatchFromBeginning: (String, String, Boolean) -> Unit = { _, _, _ -> },
@@ -414,6 +416,7 @@ fun MainScaffold(
                     onEpisodeResume = onEpisodeResume,
                     onResumeMovie = onResumeMovie,
                     onPlayRecording = onPlayRecording,
+                    onPlayCatchup = onPlayCatchup,
                     onLaunchMultiview = onLaunchMultiview,
                     onWatchLive = onWatchLive,
                     onWatchFromBeginning = onWatchFromBeginning,
@@ -547,6 +550,7 @@ fun MainScaffold(
                 onEpisodeResume = onEpisodeResume,
                 onResumeMovie = onResumeMovie,
                 onPlayRecording = onPlayRecording,
+                onPlayCatchup = onPlayCatchup,
                 onLaunchMultiview = onLaunchMultiview,
                 onWatchLive = onWatchLive,
                 onWatchFromBeginning = onWatchFromBeginning,
@@ -724,6 +728,7 @@ private fun MainTabContent(
     onEpisodeResume: (String) -> Unit,
     onResumeMovie: (String) -> Unit,
     onPlayRecording: (String, String) -> Unit,
+    onPlayCatchup: (String, String, Long, Long, String) -> Unit,
     onLaunchMultiview: () -> Unit,
     onWatchLive: (String, String, Boolean) -> Unit,
     onWatchFromBeginning: (String, String, Boolean) -> Unit,
@@ -736,9 +741,10 @@ private fun MainTabContent(
                 onChannelClick = onChannelClick,
                 onLaunchMultiview = onLaunchMultiview,
                 onOpenSearch = onOpenSearch,
-                // Catch-up (task #133): a resolved timeshift URL plays through
-                // the same seekable recording-player route the DVR tab uses.
-                onPlayCatchup = onPlayRecording,
+                // Catch-up (task #133/#136): a resolved timeshift URL plays
+                // through the recording-player route with programme window +
+                // panel tz for the scrubbable timeline.
+                onPlayCatchup = onPlayCatchup,
             )
             AppTab.Favorites -> FavoritesTabContent(onChannelClick = onChannelClick)
             AppTab.DVR -> DvrTabContent(

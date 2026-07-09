@@ -300,6 +300,12 @@ class PlaylistViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     playlist = saved,
+                    // Task #136: the guide's back-scroll span is known from the
+                    // playlist row itself, so publish it BEFORE the guide first
+                    // composes. Keeping windowStart stable from the start
+                    // avoids the whole widen-mid-session scroll-compensation
+                    // dance (the history ROWS still merge in lazily).
+                    epgHistoryHours = saved.epgRetentionDays.coerceIn(1, 30) * 24,
                     sourceType = sourceType,
                     name = saved.name.orEmpty(),
                     url = saved.urlString,
@@ -873,7 +879,7 @@ class PlaylistViewModel @Inject constructor(
     fun playCatchup(
         channel: com.aeriotv.android.core.data.M3UChannel,
         programme: com.aeriotv.android.core.data.EPGProgramme,
-        onResult: (Result<String>) -> Unit,
+        onResult: (Result<com.aeriotv.android.core.playback.CatchupPlaybackResolver.Playback>) -> Unit,
     ) {
         viewModelScope.launch {
             val active = repository.activePlaylist()

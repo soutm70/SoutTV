@@ -145,6 +145,14 @@ fun VODPlayerScreen(
     posterUrl: String? = null,
     isDvr: Boolean = false,
     startAtLiveEdge: Boolean = true,
+    /** Catch-up (task #136): the programme's UTC window + the panel timezone
+     *  the timeshift URL's start was rendered in. When csEnd > csStart the
+     *  player runs in catch-up mode: duration = programme length and seeks
+     *  re-tune by rebuilding the URL at the target start (the timeshift
+     *  protocol's only random access), enabling commercial skipping. */
+    catchupStartMillis: Long = 0L,
+    catchupEndMillis: Long = 0L,
+    catchupTz: String = "",
 ) {
     // Keep the screen on during VOD playback. Matches PlayerScreen for the
     // same reason: system screen-timeout would otherwise dim/sleep the panel
@@ -182,6 +190,17 @@ fun VODPlayerScreen(
     var isPaused by remember { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+
+    // ── Catch-up mode (task #136) ────────────────────────────────────────
+    // durationMs is pinned to the programme length and positionMs is
+    // programme-relative: the tuned stream only covers from the URL's start
+    // to the programme end, so displayed position = window offset + player
+    // position. Seeks outside the buffered window re-tune (see seekPlayer).
+    val isCatchup = catchupEndMillis > catchupStartMillis &&
+        streamUrl.contains("/timeshift/")
+    // Programme-relative start of the currently tuned timeshift window (0 on
+    // first tune; the seek target after each re-tune).
+    var catchupOffsetMs by remember { mutableLongStateOf(0L) }
 
     // ── TV transport (task #44) ──────────────────────────────────────────
     // D-pad / media-key scrub preview. Non-null while the user is stepping
@@ -303,14 +322,56 @@ fun VODPlayerScreen(
         chromeVisible = true
         lastInteractionAt = now
     }
+    // Every transport seek funnels through here. Plain VOD/DVR = a direct
+    // player seek. Catch-up (task #136) = the timeshift stream has no in-band
+    // random access (unknown length, session-bound), but its URL encodes the
+    // start time, so a seek outside the buffered window is a RE-TUNE: rebuild
+    // the URL at programmeStart + target and prepare again. The URL's start
+    // segment has minute granularity, so the window starts at the floored
+    // minute and a residual in-stream seek lands the exact second. Targets
+    // inside what's already buffered use a normal (instant) player seek.
+    val seekPlayer: (Long) -> Unit = seek@{ rawTarget ->
+        val player = exoPlayer ?: return@seek
+        if (!isCatchup) {
+            player.seekTo(rawTarget)
+            positionMs = rawTarget
+            return@seek
+        }
+        val progLenMs = catchupEndMillis - catchupStartMillis
+        val target = rawTarget.coerceIn(0L, (progLenMs - 5_000L).coerceAtLeast(0L))
+        val relative = target - catchupOffsetMs
+        if (relative >= 0L && relative <= player.bufferedPosition) {
+            player.seekTo(relative)
+            positionMs = target
+            return@seek
+        }
+        val absFlooredStart = ((catchupStartMillis + target) / 60_000L) * 60_000L
+        val windowOffset = (absFlooredStart - catchupStartMillis).coerceAtLeast(0L)
+        val newUrl = com.aeriotv.android.core.playback.CatchupUrlBuilder.rebuildForOffset(
+            url = streamUrl,
+            panelTimeZoneId = catchupTz.ifBlank { "UTC" },
+            programmeStartMillis = catchupStartMillis,
+            programmeEndMillis = catchupEndMillis,
+            offsetMillis = windowOffset,
+        )
+        if (newUrl == null) {
+            player.seekTo(rawTarget)
+            positionMs = rawTarget
+            return@seek
+        }
+        catchupOffsetMs = windowOffset
+        positionMs = target
+        player.setMediaItem(MediaItem.fromUri(newUrl))
+        player.prepare()
+        if (target > windowOffset) player.seekTo(target - windowOffset)
+        player.playWhenReady = true
+        Log.i(TAG, "Catch-up re-tune to ${target / 1000}s (window ${windowOffset / 1000}s)")
+    }
     // Commit an in-progress scrub immediately (OK press, iOS "Select commits
     // an in-progress scrub right away"). Setting scrubTargetMs back to null
     // also cancels the pending debounce commit.
     val commitScrub: () -> Unit = {
-        scrubTargetMs?.let { target ->
-            exoPlayer?.seekTo(target)
-            positionMs = target
-        }
+        scrubTargetMs?.let { target -> seekPlayer(target) }
         scrubTargetMs = null
         scrubAccelCount = 0
         scrubLastDirection = 0
@@ -402,7 +463,7 @@ fun VODPlayerScreen(
                                 scrubAccelCount = 0
                                 scrubLastDirection = 0
                                 val target = max(0L, positionMs - 10_000L)
-                                exoPlayer?.seekTo(target); positionMs = target; reveal()
+                                seekPlayer(target); reveal()
                             }
                             TvVodFocusZone.Forward -> {
                                 scrubTargetMs = null
@@ -412,7 +473,7 @@ fun VODPlayerScreen(
                                     if (isDvr) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
                                 } else Long.MAX_VALUE
                                 val target = min(maxPos, positionMs + 10_000L)
-                                exoPlayer?.seekTo(target); positionMs = target; reveal()
+                                seekPlayer(target); reveal()
                             }
                             else -> { togglePlayPause() } // PlayPause / None
                         }
@@ -566,6 +627,22 @@ fun VODPlayerScreen(
                         addListener(object : Player.Listener {
                             override fun onPlayerError(error: PlaybackException) {
                                 Log.e(TAG, "VOD ExoPlayer error: ${error.errorCodeName}", error)
+                                // Catch-up (task #136): a provider that flags
+                                // tv_archive but serves no archive answers the
+                                // timeshift URL with 404 "Catch-up not
+                                // available yet". Surface it instead of a
+                                // silent forever-spinner, and back out.
+                                if (isCatchup &&
+                                    error.errorCode ==
+                                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
+                                ) {
+                                    android.widget.Toast.makeText(
+                                        ctx,
+                                        "Catch-up isn't available for this program on your provider.",
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                    onClose()
+                                }
                             }
                         })
                         playWhenReady = true
@@ -692,6 +769,15 @@ fun VODPlayerScreen(
             while (true) {
                 delay(500L)
                 if (isDragging) continue
+                // Catch-up: the tuned stream only spans window-start..prog-end,
+                // so the programme-relative position adds the window offset and
+                // the duration is the (fixed, known) programme length.
+                if (isCatchup) {
+                    positionMs = catchupOffsetMs + player.contentPosition.coerceAtLeast(0L)
+                    durationMs = catchupEndMillis - catchupStartMillis
+                    isPaused = !player.playWhenReady
+                    continue
+                }
                 positionMs = player.contentPosition.coerceAtLeast(0L)
                 durationMs = if (isDvr) {
                     // Live HLS window: contentDuration is C.TIME_UNSET. Derive
@@ -755,8 +841,7 @@ fun VODPlayerScreen(
         LaunchedEffect(scrubTargetMs) {
             val target = scrubTargetMs ?: return@LaunchedEffect
             delay(650L)
-            exoPlayer?.seekTo(target)
-            positionMs = target
+            seekPlayer(target)
             scrubTargetMs = null
             scrubAccelCount = 0
             scrubLastDirection = 0
@@ -872,8 +957,7 @@ fun VODPlayerScreen(
                     onDragChanged = { dragFraction = it },
                     onDragEnd = { fraction ->
                         val target = (fraction * durationMs).toLong()
-                        exoPlayer?.seekTo(target)
-                        positionMs = target
+                        seekPlayer(target)
                         isDragging = false
                     },
                     onTogglePlay = {
@@ -883,21 +967,15 @@ fun VODPlayerScreen(
                         isPaused = !nowPaused
                     },
                     onSkipBack = {
-                        val player = exoPlayer ?: return@BottomChrome
-                        val target = max(0L, positionMs - 10_000L)
-                        player.seekTo(target)
-                        positionMs = target
+                        seekPlayer(max(0L, positionMs - 10_000L))
                     },
                     onSkipForward = {
-                        val player = exoPlayer ?: return@BottomChrome
                         val maxPos = if (durationMs > 0) {
                             if (isDvr) (durationMs - 5_000L).coerceAtLeast(0L) else durationMs
                         } else {
                             Long.MAX_VALUE
                         }
-                        val target = min(maxPos, positionMs + 10_000L)
-                        player.seekTo(target)
-                        positionMs = target
+                        seekPlayer(min(maxPos, positionMs + 10_000L))
                     },
                     isDvr = isDvr,
                     onSeekToLive = {

@@ -39,6 +39,11 @@ class CatchupPlaybackResolver @Inject constructor(
     /** Panel timezone per XC base URL, memoized for the process. */
     private val panelTzCache = ConcurrentHashMap<String, String>()
 
+    /** A playable timeshift URL plus the panel timezone that rendered its
+     *  start segment; the player needs the zone to rebuild the URL for
+     *  scrub-seeks (task #136, CatchupUrlBuilder.rebuildForOffset). */
+    data class Playback(val url: String, val panelTimeZoneId: String)
+
     sealed class Failure(message: String) : Exception(message) {
         class NotCatchup :
             Failure("This channel has no catch-up archive.")
@@ -57,7 +62,7 @@ class CatchupPlaybackResolver @Inject constructor(
         channel: M3UChannel,
         startMillis: Long,
         endMillis: Long,
-    ): Result<String> = runCatching {
+    ): Result<Playback> = runCatching {
         val streamId = channel.catchupStreamId
             ?.takeIf { channel.catchupDays > 0 }
             ?: throw Failure.NotCatchup()
@@ -82,16 +87,19 @@ class CatchupPlaybackResolver @Inject constructor(
                 // session and the player's subsequent open 404s (verified on
                 // device). ExoPlayer's DefaultHttpDataSource follows the 301
                 // in-band and keeps its own session alive for the playback.
-                CatchupUrlBuilder.build(
-                    CatchupUrlBuilder.Context(
-                        baseUrl = base,
-                        username = creds.first,
-                        password = creds.second,
-                        streamId = streamId,
-                        panelTimeZoneId = "UTC",
+                Playback(
+                    url = CatchupUrlBuilder.build(
+                        CatchupUrlBuilder.Context(
+                            baseUrl = base,
+                            username = creds.first,
+                            password = creds.second,
+                            streamId = streamId,
+                            panelTimeZoneId = "UTC",
+                        ),
+                        startMillis = startMillis,
+                        endMillis = endMillis,
                     ),
-                    startMillis = startMillis,
-                    endMillis = endMillis,
+                    panelTimeZoneId = "UTC",
                 )
             }
             SourceType.XtreamCodes -> {
@@ -103,16 +111,19 @@ class CatchupPlaybackResolver @Inject constructor(
                     ?: xtreamApi.getServerTimezone(base, user, pass)
                         ?.also { panelTzCache[base] = it }
                     ?: "UTC"
-                CatchupUrlBuilder.build(
-                    CatchupUrlBuilder.Context(
-                        baseUrl = base,
-                        username = user,
-                        password = pass,
-                        streamId = streamId,
-                        panelTimeZoneId = tz,
+                Playback(
+                    url = CatchupUrlBuilder.build(
+                        CatchupUrlBuilder.Context(
+                            baseUrl = base,
+                            username = user,
+                            password = pass,
+                            streamId = streamId,
+                            panelTimeZoneId = tz,
+                        ),
+                        startMillis = startMillis,
+                        endMillis = endMillis,
                     ),
-                    startMillis = startMillis,
-                    endMillis = endMillis,
+                    panelTimeZoneId = tz,
                 )
             }
             else -> throw Failure.Unsupported()

@@ -82,6 +82,40 @@ object CatchupUrlBuilder {
             .replace("+", "%20")
 
     /**
+     * Rebuild an existing timeshift URL to start [offsetMillis] into the
+     * programme, for scrub/seek support (task #136): the timeshift protocol
+     * has no in-stream random access beyond the buffered window, but the URL
+     * itself encodes the start time, so a seek is a re-tune at
+     * programmeStart + offset with the remaining duration. Credentials, base
+     * host, and stream id are reused verbatim from [url]; only the
+     * {durationMinutes}/{start} path segments are replaced. Returns null when
+     * [url] doesn't look like a timeshift URL (caller falls back to a plain
+     * player seek).
+     */
+    fun rebuildForOffset(
+        url: String,
+        panelTimeZoneId: String,
+        programmeStartMillis: Long,
+        programmeEndMillis: Long,
+        offsetMillis: Long,
+    ): String? {
+        val m = TIMESHIFT_SEGMENTS.find(url) ?: return null
+        val newStartMillis = programmeStartMillis + offsetMillis.coerceAtLeast(0L)
+        val durationMin = ceil(
+            (programmeEndMillis - newStartMillis).coerceAtLeast(60_000L) / 60_000.0,
+        ).toInt()
+        val start = formatStart(newStartMillis, panelTimeZoneId)
+        return url.replaceRange(
+            m.range,
+            "/timeshift/${m.groupValues[1]}/${m.groupValues[2]}/$durationMin/$start/",
+        )
+    }
+
+    /** {user}/{pass}/{durationMin}/{start}/ segments of a timeshift URL. */
+    private val TIMESHIFT_SEGMENTS =
+        Regex("/timeshift/([^/]+)/([^/]+)/(\\d+)/([^/]+)/")
+
+    /**
      * Derive the source base (scheme://host:port) from a Dispatcharr live stream
      * URL ("{base}/proxy/ts/stream/{uuid}") so the timeshift request uses the
      * SAME LAN/WAN host the live stream was rebuilt for (PlaylistRepository's

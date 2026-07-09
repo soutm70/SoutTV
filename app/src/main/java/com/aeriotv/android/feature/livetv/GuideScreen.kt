@@ -99,6 +99,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -190,10 +191,16 @@ fun GuideScreen(
     onToggleViewMode: () -> Unit,
     onLaunchMultiview: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
-    /** Catch-up (task #133): play a resolved timeshift URL with a title in
-     *  the seekable recording player. Wired to the same navigation the DVR
-     *  tab uses. */
-    onPlayCatchup: (playbackUrl: String, title: String) -> Unit = { _, _ -> },
+    /** Catch-up (task #133/#136): play a resolved timeshift URL in the
+     *  recording player, carrying the programme window + panel timezone the
+     *  player needs to rebuild the URL for scrub-seeks. */
+    onPlayCatchup: (
+        playbackUrl: String,
+        title: String,
+        progStartMillis: Long,
+        progEndMillis: Long,
+        panelTz: String,
+    ) -> Unit = { _, _, _, _, _ -> },
     modifier: Modifier = Modifier,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -205,7 +212,12 @@ fun GuideScreen(
     val onCatchupResolve: (M3UChannel, EPGProgramme) -> Unit = { ch, prog ->
         viewModel.playCatchup(ch, prog) { result ->
             result
-                .onSuccess { url -> onPlayCatchup(url, prog.title) }
+                .onSuccess { pb ->
+                    onPlayCatchup(
+                        pb.url, prog.title,
+                        prog.startMillis, prog.endMillis, pb.panelTimeZoneId,
+                    )
+                }
                 .onFailure { t ->
                     android.widget.Toast.makeText(
                         guideContext,
@@ -612,45 +624,30 @@ fun GuideScreen(
     // transition so it positions the grid each time the guide opens but never
     // yanks the user back to "now" mid-browse (e.g. when the hour ticks over
     // and windowStart shifts).
+    // Task #136: initial scroll-to-now, run ONCE per guide session.
+    // epgHistoryHours is published with the playlist row itself (before the
+    // guide composes), so windowStart is stable from the first frame and the
+    // only wait is for the strip to measure its full scroll range.
+    // rememberSaveable survives a nav push/pop (catch-up / recording
+    // playback), so returning from a player keeps the timeline where the user
+    // left it (rememberScrollState restores the px value) instead of yanking
+    // back to now.
+    var didScrollToNow by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(filteredChannels.isNotEmpty()) {
-        if (filteredChannels.isEmpty()) return@LaunchedEffect
-        // Wait for the row content to establish a scroll range (it's 24h wide
-        // by default, far wider than the viewport, so maxValue settles > 0
-        // within a frame or two). Bail if the content somehow fits (no scroll
-        // needed) so we never suspend forever.
-        val maxScroll = withTimeoutOrNull(1500L) {
-            snapshotFlow { horizontalScrollState.maxValue }.first { it > 0 }
-        } ?: return@LaunchedEffect
+        if (filteredChannels.isEmpty() || didScrollToNow) return@LaunchedEffect
         val nowOffsetPx =
             ((System.currentTimeMillis() - windowStart).toFloat() / 3_600_000f) * hourWidthPx
         // Place "now" at ~20% from the left (matches the tvOS screenshots:
         // ~30 min of past visible to the left of the now-line).
-        val target = (nowOffsetPx - stripViewportPx * 0.20f)
-            .toInt()
-            .coerceIn(0, maxScroll)
-        horizontalScrollState.scrollTo(target)
-    }
-
-    // Task #135: when the deferred catch-up history merge widens
-    // epgHistoryHours, windowStart leaps days into the past while the strip's
-    // px scroll value is preserved, which would visually teleport the viewport
-    // back in time. Compensate by shifting the scroll by the same time delta
-    // (also keeps the view put when the hour ticks windowStart forward). The
-    // scroll range needs a frame or two to re-measure after the window
-    // widens, so wait until maxValue can accommodate the shifted target.
-    var lastWindowStart by remember { mutableStateOf(windowStart) }
-    LaunchedEffect(windowStart) {
-        val deltaMs = lastWindowStart - windowStart
-        lastWindowStart = windowStart
-        if (deltaMs == 0L) return@LaunchedEffect
-        val deltaPx = (deltaMs.toFloat() / 3_600_000f * hourWidthPx).toInt()
-        val target = (horizontalScrollState.value + deltaPx).coerceAtLeast(0)
-        if (deltaPx > 0) {
-            withTimeoutOrNull(1500L) {
-                snapshotFlow { horizontalScrollState.maxValue }.first { it >= target }
-            }
-        }
-        horizontalScrollState.scrollTo(target.coerceIn(0, horizontalScrollState.maxValue))
+        val wanted = (nowOffsetPx - stripViewportPx * 0.20f).toInt().coerceAtLeast(0)
+        // Wait for the strip to establish a scroll range that can hold the
+        // target (it needs a frame or two to measure the multi-day window);
+        // fall back to whatever range exists at timeout.
+        val maxScroll = withTimeoutOrNull(2500L) {
+            snapshotFlow { horizontalScrollState.maxValue }.first { it >= wanted }
+        } ?: horizontalScrollState.maxValue.takeIf { it > 0 } ?: return@LaunchedEffect
+        didScrollToNow = true
+        horizontalScrollState.scrollTo(wanted.coerceIn(0, maxScroll))
     }
 
     // The host Scaffold sets contentWindowInsets = WindowInsets(0,0,0,0), so each
@@ -1308,13 +1305,23 @@ fun GuideScreen(
         val listState = rememberLazyListState()
         val lastWatchedId by settingsVm.lastWatchedChannelId
             .collectAsStateWithLifecycle(initialValue = "")
+        // Task #136: consume each lastWatched id ONCE. Without this, ANY
+        // recomposition of the guide after a nav-return (e.g. backing out of a
+        // catch-up / recording playback that never touched lastWatched)
+        // re-fires the effect with the same stale id and yanks the list away
+        // from where the user was browsing. rememberSaveable survives the
+        // guide leaving composition while the MAIN nav entry stays on the
+        // stack, which is exactly the return-from-player case.
+        var consumedLastWatchedId by rememberSaveable { mutableStateOf("") }
         LaunchedEffect(lastWatchedId, filteredChannels.isNotEmpty()) {
             if (lastWatchedId.isBlank() || filteredChannels.isEmpty()) return@LaunchedEffect
+            if (lastWatchedId == consumedLastWatchedId) return@LaunchedEffect
             // On TV, when the mini-player is showing (we just backed out of the
             // fullscreen player), the focus-on-return effect below -- keyed on the
             // mini-player session -- owns BOTH the scroll and the D-pad focus.
             // Skip here so the two effects don't fight over listState.
             if (miniActive && isTv) return@LaunchedEffect
+            consumedLastWatchedId = lastWatchedId
             val idx = filteredChannels.indexOfFirst { it.id == lastWatchedId }
             if (idx >= 0) {
                 listState.animateScrollToItem(idx)

@@ -85,7 +85,7 @@ object Routes {
     const val VOD_EPISODE_PLAYER = "vod_episode_player/{episodeUuid}"
     const val MULTIVIEW = "multiview"
     const val SEARCH = "search"
-    const val RECORDING_PLAYER = "recording_player/{playbackUrl}/{title}?isDvr={isDvr}&fromStart={fromStart}"
+    const val RECORDING_PLAYER = "recording_player/{playbackUrl}/{title}?isDvr={isDvr}&fromStart={fromStart}&csStart={csStart}&csEnd={csEnd}&csTz={csTz}"
 
     fun configure(type: SourceType) = "configure/${type.name}"
     fun player(channelId: String) = "player/${Uri.encode(channelId)}"
@@ -93,8 +93,19 @@ object Routes {
     fun movieDetail(movieUuid: String) = "movie_detail/${Uri.encode(movieUuid)}"
     fun seriesDetail(seriesId: Int) = "series_detail/$seriesId"
     fun vodEpisodePlayer(episodeUuid: String) = "vod_episode_player/${Uri.encode(episodeUuid)}"
-    fun recordingPlayer(playbackUrl: String, title: String, isDvr: Boolean = false, fromStart: Boolean = false) =
-        "recording_player/${Uri.encode(playbackUrl)}/${Uri.encode(title)}?isDvr=$isDvr&fromStart=$fromStart"
+    fun recordingPlayer(
+        playbackUrl: String,
+        title: String,
+        isDvr: Boolean = false,
+        fromStart: Boolean = false,
+        // Catch-up (task #136): programme window + panel timezone enable the
+        // player's re-tune scrubbing. csEnd <= csStart (defaults) = not catch-up.
+        csStart: Long = 0L,
+        csEnd: Long = 0L,
+        csTz: String = "",
+    ) =
+        "recording_player/${Uri.encode(playbackUrl)}/${Uri.encode(title)}" +
+            "?isDvr=$isDvr&fromStart=$fromStart&csStart=$csStart&csEnd=$csEnd&csTz=${Uri.encode(csTz)}"
 }
 
 @Composable
@@ -526,6 +537,14 @@ fun AerioTVNavHost(
                     onPlayRecording = { playbackUrl, title ->
                         navController.navigate(Routes.recordingPlayer(playbackUrl, title))
                     },
+                    onPlayCatchup = { playbackUrl, title, progStart, progEnd, panelTz ->
+                        navController.navigate(
+                            Routes.recordingPlayer(
+                                playbackUrl, title,
+                                csStart = progStart, csEnd = progEnd, csTz = panelTz,
+                            ),
+                        )
+                    },
                     onLaunchMultiview = {
                         // Tile spin-up takes seconds on real hardware, inviting
                         // a second OK press; singleTop keeps a double-activation
@@ -899,12 +918,18 @@ fun AerioTVNavHost(
                     navArgument("title") { type = NavType.StringType },
                     navArgument("isDvr") { type = NavType.BoolType; defaultValue = false },
                     navArgument("fromStart") { type = NavType.BoolType; defaultValue = false },
+                    navArgument("csStart") { type = NavType.LongType; defaultValue = 0L },
+                    navArgument("csEnd") { type = NavType.LongType; defaultValue = 0L },
+                    navArgument("csTz") { type = NavType.StringType; defaultValue = "" },
                 ),
             ) { entry ->
                 val playbackUrl = Uri.decode(entry.arguments?.getString("playbackUrl").orEmpty())
                 val title = Uri.decode(entry.arguments?.getString("title").orEmpty())
                 val isDvr = entry.arguments?.getBoolean("isDvr") ?: false
                 val fromStart = entry.arguments?.getBoolean("fromStart") ?: false
+                val csStart = entry.arguments?.getLong("csStart") ?: 0L
+                val csEnd = entry.arguments?.getLong("csEnd") ?: 0L
+                val csTz = Uri.decode(entry.arguments?.getString("csTz").orEmpty())
                 // A recording is either a local file:// capture (no auth) or a
                 // Dispatcharr server URL that needs the active source's
                 // X-API-Key. Resolve the playlist's auth headers like the VOD
@@ -937,6 +962,9 @@ fun AerioTVNavHost(
                     streamUrl = playbackUrl,
                     title = title.ifBlank { "Recording" },
                     httpHeaders = headers,
+                    catchupStartMillis = csStart,
+                    catchupEndMillis = csEnd,
+                    catchupTz = csTz,
                     onClose = { navController.popBackStack() },
                     loadingMessage = null,
                     videoId = playbackUrl,
