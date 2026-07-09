@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
@@ -2704,14 +2705,30 @@ private fun ProgrammeCell(
                 modifier = contentSticky,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(
-                    text = programme.title.ifBlank { "No info" },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (focused) Color.White else MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    // Catch-up: Dispatcharr-style rewind-clock glyph marking a
+                    // past programme that can be replayed from the archive.
+                    if (onWatchCatchup != null) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = "Catch-up available",
+                            tint = if (focused) Color.White.copy(alpha = 0.85f)
+                            else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                    Text(
+                        text = programme.title.ifBlank { "No info" },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (focused) Color.White else MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (programme.description.isNotBlank()) {
                     Text(
                         text = programme.description,
@@ -2741,14 +2758,28 @@ private fun ProgrammeCell(
                 modifier = contentSticky,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(
-                    text = programme.title.ifBlank { "No info" },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = titleColor,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    // Catch-up: same rewind-clock glyph as the TV cell.
+                    if (onWatchCatchup != null) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = "Catch-up available",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                    Text(
+                        text = programme.title.ifBlank { "No info" },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = titleColor,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (programme.description.isNotBlank()) {
                     Text(
                         text = programme.description,
