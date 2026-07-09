@@ -37,6 +37,8 @@ import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FiberManualRecord
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -84,6 +86,7 @@ import androidx.compose.ui.layout.ContentScale
 import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.data.ChannelCollection
 import com.aeriotv.android.core.data.EPGProgramme
+import com.aeriotv.android.core.data.canReplay
 import com.aeriotv.android.feature.collections.AddToCollectionFlow
 import com.aeriotv.android.feature.collections.CollectionPill
 import com.aeriotv.android.feature.collections.CollectionsMenuContext
@@ -119,6 +122,15 @@ fun ChannelListScreen(
     canToggleViewMode: Boolean = false,
     onToggleViewMode: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
+    /** Catch-up (task #137): play a resolved timeshift URL in the recording
+     *  player; same shape as GuideScreen's onPlayCatchup. */
+    onPlayCatchup: (
+        playbackUrl: String,
+        title: String,
+        progStartMillis: Long,
+        progEndMillis: Long,
+        panelTz: String,
+    ) -> Unit = { _, _, _, _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
@@ -133,6 +145,27 @@ fun ChannelListScreen(
     val groupOrder by settingsVm.groupOrder.collectAsStateWithLifecycle(initialValue = emptyList())
     val groupSortMode = com.aeriotv.android.feature.livetv.GroupSortMode.from(groupSortModeRaw)
 
+    // Catch-up (task #137): resolve a past programme to its timeshift URL,
+    // then play; failures surface as a toast (same flow as GuideScreen).
+    val listContext = LocalContext.current
+    val onCatchupResolve: (M3UChannel, EPGProgramme) -> Unit = { ch, prog ->
+        viewModel.playCatchup(ch, prog) { result ->
+            result
+                .onSuccess { pb ->
+                    onPlayCatchup(
+                        pb.url, prog.title,
+                        prog.startMillis, prog.endMillis, pb.panelTimeZoneId,
+                    )
+                }
+                .onFailure { t ->
+                    Toast.makeText(
+                        listContext,
+                        t.message ?: "Catch-up is unavailable for this programme.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+        }
+    }
     var programInfoTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var recordTarget by remember { mutableStateOf<ProgramInfoTarget?>(null) }
     var manageGroupsOpen by remember { mutableStateOf(false) }
@@ -564,6 +597,11 @@ fun ChannelListScreen(
                         showLogo = showChannelLogos,
                         showNumber = showChannelNumbers,
                         collectionsMenu = collectionsMenu,
+                        onWatchPast = if (channel.hasCatchup) {
+                            { prog -> onCatchupResolve(channel, prog) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -746,6 +784,10 @@ internal fun ChannelRow(
     /** #45: collection actions for the long-press menu (null = not offered,
      *  e.g. the Favorites tab). */
     collectionsMenu: CollectionsMenuContext? = null,
+    /** Catch-up (task #137): non-null when this channel has an archive; the
+     *  expanded schedule panel then lists recently aired programmes with a
+     *  Watch action on the replayable ones. */
+    onWatchPast: ((EPGProgramme) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
@@ -1184,12 +1226,14 @@ internal fun ChannelRow(
 
         AnimatedVisibility(visible = isExpanded) {
             ChannelGuidePanel(
+                channel = channel,
                 channelName = channel.name,
                 channelId = channel.id,
                 channelDispatcharrId = channel.dispatcharrChannelId,
                 programmes = programmes,
                 onShowProgramInfo = onShowProgramInfo,
                 onShowRecord = onShowRecord,
+                onWatchPast = onWatchPast,
             )
         }
     }
@@ -1204,12 +1248,14 @@ internal fun ChannelRow(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelGuidePanel(
+    channel: M3UChannel,
     channelName: String,
     channelId: String,
     channelDispatcharrId: Int?,
     programmes: List<EPGProgramme>,
     onShowProgramInfo: (ProgramInfoTarget) -> Unit,
     onShowRecord: (ProgramInfoTarget) -> Unit,
+    onWatchPast: ((EPGProgramme) -> Unit)? = null,
 ) {
     val now = System.currentTimeMillis()
     val current = programmes.nowPlaying(now)
@@ -1220,12 +1266,50 @@ private fun ChannelGuidePanel(
             .sortedBy { it.startMillis }
             .toList()
     }
+    // Catch-up (task #137): already-aired programmes, oldest first so the
+    // most recent one sits just above the schedule (scroll up = further
+    // back in time). Capped so a 7-day retention doesn't turn the inline
+    // panel into a thousand-row column; the guide grid is the deep-history
+    // browser.
+    val recentlyAired = remember(programmes) {
+        programmes
+            .asSequence()
+            .filter { it.endMillis <= now && !it.isPlaceholder }
+            .sortedBy { it.startMillis }
+            .toList()
+            .takeLast(12)
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         HorizontalDivider(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.padding(horizontal = 14.dp),
         )
+        if (recentlyAired.isNotEmpty()) {
+            Column(modifier = Modifier.padding(top = 6.dp)) {
+                recentlyAired.forEach { programme ->
+                    val replayable = channel.canReplay(programme, now)
+                    UpcomingProgrammeRow(
+                        programme = programme,
+                        channelName = channelName,
+                        channelId = channelId,
+                        isPast = true,
+                        replayable = replayable,
+                        onWatch = if (replayable && onWatchPast != null) {
+                            { onWatchPast(programme) }
+                        } else {
+                            null
+                        },
+                        onTap = { onShowProgramInfo(programme.toInfoTarget(channelName, channelDispatcharrId)) },
+                        onShowRecord = { onShowRecord(programme.toInfoTarget(channelName, channelDispatcharrId)) },
+                    )
+                }
+            }
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.padding(horizontal = 14.dp),
+            )
+        }
         if (upcoming.isEmpty()) {
             Text(
                 text = "No upcoming schedule available",
@@ -1257,6 +1341,13 @@ private fun UpcomingProgrammeRow(
     channelId: String,
     onTap: () -> Unit,
     onShowRecord: () -> Unit,
+    /** Catch-up (task #137): this row is an already-aired programme. Past
+     *  rows drop Set Reminder and Record from the long-press menu. */
+    isPast: Boolean = false,
+    /** True when the programme is inside the channel's archive window. */
+    replayable: Boolean = false,
+    /** Plays the programme from the archive; the menu leads with Watch. */
+    onWatch: (() -> Unit)? = null,
     remindersVm: RemindersViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -1284,14 +1375,27 @@ private fun UpcomingProgrammeRow(
             verticalAlignment = Alignment.Top,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = programme.title.ifBlank { "–" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Catch-up (task #137): same rewind-clock glyph the guide
+                    // cells carry on replayable aired programmes.
+                    if (replayable) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = "Catch-up available",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp),
+                        )
+                        Spacer(Modifier.width(3.dp))
+                    }
+                    Text(
+                        text = programme.title.ifBlank { "–" },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (programme.description.isNotBlank()) {
                     Text(
                         text = programme.description,
@@ -1315,8 +1419,13 @@ private fun UpcomingProgrammeRow(
         // anchored DropdownMenu on phone and as the shared centered
         // TvActionMenuDialog on TV (reachable via the Favorites tab).
         val menuActions = buildList {
+            // Catch-up (task #137): a replayable aired programme leads with
+            // Watch, mirroring the guide-cell menu.
+            onWatch?.let { watch ->
+                add(TvMenuAction("Watch", Icons.Outlined.Replay) { watch() })
+            }
             add(TvMenuAction("Program Info", Icons.Outlined.Info) { onTap() })
-            add(
+            if (!isPast) add(
                 TvMenuAction(
                     if (isReminderSet) "Cancel Reminder" else "Set Reminder",
                     Icons.Outlined.Notifications,
@@ -1336,7 +1445,7 @@ private fun UpcomingProgrammeRow(
                     }
                 },
             )
-            add(TvMenuAction("Record", Icons.Outlined.FiberManualRecord) { onShowRecord() })
+            if (!isPast) add(TvMenuAction("Record", Icons.Outlined.FiberManualRecord) { onShowRecord() })
         }
         if (isTv) {
             if (menuOpen) {

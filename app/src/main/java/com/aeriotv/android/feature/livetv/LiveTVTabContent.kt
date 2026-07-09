@@ -66,6 +66,7 @@ fun LiveTVTabContent(
                 canToggleViewMode = canToggle,
                 onToggleViewMode = toggleMode,
                 onOpenSearch = onOpenSearch,
+                onPlayCatchup = onPlayCatchup,
             )
         }
         LiveTVViewMode.Guide -> GuideScreen(

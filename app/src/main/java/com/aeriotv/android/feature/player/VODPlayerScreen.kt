@@ -71,6 +71,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -1307,7 +1308,14 @@ private fun ScrubberBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(28.dp),
+            .height(28.dp)
+            // Measure the track eagerly. The thumb's x = widthPx * fraction,
+            // and widthPx used to be set only inside the pointerInput blocks,
+            // which never ran while durationMs was 0 and could read size
+            // before layout, leaving the thumb pinned to the left edge while
+            // the fraction-based fill advanced correctly (user-visible in
+            // catch-up playback, task #136).
+            .onSizeChanged { widthPx = it.width.toFloat() },
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
