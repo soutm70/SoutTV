@@ -67,6 +67,7 @@ class PlaylistRepository @Inject constructor(
     private val channelSnapshotDao: ChannelSnapshotDao,
     private val activeCredentials: com.aeriotv.android.core.network.ActivePlaylistCredentials,
     private val lanReachability: LanReachability,
+    private val xtreamApi: com.aeriotv.android.core.network.XtreamCodesApi,
 ) {
 
     /**
@@ -964,6 +965,17 @@ class PlaylistRepository @Inject constructor(
                         tvgLogo = ch.logoId?.let { dispatcharrClient.logoUrl(base, it) }.orEmpty(),
                         channelNumber = ch.channelNumber?.formatChannelNumber(),
                         dispatcharrChannelId = ch.id,
+                        // Catch-up (task #133): Dispatcharr's /timeshift/
+                        // endpoint identifies the channel by Channel.id (its
+                        // XC layer exposes it as stream_id). Gate on BOTH
+                        // flags so a stale/partial payload can't produce a
+                        // dead Watch affordance.
+                        catchupDays = if (ch.isCatchup) ch.catchupDays else 0,
+                        catchupStreamId = if (ch.isCatchup && ch.catchupDays > 0) {
+                            ch.id.toString()
+                        } else {
+                            null
+                        },
                     )
                 }
         }
@@ -978,10 +990,40 @@ class PlaylistRepository @Inject constructor(
             val b = base.trimEnd('/')
             val m3uUrl = "$b/get.php?username=${xtreamEncode(user)}" +
                 "&password=${xtreamEncode(password.orEmpty())}&type=m3u_plus"
-            M3UParser.parseBytes(fetcher.fetchBytes(m3uUrl))
+            val channels = M3UParser.parseBytes(fetcher.fetchBytes(m3uUrl))
+            // Catch-up (task #133): the M3U carries no archive flags; the
+            // panel's get_live_streams does (tv_archive + tv_archive_duration,
+            // loose types). Best-effort enrichment keyed by the XC stream id
+            // embedded in each live URL's last path segment -- a failed or
+            // empty fetch simply leaves catch-up off for this refresh.
+            val catchupByStreamId = runCatching {
+                xtreamApi.getLiveCatchupInfo(b, user, password.orEmpty())
+            }.getOrDefault(emptyMap())
+            if (catchupByStreamId.isEmpty()) {
+                channels
+            } else {
+                channels.map { ch ->
+                    val sid = xcStreamIdFromUrl(ch.url)
+                    val days = sid?.let { catchupByStreamId[it] } ?: 0
+                    if (days > 0) {
+                        ch.copy(catchupDays = days, catchupStreamId = sid.toString())
+                    } else {
+                        ch
+                    }
+                }
+            }
         }
     }
 }
+
+/**
+ * XC live stream id from an M3U-delivered URL: the numeric last path segment
+ * of "…/live/user/pass/123.ts" or the bare "…/user/pass/123" form. Null for
+ * non-XC-shaped URLs, which safely disables catch-up for that channel.
+ */
+private fun xcStreamIdFromUrl(url: String): Int? =
+    Regex("/(\\d+)(?:\\.[A-Za-z0-9]+)?(?:\\?.*)?$")
+        .find(url)?.groupValues?.get(1)?.toIntOrNull()
 
 /** URL-encode an Xtream credential for use in a query string. */
 private fun xtreamEncode(value: String): String =
@@ -1070,6 +1112,8 @@ private fun ChannelSnapshotEntity.toChannel(): M3UChannel = M3UChannel(
     tvgLogo = tvgLogo,
     channelNumber = channelNumber,
     dispatcharrChannelId = dispatcharrChannelId,
+    catchupDays = catchupDays,
+    catchupStreamId = catchupStreamId,
 )
 
 private fun M3UChannel.toCacheEntity(
@@ -1088,6 +1132,8 @@ private fun M3UChannel.toCacheEntity(
     tvgLogo = tvgLogo,
     channelNumber = channelNumber,
     dispatcharrChannelId = dispatcharrChannelId,
+    catchupDays = catchupDays,
+    catchupStreamId = catchupStreamId,
     fetchedAt = fetchedAt,
 )
 

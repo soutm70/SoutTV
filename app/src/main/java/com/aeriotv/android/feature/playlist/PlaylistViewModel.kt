@@ -46,6 +46,7 @@ class PlaylistViewModel @Inject constructor(
     private val memoryPressureBus: MemoryPressureBus,
     private val vodResetBus: VodResetBus,
     private val appPreferences: AppPreferences,
+    private val catchupResolver: com.aeriotv.android.core.playback.CatchupPlaybackResolver,
 ) : ViewModel() {
 
     enum class Phase { Bootstrapping, NeedsUrl, ChannelsReady }
@@ -797,6 +798,34 @@ class PlaylistViewModel @Inject constructor(
             endMillis = end,
             dispatcharrProgramId = pid,
         )
+    }
+
+    /**
+     * Catch-up (task #133): resolve a past programme on a catch-up-capable
+     * channel to a playable timeshift URL, then hand it to [onResult] on the
+     * main thread. Resolution is async (the Dispatcharr path may fetch the
+     * user's XC credentials and pre-resolve the session redirect; the XC path
+     * may fetch the panel timezone) -- all memoized after the first call.
+     */
+    fun playCatchup(
+        channel: com.aeriotv.android.core.data.M3UChannel,
+        programme: com.aeriotv.android.core.data.EPGProgramme,
+        onResult: (Result<String>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val active = repository.activePlaylist()
+                ?: return@launch onResult(
+                    Result.failure(IllegalStateException("No active playlist")),
+                )
+            onResult(
+                catchupResolver.resolve(
+                    playlist = active,
+                    channel = channel,
+                    startMillis = programme.startMillis,
+                    endMillis = programme.endMillis,
+                ),
+            )
+        }
     }
 
     /**

@@ -1,0 +1,96 @@
+package com.aeriotv.android.core.playback
+
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.ceil
+
+/**
+ * Builds Xtream-Codes / Dispatcharr catch-up (timeshift) playback URLs and the
+ * per-source credential + timezone context they need.
+ *
+ * The protocol (verified from the leaked XC 2.9 panel source, Kodi
+ * pvr.iptvsimple, and Dispatcharr PR #1242): a finished programme within a
+ * channel's `tv_archive_duration` window is playable via the PATH form
+ *
+ *   {base}/timeshift/{user}/{pass}/{durationMinutes}/{start}/{streamId}.ts
+ *
+ * which returns a bounded, byte-range-seekable MPEG-TS of that one programme.
+ *
+ * THE FOOTGUN is [start]: the panel parses it as wall-clock time in ITS OWN
+ * timezone (the same zone it advertises in server_info.timezone and uses for
+ * the EPG start/end strings), NOT UTC and NOT device-local. Formatting in the
+ * wrong zone yields the classic "catch-up plays the wrong hour" bug. Dispatcharr
+ * pins its zone to UTC and serves UTC EPG, so for a Dispatcharr source we render
+ * the (UTC-epoch) programme start in UTC. For a raw XC provider we render in the
+ * zone captured from its player_api handshake, plus an optional manual
+ * correction offset for misconfigured panels (TiviMate and Kodi both ship one).
+ */
+object CatchupUrlBuilder {
+
+    /**
+     * Everything needed to turn a past programme into a playable timeshift URL
+     * for one source. [streamId] is the id the panel timeshifts by: the XC
+     * `stream_id` for a raw provider, or Dispatcharr's Channel.id (which its XC
+     * layer exposes as stream_id) for a Direct-Connect source.
+     */
+    data class Context(
+        val baseUrl: String,
+        val username: String,
+        val password: String,
+        val streamId: String,
+        /** IANA zone the panel interprets `start` in. Dispatcharr = "UTC". */
+        val panelTimeZoneId: String = "UTC",
+        /** Manual wall-clock correction for a mislabeled panel, in minutes. */
+        val correctionMinutes: Int = 0,
+    )
+
+    /**
+     * Build the catch-up URL for the programme spanning [startMillis, endMillis)
+     * (both UTC epoch ms). Duration is the programme length in whole minutes
+     * (rounded up); most panels ignore it (Dispatcharr recomputes from its own
+     * EPG) but a genuine XC 2.x panel queues that many minute-files, so it must
+     * be at least the programme length.
+     */
+    fun build(ctx: Context, startMillis: Long, endMillis: Long): String {
+        val correctedStart = startMillis + ctx.correctionMinutes * 60_000L
+        val start = formatStart(correctedStart, ctx.panelTimeZoneId)
+        val durationMin = ceil((endMillis - startMillis).coerceAtLeast(60_000L) / 60_000.0).toInt()
+        val base = ctx.baseUrl.trimEnd('/')
+        return "$base/timeshift/${enc(ctx.username)}/${enc(ctx.password)}/" +
+            "$durationMin/$start/${ctx.streamId}.ts"
+    }
+
+    /**
+     * The canonical XC start shape `YYYY-MM-DD:HH-MM` (iPlayTV / TiviMate
+     * colon-dash, minute precision), rendered in the panel's timezone.
+     */
+    private fun formatStart(epochMillis: Long, zoneId: String): String {
+        val fmt = SimpleDateFormat("yyyy-MM-dd:HH-mm", Locale.US).apply {
+            timeZone = runCatching { TimeZone.getTimeZone(zoneId) }
+                .getOrDefault(TimeZone.getTimeZone("UTC"))
+        }
+        return fmt.format(Date(epochMillis))
+    }
+
+    private fun enc(value: String): String =
+        java.net.URLEncoder.encode(value, "UTF-8")
+            // XC credential path segments must keep '@' and '.' literal (common
+            // in provider usernames) but URLEncoder turns space into '+'; the
+            // path context wants %20. Panels are tolerant of '@'/'.' unescaped.
+            .replace("+", "%20")
+
+    /**
+     * Derive the source base (scheme://host:port) from a Dispatcharr live stream
+     * URL ("{base}/proxy/ts/stream/{uuid}") so the timeshift request uses the
+     * SAME LAN/WAN host the live stream was rebuilt for (PlaylistRepository's
+     * rebuildLiveStreamUrl). Returns null if the URL isn't a recognizable
+     * Dispatcharr proxy URL.
+     */
+    fun dispatcharrBaseFromStreamUrl(streamUrl: String): String? {
+        val marker = "/proxy/"
+        val i = streamUrl.indexOf(marker)
+        return if (i > 0) streamUrl.substring(0, i) else null
+    }
+}

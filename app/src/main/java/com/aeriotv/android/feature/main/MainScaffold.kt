@@ -736,6 +736,9 @@ private fun MainTabContent(
                 onChannelClick = onChannelClick,
                 onLaunchMultiview = onLaunchMultiview,
                 onOpenSearch = onOpenSearch,
+                // Catch-up (task #133): a resolved timeshift URL plays through
+                // the same seekable recording-player route the DVR tab uses.
+                onPlayCatchup = onPlayRecording,
             )
             AppTab.Favorites -> FavoritesTabContent(onChannelClick = onChannelClick)
             AppTab.DVR -> DvrTabContent(

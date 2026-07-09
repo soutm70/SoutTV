@@ -26,6 +26,10 @@ fun LiveTVTabContent(
     modifier: Modifier = Modifier,
     onLaunchMultiview: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
+    /** Catch-up (task #133): play a resolved timeshift URL + title in the
+     *  seekable recording player. Guide-only for now (the List view surfaces
+     *  no past programmes). */
+    onPlayCatchup: (String, String) -> Unit = { _, _ -> },
     viewModel: PlaylistViewModel = hiltViewModel(),
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -72,6 +76,7 @@ fun LiveTVTabContent(
             onToggleViewMode = toggleMode,
             onLaunchMultiview = onLaunchMultiview,
             onOpenSearch = onOpenSearch,
+            onPlayCatchup = onPlayCatchup,
         )
     }
 }

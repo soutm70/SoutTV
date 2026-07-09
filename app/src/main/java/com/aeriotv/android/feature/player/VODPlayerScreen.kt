@@ -539,7 +539,20 @@ fun VODPlayerScreen(
                 // recordings) still flow through the HTTP factory carrying the
                 // auth headers. A bare DefaultHttpDataSource.Factory cannot open
                 // file://, so local recordings would otherwise fail to load.
-                val upstreamFactory = DefaultDataSource.Factory(ctx, dataSourceFactory)
+                val upstreamFactory: androidx.media3.datasource.DataSource.Factory =
+                    DefaultDataSource.Factory(ctx, dataSourceFactory).let { base ->
+                        // Catch-up (task #133): a Dispatcharr /timeshift/ archive
+                        // reports an estimated Content-Length and re-redirects to
+                        // a fresh ?session_id on every connection, so ExoPlayer's
+                        // TS end-seek-for-duration EOFs before playback. Hiding the
+                        // length makes it stream forward like live TS. VOD +
+                        // recordings keep their real length for whole-file seeking.
+                        if (streamUrl.contains("/timeshift/")) {
+                            com.aeriotv.android.core.playback.UnboundedLengthDataSource.Factory(base)
+                        } else {
+                            base
+                        }
+                    }
                 val mediaSourceFactory = DefaultMediaSourceFactory(ctx)
                     .setDataSourceFactory(upstreamFactory)
 

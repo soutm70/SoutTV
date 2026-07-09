@@ -43,6 +43,11 @@ data class ChannelSnapshotEntity(
     val tvgLogo: String,
     val channelNumber: String?,
     val dispatcharrChannelId: Int?,
+    /** Catch-up archive window in days (0 = none). Persisted so catch-up
+     *  affordances survive a cache-restored cold launch. */
+    val catchupDays: Int = 0,
+    /** Timeshift stream id (Dispatcharr Channel.id / XC stream_id), or null. */
+    val catchupStreamId: String? = null,
     /** Wall-clock millis when this snapshot was fetched (freshness check). */
     val fetchedAt: Long,
 )

@@ -29,4 +29,33 @@ data class M3UChannel(
      * Null for M3U / Xtream sources that don't carry it.
      */
     val dispatcharrChannelId: Int? = null,
-)
+    /**
+     * Catch-up (timeshift) retention window in DAYS, 0 when the channel has no
+     * archive. From Dispatcharr's `catchup_days` (native API) or an XC provider's
+     * `tv_archive_duration`. A programme that ended within this window is
+     * replayable; [catchupStreamId] must also be set for playback.
+     */
+    val catchupDays: Int = 0,
+    /**
+     * The id the panel timeshifts by, when [catchupDays] > 0: Dispatcharr's
+     * Channel.id (its XC layer exposes it as stream_id) or a raw XC provider's
+     * `stream_id`. Null disables catch-up even if [catchupDays] > 0.
+     */
+    val catchupStreamId: String? = null,
+) {
+    /** True when this channel exposes a replayable archive. */
+    val hasCatchup: Boolean get() = catchupDays > 0 && catchupStreamId != null
+}
+
+/**
+ * True when [programme] is replayable from this channel's catch-up archive:
+ * the programme has ENDED (panels report has_archive=0 for the airing show;
+ * its archive is still being written) and its end falls inside the retention
+ * window. The 30-day cap mirrors Dispatcharr's server-side clamp.
+ */
+fun M3UChannel.canReplay(programme: EPGProgramme, nowMillis: Long): Boolean {
+    if (!hasCatchup || programme.isPlaceholder) return false
+    val windowMs = minOf(catchupDays, 30) * 86_400_000L
+    return programme.endMillis <= nowMillis &&
+        programme.endMillis > nowMillis - windowMs
+}

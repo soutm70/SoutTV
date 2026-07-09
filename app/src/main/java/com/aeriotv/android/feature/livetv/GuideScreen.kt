@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.GridView
@@ -117,6 +118,7 @@ import com.aeriotv.android.core.category.CategoryPaletteState
 import com.aeriotv.android.core.data.EPGProgramme
 import com.aeriotv.android.core.data.M3UChannel
 import com.aeriotv.android.core.data.ProgramInfoTarget
+import com.aeriotv.android.core.data.canReplay
 import com.aeriotv.android.core.data.db.entity.reminderKey
 import com.aeriotv.android.core.data.guideMatchKey
 import com.aeriotv.android.core.data.toInfoTarget
@@ -187,10 +189,31 @@ fun GuideScreen(
     onToggleViewMode: () -> Unit,
     onLaunchMultiview: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
+    /** Catch-up (task #133): play a resolved timeshift URL with a title in
+     *  the seekable recording player. Wired to the same navigation the DVR
+     *  tab uses. */
+    onPlayCatchup: (playbackUrl: String, title: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val guideContext = LocalContext.current
+    // Catch-up (task #133): resolve a past programme to its timeshift URL off
+    // the main thread, then play; failures (no XC password on the Dispatcharr
+    // user, no archive, transport) surface as a toast.
+    val onCatchupResolve: (M3UChannel, EPGProgramme) -> Unit = { ch, prog ->
+        viewModel.playCatchup(ch, prog) { result ->
+            result
+                .onSuccess { url -> onPlayCatchup(url, prog.title) }
+                .onFailure { t ->
+                    android.widget.Toast.makeText(
+                        guideContext,
+                        t.message ?: "Catch-up is unavailable for this programme.",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+        }
+    }
     val favoritesVm: FavoritesViewModel = hiltViewModel()
     val favoritesList by favoritesVm.all.collectAsStateWithLifecycle(initialValue = emptyList())
     val favoriteIds = remember(favoritesList) { favoritesList.map { it.channelId }.toSet() }
@@ -1700,6 +1723,11 @@ fun GuideScreen(
                     showLogo = showChannelLogos,
                     showNumber = showChannelNumbers,
                     collectionsMenu = collectionsMenu,
+                    onProgrammeWatch = if (channel.hasCatchup) {
+                        { prog -> onCatchupResolve(channel, prog) }
+                    } else {
+                        null
+                    },
                 )
                 HorizontalDivider(color = guideRowDivider, thickness = guideRowDividerThickness)
             }
@@ -1800,6 +1828,11 @@ private fun ChannelGuideRow(
     /** GH #19: when false the channel-number text is omitted from the rail. */
     showNumber: Boolean = true,
     collectionsMenu: CollectionsMenuContext? = null,
+    /** Catch-up (task #133): non-null when this channel has a replayable
+     *  archive; invoked with a PAST programme the user chose to watch. Each
+     *  cell additionally gates on its own programme falling inside the
+     *  retention window (see [canReplay]). */
+    onProgrammeWatch: ((EPGProgramme) -> Unit)? = null,
 ) {
     val multiviewSelected by multiviewStore.selected.collectAsStateWithLifecycle()
     val inMultiview = multiviewSelected.any { it.id == channel.id }
@@ -2253,6 +2286,14 @@ private fun ChannelGuideRow(
                         isFavorite = isFavorite,
                         onToggleFavorite = onToggleFavorite,
                         collectionsMenu = collectionsMenu,
+                        onWatchCatchup = if (
+                            onProgrammeWatch != null &&
+                            channel.canReplay(programme, nowMillis)
+                        ) {
+                            { onProgrammeWatch(programme) }
+                        } else {
+                            null
+                        },
                     )
                 }
                 // "Now" indicator vertical line, only drawn when "now" falls
@@ -2364,6 +2405,10 @@ private fun ProgrammeCell(
     isFavorite: Boolean,
     onToggleFavorite: () -> Unit,
     collectionsMenu: CollectionsMenuContext? = null,
+    /** Catch-up (task #133): non-null when THIS programme is replayable from
+     *  the channel's archive; adds a "Watch" action at the top of the cell
+     *  menu on both TV and phone. */
+    onWatchCatchup: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -2515,6 +2560,11 @@ private fun ProgrammeCell(
         // allocation churn during navigation; the list rebuilds fresh (with the
         // current lambdas) the moment the menu opens.
         val menuActions = if (menuOpen) buildList {
+            // Catch-up (task #133): a replayable PAST programme leads with
+            // Watch -- the primary action for a show that already aired.
+            onWatchCatchup?.let { watch ->
+                add(TvMenuAction("Watch", Icons.Outlined.Replay) { watch() })
+            }
             add(TvMenuAction("Program Info", Icons.Outlined.Info) { onShowInfo() })
             add(
                 TvMenuAction(

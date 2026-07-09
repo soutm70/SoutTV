@@ -285,6 +285,47 @@ class XtreamCodesApi @Inject constructor() {
         return out
     }
 
+    /**
+     * Catch-up availability from get_live_streams (task #133): stream_id ->
+     * archive retention in DAYS, for channels whose panel reports tv_archive
+     * truthy. Types are parsed loosely on purpose: genuine panels emit
+     * tv_archive as Int 1 while real providers are seen sending the String
+     * "1", and tv_archive_duration arrives as Int or String depending on the
+     * panel. This is the only live-TV use of player_api in the app -- live
+     * channels themselves still come from the M3U (see the class doc).
+     */
+    suspend fun getLiveCatchupInfo(
+        base: String,
+        username: String,
+        password: String,
+    ): Map<Int, Int> =
+        fetchAndMapArray(base, username, password, "get_live_streams") { o ->
+            val id = o.flexInt("stream_id") ?: return@fetchAndMapArray null
+            val hasArchive = o.flexInt("tv_archive") == 1
+            val days = o.flexInt("tv_archive_duration") ?: 0
+            if (hasArchive && days > 0) id to days else null
+        }.toMap()
+
+    /**
+     * `server_info.timezone` from the bare player_api handshake -- the IANA
+     * zone the panel formats its EPG strings in AND interprets the timeshift
+     * `start` parameter in. Formatting the catch-up start in any other zone
+     * plays the wrong hour (the classic client bug), so callers must render
+     * programme start times in THIS zone. Null when the panel omits it
+     * (callers fall back to UTC; Dispatcharr's XC layer advertises UTC).
+     */
+    suspend fun getServerTimezone(base: String, username: String, password: String): String? {
+        val b = base.trimEnd('/')
+        val url = "$b/player_api.php?username=${enc(username)}&password=${enc(password)}"
+        val body = runCatching { client.get(url).bodyAsText() }
+            .onFailure { Log.w(TAG, "XC server_info fetch failed", it) }
+            .getOrNull() ?: return null
+        val root = runCatching { json.parseToJsonElement(body) }.getOrNull() as? JsonObject
+            ?: return null
+        val serverInfo = root["server_info"] as? JsonObject ?: return null
+        return serverInfo.str("timezone")
+    }
+
     // ─────────────────────── Stream URLs ──────────────────────────
     // Xtream standard: VOD -> /movie/<user>/<pass>/<id>.<ext>,
     //                  episode -> /series/<user>/<pass>/<id>.<ext>.

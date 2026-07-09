@@ -650,6 +650,39 @@ class DispatcharrClient @Inject constructor() {
         "${baseUrl.trimEnd('/')}/proxy/ts/stream/$channelUuid"
 
     /**
+     * Catch-up playback credentials. Dispatcharr's /timeshift/ endpoint (dev,
+     * PR #1242) authenticates with PATH-embedded XC output credentials only --
+     * the Django username plus the user's `custom_properties.xc_password` --
+     * with no ApiKey/Bearer alternative. The UserSerializer returns
+     * custom_properties un-redacted on /me/, so a Direct-Connect source can
+     * fetch both halves from the same endpoint that supplied its api_key,
+     * without ever prompting. Returns null when the server has no xc_password
+     * configured for this user (XC output not set up), which also means the
+     * timeshift endpoint would reject playback anyway. Confirmed with the
+     * Dispatcharr lead dev that a native API-authenticated route may come
+     * later; this is the supported surface today.
+     */
+    suspend fun fetchXcCredentials(baseUrl: String, apiKey: String): Pair<String, String>? =
+        runCatching {
+            val url = "${baseUrl.trimEnd('/')}/api/accounts/users/me/"
+            val response = client.get(url) { applyAuth(apiKey) }
+            if (!response.status.isSuccess()) return@runCatching null
+            val me: MeResponse = response.body()
+            val xcPassword = (me.customProperties?.get("xc_password") as? JsonPrimitive)
+                ?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?: return@runCatching null
+            me.username to xcPassword
+        }.getOrNull()
+
+    // NOTE: an earlier revision pre-resolved the timeshift 301 here to pin the
+    // ?session_id=. That is WRONG for Dispatcharr: the server binds a session's
+    // serving generator to the request that created it, so a throwaway probe
+    // that opens then closes spends the session and the player's real open then
+    // 404s (verified on device). The player is given the raw timeshift URL and
+    // follows the 301 itself, keeping one live session for the whole playback.
+
+    /**
      * POST /api/channels/recordings/ — schedules a server-side DVR recording.
      * Mirrors iOS DispatcharrAPI.createRecording (StreamingAPIs.swift:2334).
      *
@@ -1306,6 +1339,14 @@ data class MeResponse(
      *  Dispatcharr's historical is_superuser/is_staff admin checks. */
     @SerialName("is_staff")
     val isStaff: Boolean = false,
+    /** The user's custom-properties JSON. Carries `xc_password` -- the XC
+     *  output credential the /timeshift/ catch-up endpoint authenticates with
+     *  (path creds only; no ApiKey support there in Dispatcharr dev). The
+     *  UserSerializer returns it un-redacted on /me/, so a Direct-Connect
+     *  source can build catch-up URLs without prompting. Kept as a raw
+     *  JsonObject: the dict is admin-shaped and free-form. */
+    @SerialName("custom_properties")
+    val customProperties: JsonObject? = null,
 )
 
 @Serializable
@@ -1343,6 +1384,14 @@ data class DispatcharrChannel(
     val epgDataId: Int? = null,
     @SerialName("effective_epg_data_id")
     val effectiveEpgDataId: Int? = null,
+    /** Catch-up (Dispatcharr dev, PR #1242): true when any member stream's XC
+     *  provider reports tv_archive=1. Defaulted so pre-catchup servers parse. */
+    @SerialName("is_catchup")
+    val isCatchup: Boolean = false,
+    /** Max archive retention in days across member streams (server caps the
+     *  playable window at 30 regardless). 0 = no archive. */
+    @SerialName("catchup_days")
+    val catchupDays: Int = 0,
 )
 
 /**
