@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -1291,6 +1292,25 @@ private fun ChannelGuidePanel(
     val panelState = remember(channelId) {
         LazyListState(firstVisibleItemIndex = recentlyAired.size)
     }
+    // Damping (Archie): once the panel hits its top/bottom edge, swallow the
+    // leftover drag/fling instead of handing it to the outer channel list,
+    // so browsing history can't accidentally scroll the page or trigger
+    // pull-to-refresh. Drags that START outside the panel still scroll the
+    // outer list normally.
+    val panelScrollDamper = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: androidx.compose.ui.geometry.Offset,
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): androidx.compose.ui.geometry.Offset = available
+
+            override suspend fun onPostFling(
+                consumed: androidx.compose.ui.unit.Velocity,
+                available: androidx.compose.ui.unit.Velocity,
+            ): androidx.compose.ui.unit.Velocity = available
+        }
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         HorizontalDivider(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1309,7 +1329,8 @@ private fun ChannelGuidePanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 360.dp)
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = 6.dp)
+                    .nestedScroll(panelScrollDamper),
             ) {
                 items(recentlyAired.size) { i ->
                     val programme = recentlyAired[i]
@@ -1330,11 +1351,32 @@ private fun ChannelGuidePanel(
                     )
                 }
                 if (recentlyAired.isNotEmpty() && upcoming.isNotEmpty()) {
+                    // Boundary marker (Archie): the panel lands with this row
+                    // at the top, so it doubles as the hint that everything
+                    // above it is history. Same idiom as a messaging app's
+                    // "new messages" separator.
                     item {
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(horizontal = 14.dp),
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            HorizontalDivider(
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            )
+                            Text(
+                                text = "Previously aired",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            )
+                        }
                     }
                 }
                 items(upcoming.size) { i ->
@@ -1409,7 +1451,10 @@ private fun UpcomingProgrammeRow(
                     Text(
                         text = programme.title.ifBlank { "–" },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        // Past rows read a rung dimmer so the history region
+                        // is visually distinct from the upcoming schedule.
+                        color = if (isPast) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
