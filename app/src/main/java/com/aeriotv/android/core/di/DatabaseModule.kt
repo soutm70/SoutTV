@@ -207,6 +207,26 @@ object DatabaseModule {
         }
     }
 
+    /** Task #137: dedupe the EPG cache then enforce one row per
+     *  (playlistId, channelId, startMillis) so feed refreshes REPLACE cached
+     *  programmes in place instead of duplicating (the history merge relies
+     *  on this). Duplicates are possible in pre-v20 caches (history rows the
+     *  feed re-sent), so they are cleared before the unique index lands. */
+    private val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "DELETE FROM `epg_programme` WHERE `id` NOT IN (" +
+                    "SELECT MIN(`id`) FROM `epg_programme` " +
+                    "GROUP BY `playlistId`, `channelId`, `startMillis`)",
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                    "`index_epg_programme_playlistId_channelId_startMillis` " +
+                    "ON `epg_programme` (`playlistId`, `channelId`, `startMillis`)",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AerioDatabase =
@@ -215,7 +235,7 @@ object DatabaseModule {
             // exists. Destructive fallback is scoped to ONLY pre-v10 dev builds
             // so an unmapped future migration can never silently wipe a real
             // user's saved servers and credentials in the field.
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8, 9)
             .build()
 

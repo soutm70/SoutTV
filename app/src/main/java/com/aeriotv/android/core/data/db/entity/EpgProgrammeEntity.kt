@@ -22,6 +22,14 @@ import androidx.room.PrimaryKey
         Index(value = ["playlistId"]),
         Index(value = ["playlistId", "channelId"]),
         Index(value = ["endMillis"]),
+        // Task #137: one row per (source, channel, start slot). With
+        // OnConflictStrategy.REPLACE on insertAll, a fresh feed's copy of an
+        // already-cached programme replaces it in place instead of
+        // duplicating, which lets the history merge keep past rows without a
+        // window-delete that erased recently-ended shows the feed no longer
+        // carries (the merged-count regression: 257 -> 185 across one
+        // refresh).
+        Index(value = ["playlistId", "channelId", "startMillis"], unique = true),
     ],
 )
 data class EpgProgrammeEntity(

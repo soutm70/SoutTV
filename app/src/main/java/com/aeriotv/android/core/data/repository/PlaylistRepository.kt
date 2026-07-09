@@ -680,7 +680,7 @@ class PlaylistRepository @Inject constructor(
         // (default 7 days). The old behaviour (full replace + drop everything
         // ended over an hour ago) erased exactly the programmes the catch-up
         // "Watch" action needs.
-        epgProgrammeDao.mergeForPlaylist(playlistId, entities)
+        epgProgrammeDao.mergeForPlaylist(playlistId, entities, now)
         val retentionDays = (dao.byId(playlistId)?.epgRetentionDays ?: 7).coerceAtLeast(1)
         epgProgrammeDao.deleteEndedBeforeForPlaylist(
             playlistId,

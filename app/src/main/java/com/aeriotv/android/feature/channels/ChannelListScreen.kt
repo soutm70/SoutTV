@@ -1268,16 +1268,16 @@ private fun ChannelGuidePanel(
     }
     // Catch-up (task #137): already-aired programmes, oldest first so the
     // most recent one sits just above the schedule (scroll up = further
-    // back in time). Capped so a 7-day retention doesn't turn the inline
-    // panel into a thousand-row column; the guide grid is the deep-history
-    // browser.
+    // back in time). Everything retained is listed (Archie: show all
+    // available, parity with the guide's history depth); only one channel
+    // panel is expanded at a time so the row count stays bounded by the
+    // playlist's retention window.
     val recentlyAired = remember(programmes) {
         programmes
             .asSequence()
             .filter { it.endMillis <= now && !it.isPlaceholder }
             .sortedBy { it.startMillis }
             .toList()
-            .takeLast(12)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {

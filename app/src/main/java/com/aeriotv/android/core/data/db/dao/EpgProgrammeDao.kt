@@ -74,27 +74,32 @@ interface EpgProgrammeDao {
     @Query("DELETE FROM epg_programme WHERE playlistId = :playlistId AND endMillis < :before")
     suspend fun deleteEndedBeforeForPlaylist(playlistId: String, before: Long)
 
-    /** Delete only the rows the incoming feed's window covers (everything
-     *  ending after the feed's earliest start); [mergeForPlaylist]'s helper. */
+    /** Delete the airing-and-future region the fresh feed owns outright;
+     *  [mergeForPlaylist]'s helper. */
     @Query("DELETE FROM epg_programme WHERE playlistId = :playlistId AND endMillis > :fromMillis")
     suspend fun deleteCoveredWindow(playlistId: String, fromMillis: Long)
 
     /**
      * Merge a fresh feed into one source's cached guide in a single
-     * transaction so a reader never sees a half-written batch. Unlike the old
-     * delete-all-and-insert (iOS GuideStore.saveToCache mirror), this KEEPS
-     * history rows the new feed no longer covers: only rows overlapping the
-     * feed's own window (ending after its earliest start) are replaced.
-     * That is what lets already-aired programmes accumulate for catch-up
-     * (task #135); upstream feeds usually carry little or no past data, so a
-     * full replace erased the browsable history on every refresh. No
-     * duplicate risk: any old row the feed still contains ends inside the
-     * deleted window, so it is replaced, never doubled.
+     * transaction so a reader never sees a half-written batch. The feed owns
+     * the PRESENT AND FUTURE outright (that whole region is deleted and
+     * re-inserted), while ALREADY-AIRED rows are left in place so history
+     * accumulates for catch-up (task #135/#137). Any past rows the feed
+     * still carries replace their cached copies via the unique
+     * (playlistId, channelId, startMillis) index + REPLACE conflict
+     * strategy instead of duplicating. An earlier revision deleted
+     * everything after the feed's EARLIEST start; feeds trim their own
+     * history between refreshes, so recently-ended programmes inside that
+     * window but absent from the new feed were silently erased.
      */
     @Transaction
-    suspend fun mergeForPlaylist(playlistId: String, rows: List<EpgProgrammeEntity>) {
-        val feedStart = rows.minOfOrNull { it.startMillis } ?: return
-        deleteCoveredWindow(playlistId, feedStart)
+    suspend fun mergeForPlaylist(
+        playlistId: String,
+        rows: List<EpgProgrammeEntity>,
+        nowMillis: Long,
+    ) {
+        if (rows.isEmpty()) return
+        deleteCoveredWindow(playlistId, nowMillis)
         insertAll(rows)
     }
 }
