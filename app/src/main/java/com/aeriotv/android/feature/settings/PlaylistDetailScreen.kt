@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -165,7 +166,18 @@ fun PlaylistDetailScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
-                Section(header = "Connection Details", footer = null) {
+                Section(
+                    header = "Connection Details",
+                    // Only worth explaining when there are two URLs to
+                    // choose between.
+                    footer = if (!playlist.lanUrlString.isNullOrBlank()) {
+                        "A checkmark marks the connection in use right now. The local URL is used " +
+                            "automatically whenever the server answers on your home network; run " +
+                            "Refresh LAN Detection below after a network change."
+                    } else {
+                        null
+                    },
+                ) {
                     // On TV the card is itself a (read-only) focus stop: with
                     // only the Action rows focusable, D-pad UP from "Test
                     // Connection" had nowhere to go, so the list stayed
@@ -208,6 +220,9 @@ fun PlaylistDetailScreen(
                                 icon = Icons.Filled.CheckCircle.takeIf { activeRoute?.isLan == true },
                                 iconTint = MaterialTheme.colorScheme.primary,
                             )
+                        }
+                        playlist.username?.takeIf { it.isNotBlank() }?.let { user ->
+                            DetailRow("Username", user)
                         }
                         // Reflect a real signal -- whether the source has ever
                         // loaded channels -- instead of asserting "Verified"
@@ -265,13 +280,23 @@ fun PlaylistDetailScreen(
                         running = state.playlistRefreshStatus is PlaylistViewModel.ActionStatus.Running,
                         status = state.playlistRefreshStatus,
                     )
+                    if (!playlist.lanUrlString.isNullOrBlank()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        ActionRow(
+                            icon = Icons.Outlined.Wifi,
+                            label = "Refresh LAN Detection",
+                            onClick = { viewModel.refreshLanDetection() },
+                            running = state.lanRefreshStatus is PlaylistViewModel.ActionStatus.Running,
+                            status = state.lanRefreshStatus,
+                        )
+                    }
                 }
             }
 
             item {
                 Section(
                     header = "EPG Cache",
-                    footer = "Refresh when channel guide data is missing or out of date. Pulls a fresh XMLTV from the configured EPG URL.",
+                    footer = "Clears this playlist's cached guide data and downloads it fresh from the server. Use this if program cells look wrong or are missing. Takes a few minutes on large playlists.",
                 ) {
                     ActionRow(
                         icon = Icons.Filled.Refresh,
@@ -310,7 +335,7 @@ fun PlaylistDetailScreen(
             item {
                 Section(
                     header = "Danger Zone",
-                    footer = "Removes this playlist and its credentials from this device.",
+                    footer = "Removes this playlist and its credentials from this device. Your server data will not be affected.",
                 ) {
                     ActionRow(
                         icon = Icons.Outlined.Delete,

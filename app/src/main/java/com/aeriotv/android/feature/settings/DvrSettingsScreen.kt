@@ -115,6 +115,29 @@ fun DvrSettingsScreen(
         ) {
             item {
                 Card(
+                    header = "Default Recording Buffers",
+                    footer = "Buffers extend new recordings beyond the scheduled window. Existing recordings aren't touched. Useful for sports and live events that run over.",
+                ) {
+                    Column {
+                        BufferRow(
+                            label = "Start Early",
+                            options = ROLL_OPTIONS,
+                            selected = preRoll,
+                            onSelect = settingsVm::setDvrDefaultPreRollMins,
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        BufferRow(
+                            label = "End Late",
+                            options = ROLL_OPTIONS,
+                            selected = postRoll,
+                            onSelect = settingsVm::setDvrDefaultPostRollMins,
+                        )
+                    }
+                }
+            }
+
+            item {
+                Card(
                     header = "Local Storage",
                     footer = "Cap applies to local recordings on this device only. Server recordings live on Dispatcharr and are tracked there.",
                 ) {
@@ -187,30 +210,7 @@ fun DvrSettingsScreen(
 
             item {
                 Card(
-                    header = "Default Recording Buffers",
-                    footer = "Buffers extend new recordings beyond the scheduled window. Existing recordings aren't touched. Useful for sports and live events that run over.",
-                ) {
-                    Column {
-                        BufferRow(
-                            label = "Start Early",
-                            options = ROLL_OPTIONS,
-                            selected = preRoll,
-                            onSelect = settingsVm::setDvrDefaultPreRollMins,
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        BufferRow(
-                            label = "End Late",
-                            options = ROLL_OPTIONS,
-                            selected = postRoll,
-                            onSelect = settingsVm::setDvrDefaultPostRollMins,
-                        )
-                    }
-                }
-            }
-
-            item {
-                Card(
-                    header = "Output Folder",
+                    header = "Storage Location",
                     footer = "Local recordings save to your Downloads folder (in an AerioTV subfolder) by default, so you can find them in any file manager. Choose Folder picks a custom location via the Storage Access Framework, retained across reboots.",
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {

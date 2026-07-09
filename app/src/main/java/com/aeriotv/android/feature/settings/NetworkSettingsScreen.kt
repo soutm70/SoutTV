@@ -249,7 +249,7 @@ private fun EpgWindowSection(
 ) {
     SettingsSection(
         header = "EPG Window",
-        footer = "How far ahead the TV Guide timeline extends. The guide always shows 1 hour of history. Wider windows need more horizontal scrolling; \"All available\" spans your full loaded guide data.",
+        footer = "How far ahead the TV Guide timeline extends. How far back it scrolls is set per playlist by Guide History. Wider windows need more horizontal scrolling; \"All available\" spans your full loaded guide data.",
     ) {
         EPG_WINDOW_OPTIONS.forEach { opt ->
             SettingsSelectionRow(

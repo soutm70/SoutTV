@@ -171,21 +171,6 @@ fun AppearanceSettingsScreen(
                 // for the same reason: the master toggle is binary and gets
                 // its own footer, the palette grid is browse-and-tweak.
                 settingsCard(
-                    header = "Category Colors",
-                    footer = "Tint EPG cells and channel cards by programme category. Select a category below to override its hex.",
-                ) {
-                    ToggleRow(
-                        title = "Color Programs by Category",
-                        subtitle = "Apply category tints to the guide and channel rows.",
-                        checked = palette.masterEnabled,
-                        onCheckedChange = viewModel::setCategoryColorsEnabled,
-                    )
-                }
-
-                // Channel List card (iOS Issue #28 logos + GH #19 numbers).
-                // Hide logos/numbers so long channel names get the full row
-                // width. Both apply to the Live TV list AND the Guide rail.
-                settingsCard(
                     header = "Channel List",
                     footer = "Turn logos or numbers off to give long channel names more row width. Applies to the Live TV list and the Guide.",
                 ) {
@@ -206,6 +191,21 @@ fun AppearanceSettingsScreen(
 
                 // PALETTE card — the default 4 buckets plus the "Add more
                 // categories" navigator and the Reset link.
+                settingsCard(
+                    header = "Category Colors",
+                    footer = "Tint EPG cells and channel cards by programme category. Select a category below to override its hex.",
+                ) {
+                    ToggleRow(
+                        title = "Color Programs by Category",
+                        subtitle = "Apply category tints to the guide and channel rows.",
+                        checked = palette.masterEnabled,
+                        onCheckedChange = viewModel::setCategoryColorsEnabled,
+                    )
+                }
+
+                // Channel List card (iOS Issue #28 logos + GH #19 numbers).
+                // Hide logos/numbers so long channel names get the full row
+                // width. Both apply to the Live TV list AND the Guide rail.
                 settingsCard(
                     header = "Palette",
                     footer = null,

@@ -258,11 +258,31 @@ fun EditPlaylistScreen(
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                             ),
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            // Local Network gets its own section (unified settings layout,
+            // 2026-07): the same grouping iOS/tvOS use, with the footer
+            // explaining the automatic LAN/WAN switch.
+            item {
+                Section(
+                    header = "Local Network",
+                    footer = "Used automatically whenever the server answers at this address " +
+                        "(checked at launch, on network changes, and after edits). Leave blank " +
+                        "to always use the server URL.",
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         OutlinedTextField(
                             value = lanUrl,
                             onValueChange = { lanUrl = it },
-                            label = { Text("LAN URL (optional)") },
+                            label = { Text("Local URL (optional)") },
                             placeholder = { Text("http://192.168.1.10:9191") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
@@ -270,18 +290,6 @@ fun EditPlaylistScreen(
                                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Next,
                             ),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Used automatically whenever the server answers at this address (checked at launch, on network changes, and after edits).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Type: ${sourceType.displayName}. To switch types, use Change Playlist.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -433,8 +441,9 @@ fun EditPlaylistScreen(
             item {
                 Section(
                     header = "Guide History",
-                    footer = "How many days of already-aired guide data to keep. " +
-                        "Past shows on channels with catch-up can be replayed from the guide.",
+                    footer = "How many days of already-aired guide data to keep for this playlist. " +
+                        "Past shows on channels with catch-up can be replayed from the guide. " +
+                        "Longer history means a larger guide cache.",
                 ) {
                     Column(modifier = Modifier.padding(vertical = 4.dp)) {
                         listOf(1, 3, 7, 14, 30).forEach { days ->

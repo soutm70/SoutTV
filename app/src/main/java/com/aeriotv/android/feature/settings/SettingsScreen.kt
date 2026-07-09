@@ -757,7 +757,7 @@ enum class SettingsSection(
     ),
     AppBehaviors(
         title = "App Behaviors",
-        subtitle = "Splash, default tab, channel-flip",
+        subtitle = "Default tab, launch & gestures",
         icon = Icons.Outlined.PlayCircle,
     ),
     Multiview(
@@ -767,7 +767,7 @@ enum class SettingsSection(
     ),
     Network(
         title = "Network",
-        subtitle = "Timeout, buffer, home WiFi & refresh",
+        subtitle = "Timeout, buffer & background refresh",
         icon = Icons.Filled.Wifi,
     ),
     AppUpdates(

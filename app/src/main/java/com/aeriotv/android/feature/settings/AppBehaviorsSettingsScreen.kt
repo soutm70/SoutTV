@@ -98,8 +98,7 @@ fun AppBehaviorsSettingsScreen(
                     end = 16.dp,
                     top = 12.dp,
                     // 104dp bottom clears the MainScaffold NavigationBar
-                    // so the Default Tab list at the bottom stays
-                    // reachable on short displays.
+                    // so the last section stays reachable on short displays.
                     bottom = 104.dp,
                 ),
             verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -120,6 +119,21 @@ fun AppBehaviorsSettingsScreen(
                     checked = autoResumeLastChannel,
                     onCheckedChange = viewModel::setAutoResumeLastChannel,
                 )
+            }
+
+            SettingsSection(
+                header = "Default Tab",
+                footer = "The tab shown when the app first launches.",
+            ) {
+                AppTab.entries.forEach { tab ->
+                    val selected = (defaultTab.isEmpty() && tab == AppTab.LiveTV) ||
+                        defaultTab == tab.name
+                    SettingsSelectionRow(
+                        label = tab.label,
+                        selected = selected,
+                        onClick = { viewModel.setDefaultTab(tab.name) },
+                    )
+                }
             }
 
             SettingsSection(
@@ -247,20 +261,6 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
-            SettingsSection(
-                header = "Default Tab",
-                footer = "Which tab the app lands on after launch. Live TV is the iOS default.",
-            ) {
-                AppTab.entries.forEach { tab ->
-                    val selected = (defaultTab.isEmpty() && tab == AppTab.LiveTV) ||
-                        defaultTab == tab.name
-                    SettingsSelectionRow(
-                        label = tab.label,
-                        selected = selected,
-                        onClick = { viewModel.setDefaultTab(tab.name) },
-                    )
-                }
-            }
         }
         }
     }

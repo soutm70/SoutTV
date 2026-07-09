@@ -111,6 +111,7 @@ class PlaylistViewModel @Inject constructor(
         val playlistRefreshStatus: ActionStatus = ActionStatus.Idle,
         val epgRefreshStatus: ActionStatus = ActionStatus.Idle,
         val refreshAllStatus: ActionStatus = ActionStatus.Idle,
+        val lanRefreshStatus: ActionStatus = ActionStatus.Idle,
         /** Which URL [PlaylistRepository.effectiveBaseUrl] resolves to right
          *  now (LAN vs WAN), for the Connection row. Null until probed. */
         val activeRoute: ActiveRoute? = null,
@@ -1269,6 +1270,27 @@ class PlaylistViewModel @Inject constructor(
         }
     }
 
+    /** Manual "Refresh LAN Detection" action on Playlist Detail: re-probe
+     *  which URL answers and report the outcome inline. The same probe
+     *  already runs automatically on entry and ON_RESUME; this row exists
+     *  for parity with iOS and for users who just changed networks. */
+    fun refreshLanDetection() {
+        viewModelScope.launch {
+            val pl = _state.value.playlist ?: return@launch
+            _state.update { it.copy(lanRefreshStatus = ActionStatus.Running) }
+            val url = repository.effectiveBaseUrl(pl)
+            val isLan = !pl.lanUrlString.isNullOrBlank() && url == pl.lanUrlString
+            _state.update {
+                it.copy(
+                    activeRoute = ActiveRoute(isLan = isLan, url = url),
+                    lanRefreshStatus = ActionStatus.Success(
+                        if (isLan) "Local server reachable, using local URL" else "Using remote URL",
+                    ),
+                )
+            }
+        }
+    }
+
     /** Reset Playlist Detail's per-action feedback. Called when the screen
      *  leaves composition so stale results don't greet the next visit. */
     fun clearDetailActionStatuses() {
@@ -1278,6 +1300,7 @@ class PlaylistViewModel @Inject constructor(
                 playlistRefreshStatus = ActionStatus.Idle,
                 epgRefreshStatus = ActionStatus.Idle,
                 refreshAllStatus = ActionStatus.Idle,
+                lanRefreshStatus = ActionStatus.Idle,
             )
         }
     }
