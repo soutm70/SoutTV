@@ -1356,6 +1356,14 @@ fun GuideScreen(
         // BackHandler) so the scroll-to-top Back branch can re-focus the top
         // channel instead of leaving focus on the "All" group pill.
         val guideNav = remember { GuideVerticalNavState() }
+        // Task #138: keep guideNav's viewport clamp current so a freshly-
+        // focused left-clipped cell anchors to the on-screen column, not its
+        // (possibly hours-past, with catch-up history) programme start.
+        LaunchedEffect(guideNav) {
+            snapshotFlow { visibleWindow.first }
+                .distinctUntilChanged()
+                .collect { guideNav.viewportStartMs = it }
+        }
         val navScope = rememberCoroutineScope()
         val backScope = androidx.compose.runtime.rememberCoroutineScope()
         val activity = LocalContext.current.findActivity()
@@ -2975,6 +2983,16 @@ private class GuideVerticalNavState {
     var leadingEdgeTargetPx: Float? = null
         private set
 
+    /** Live viewport start time (ms), fed by the guide's visible-window flow.
+     *  Task #138: a freshly-focused LEFT-CLIPPED cell reports its programme
+     *  start, which with 7-day catch-up history can sit hours in the past;
+     *  adopting it raw made the next vertical move target the row cell
+     *  containing that PAST time and drag the timeline into history. The
+     *  anchor adopted on a fresh focus is clamped to this, restoring the
+     *  original "column the highlight occupies on screen" semantics. */
+    @Volatile
+    var viewportStartMs: Long = Long.MIN_VALUE
+
     /** True only between a programmatic (vertical-move) requestFocus and the
      *  onCellFocused it triggers, so that focus is treated as column-preserving
      *  and does NOT overwrite [anchorTimeMs]. Consumed by onCellFocused, or
@@ -3080,7 +3098,11 @@ private class GuideVerticalNavState {
         if (programmaticFocusPending) {
             programmaticFocusPending = false
         } else {
-            anchorTimeMs = cellStartMs
+            anchorTimeMs = if (viewportStartMs != Long.MIN_VALUE) {
+                cellStartMs.coerceAtLeast(viewportStartMs)
+            } else {
+                cellStartMs
+            }
         }
     }
 
@@ -3272,7 +3294,16 @@ private class GuideLeadingEdgeBringIntoViewSpec(
         // under it. `offset` is the cell's leading edge relative to the viewport
         // start, so scrolling by (offset - target) lands it exactly at target; the
         // ScrollState clamps to its own [0, maxValue] at the window edges.
-        verticalMoveLeadingEdgeTargetPx()?.let { target -> return offset - target }
+        // Task #138 exception: a LEFT-CLIPPED landing cell (a long programme
+        // that began before the viewport) stays put. Before catch-up history
+        // cells were clipped at the 1h window edge so this shift was ~0; with
+        // unclipped 7-day history the raw left-align yanked the timeline hours
+        // into the past on each channel move. The sticky programme title keeps
+        // the name readable at the visible left edge.
+        verticalMoveLeadingEdgeTargetPx()?.let { target ->
+            if (offset < 0f) return 0f
+            return offset - target
+        }
         // Already fully visible: no scroll.
         if (offset >= 0f && offset + size <= containerSize) return 0f
         // Oversized cell (wider than the viewport): if ANY part already overlaps
