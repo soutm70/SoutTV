@@ -2,12 +2,17 @@ package com.aeriotv.android.core.timeshift
 
 import android.util.Log
 import com.aeriotv.android.core.preferences.AppPreferences
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,6 +47,20 @@ class TimeshiftController @Inject constructor(
     var activeWriter: TimeshiftWriter? = null
         private set
 
+    /** Live stream URL + headers of the current session, captured at
+     *  start so the independent filler can reconnect on its own. */
+    @Volatile private var liveUrl: String? = null
+    @Volatile private var liveHeaders: Map<String, String> = emptyMap()
+    private var fillJob: kotlinx.coroutines.Job? = null
+
+    private val fillClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
+    }
+
     data class State(
         /** A buffer session is rolling for the current live channel. */
         val buffering: Boolean = false,
@@ -63,7 +82,14 @@ class TimeshiftController @Inject constructor(
      * PlayerScreen when fullscreen live playback starts (and on channel
      * change, which implicitly ends the previous session).
      */
-    fun onFullscreenLiveStarted(channelId: String, channelName: String) {
+    fun onFullscreenLiveStarted(
+        channelId: String,
+        channelName: String,
+        streamUrl: String,
+        headers: Map<String, String> = emptyMap(),
+    ) {
+        liveUrl = streamUrl
+        liveHeaders = headers
         scope.launch {
             if (!prefs.liveRewindEnabled.first()) return@launch
             val depthMin = prefs.liveRewindDepthMinutes.first()
@@ -95,9 +121,55 @@ class TimeshiftController @Inject constructor(
         _state.value = State()
     }
 
+    /**
+     * While playback is ON the buffer, the shared player's live
+     * connection (which carries the tee) is closed, so the buffer
+     * would stop growing exactly when the user needs it to keep
+     * rolling. This independent filler streams the SAME live URL into
+     * the writer for the duration of the timeshift. It starts when
+     * playback enters the buffer and stops on Go Live, so the
+     * provider sees one active stream at a time (modulo a sub-second
+     * splice overlap), which matters for single-connection accounts.
+     */
+    private fun startIndependentFill() {
+        val url = liveUrl ?: return
+        val writer = activeWriter ?: return
+        if (fillJob?.isActive == true) return
+        fillJob = scope.launch {
+            try {
+                val req = Request.Builder().url(url).apply {
+                    liveHeaders.forEach { (k, v) -> header(k, v) }
+                }.build()
+                fillClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        Log.w(TAG, "fill connect failed http=${resp.code}")
+                        return@use
+                    }
+                    val src = resp.body?.byteStream() ?: return@use
+                    val buf = ByteArray(64 * 1024)
+                    while (currentCoroutineContext().isActive && !writer.closed) {
+                        val n = src.read(buf)
+                        if (n < 0) break
+                        if (n > 0) writer.append(buf, 0, n)
+                    }
+                }
+            } catch (t: Throwable) {
+                if (fillJob?.isActive == true) Log.w(TAG, "fill stream error: $t")
+            }
+            Log.i(TAG, "independent fill ended")
+        }
+        Log.i(TAG, "independent fill started")
+    }
+
+    private fun stopIndependentFill() {
+        fillJob?.cancel()
+        fillJob = null
+    }
+
     /** Playback switched onto the buffer at [atWallMs]. */
     fun onEnterTimeshift(atWallMs: Long) {
         val w = activeWriter ?: return
+        startIndependentFill()
         _state.value = _state.value.copy(
             timeshifting = true,
             baseWallMs = atWallMs,
@@ -108,6 +180,7 @@ class TimeshiftController @Inject constructor(
 
     /** Playback returned to the direct live stream. */
     fun onGoLive() {
+        stopIndependentFill()
         _state.value = _state.value.copy(timeshifting = false, baseWallMs = 0)
     }
 
@@ -118,6 +191,7 @@ class TimeshiftController @Inject constructor(
     }
 
     private fun stopSessionInternal() {
+        stopIndependentFill()
         activeWriter?.close()
         activeWriter = null
     }

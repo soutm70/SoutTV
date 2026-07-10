@@ -124,6 +124,7 @@ fun PlayerScreen(
     }
     val exoHolder = remember { playerEntry.exoPlayerHolder() }
     val exoWindowState = remember { playerEntry.exoWindowState() }
+    val timeshiftController = remember { playerEntry.timeshiftController() }
 
     // Channel-flip state. The MPV view stays alive across flips; only the
     // current channel index changes and we call playFile again with the new URL.
@@ -226,6 +227,21 @@ fun PlayerScreen(
                 artworkUri = artworkUri,
             )
             exoHolder.currentChannelId = channelId
+        }
+        // Live Rewind: (re)start the timeshift buffer for this channel.
+        // No-op when the pref is off. Fullscreen single-stream only per
+        // the locked v1 scope; leaving this screen stops the session
+        // (DisposableEffect below), so mini-player, multiview, and PiP
+        // handoffs all drop back to pure live.
+        timeshiftController.onFullscreenLiveStarted(channelId, ch.name, url, httpHeaders)
+    }
+
+    // Live Rewind: end the buffer session when fullscreen live ends.
+    // Buffered segments stay on disk until the retention reaper runs.
+    DisposableEffect(Unit) {
+        onDispose {
+            if (exoHolder.isTimeshifting) exoHolder.goLive()
+            timeshiftController.onFullscreenLiveStopped()
         }
     }
 
@@ -645,9 +661,66 @@ fun PlayerScreen(
             }
         }
 
+        // Live Rewind: transport state + a light ticker that keeps the
+        // buffer window and playback wall-position fresh while a session
+        // is rolling. Wall position = the wall time playback entered the
+        // buffer + the player's position within that open (each re-open
+        // resets contentPosition to 0, so the sum stays correct across
+        // scrub re-opens).
+        val tsState by timeshiftController.state.collectAsStateWithLifecycle()
+        var tsPositionWallMs by remember { mutableStateOf(0L) }
+        var tsPaused by remember { mutableStateOf(false) }
+        LaunchedEffect(tsState.buffering) {
+            while (tsState.buffering) {
+                timeshiftController.refreshWindow()
+                tsPaused = exoHolder.isPaused()
+                if (tsState.timeshifting) {
+                    val pos = exoHolder.player?.currentPosition ?: 0L
+                    tsPositionWallMs = tsState.baseWallMs + pos
+                    // Cable-DVR catch-up snap: riding the write head keeps
+                    // ExoPlayer in perpetual BUFFERING (it can never build
+                    // its minimum buffer against a source that grows in
+                    // real time). When playback closes to within a few
+                    // seconds of the head, return to the direct stream.
+                    if (!exoHolder.isPaused() &&
+                        tsPositionWallMs >= tsState.headWallMs - 4_000
+                    ) {
+                        exoHolder.goLive()
+                    }
+                }
+                kotlinx.coroutines.delay(500)
+            }
+        }
+
         PlayerChromeOverlay(
             channel = currentChannel,
             nowProgramme = nowProgramme,
+            timeshiftState = if (tsState.buffering) tsState else null,
+            timeshiftPositionWallMs = tsPositionWallMs,
+            isPlayerPaused = tsPaused,
+            onRewindTogglePause = {
+                if (exoHolder.isTimeshifting) {
+                    exoHolder.setPaused(!exoHolder.isPaused())
+                } else if (tsState.buffering && !exoHolder.isPaused()) {
+                    // Pause on live: hop onto the buffer just behind the
+                    // edge, then pause, so resume continues from this
+                    // moment instead of jumping ahead (cable-DVR model).
+                    val entered = exoHolder.playTimeshift(
+                        (tsState.headWallMs - 3_000).coerceAtLeast(tsState.tailWallMs),
+                    )
+                    if (entered) exoHolder.setPaused(true) else exoHolder.setPaused(true)
+                } else {
+                    exoHolder.setPaused(!exoHolder.isPaused())
+                }
+            },
+            onRewindSeekWall = { target ->
+                if (target >= tsState.headWallMs - 5_000) {
+                    exoHolder.goLive()
+                } else {
+                    exoHolder.playTimeshift(target.coerceAtLeast(tsState.tailWallMs))
+                }
+            },
+            onGoLive = { exoHolder.goLive() },
             chromeVisible = chromeVisible,
             pillVisible = pillVisible,
             isTv = isTvForm,
@@ -1048,4 +1121,5 @@ private data class SwitchStreamState(
 interface PlayerScreenEntryPoint {
     fun exoPlayerHolder(): com.aeriotv.android.core.playback.AerioExoPlayerHolder
     fun exoWindowState(): ExoWindowState
+    fun timeshiftController(): com.aeriotv.android.core.timeshift.TimeshiftController
 }

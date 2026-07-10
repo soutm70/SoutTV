@@ -43,6 +43,10 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay30
+import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.ClosedCaption
@@ -57,6 +61,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
@@ -139,6 +145,14 @@ fun PlayerChromeOverlay(
     onSetSleepMinutes: (Int) -> Unit,
     sleepRemainingMillis: Long?,
     onInteractingChange: (Boolean) -> Unit = {},
+    // Live Rewind (task #143). Null state = feature off or no buffer
+    // session; the band falls back to the read-only EPG progress bar.
+    timeshiftState: com.aeriotv.android.core.timeshift.TimeshiftController.State? = null,
+    timeshiftPositionWallMs: Long = 0L,
+    isPlayerPaused: Boolean = false,
+    onRewindTogglePause: () -> Unit = {},
+    onRewindSeekWall: (Long) -> Unit = {},
+    onGoLive: () -> Unit = {},
 ) {
     var moreOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
@@ -446,7 +460,18 @@ fun PlayerChromeOverlay(
                     .padding(horizontal = 18.dp, vertical = 24.dp),
             ) {
                 nowProgramme?.let { prog ->
-                    EpgProgress(programme = prog)
+                    if (timeshiftState?.buffering == true) {
+                        RewindTransportBar(
+                            state = timeshiftState,
+                            positionWallMs = timeshiftPositionWallMs,
+                            paused = isPlayerPaused,
+                            onTogglePause = onRewindTogglePause,
+                            onSeekWall = onRewindSeekWall,
+                            onGoLive = onGoLive,
+                        )
+                    } else {
+                        EpgProgress(programme = prog)
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -904,6 +929,105 @@ private fun InfoCard(
                         color = Color.Black,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Live Rewind transport (task #143): interactive timeline over the local
+ * timeshift buffer. The track spans [tail .. live edge] of the rolling
+ * buffer; while live-at-edge the thumb rides the right end. Dragging back
+ * (or the skip buttons, which are the D-pad path on TV) re-opens playback
+ * inside the buffer; Go Live re-tunes the direct stream.
+ */
+@Composable
+private fun RewindTransportBar(
+    state: com.aeriotv.android.core.timeshift.TimeshiftController.State,
+    positionWallMs: Long,
+    paused: Boolean,
+    onTogglePause: () -> Unit,
+    onSeekWall: (Long) -> Unit,
+    onGoLive: () -> Unit,
+) {
+    val head = maxOf(state.headWallMs, state.tailWallMs + 1)
+    val tail = state.tailWallMs
+    val span = (head - tail).coerceAtLeast(1)
+    val current = if (state.timeshifting) positionWallMs.coerceIn(tail, head) else head
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    val fraction = dragFraction ?: ((current - tail).toFloat() / span.toFloat()).coerceIn(0f, 1f)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Slider(
+            value = fraction,
+            onValueChange = { dragFraction = it },
+            onValueChangeFinished = {
+                dragFraction?.let { f -> onSeekWall(tail + (span * f).toLong()) }
+                dragFraction = null
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(22.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = Color.White.copy(alpha = 0.18f),
+            ),
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CircleIconButton(
+                icon = Icons.Filled.Replay30,
+                contentDescription = "Back 30 seconds",
+                onClick = { onSeekWall(current - 30_000) },
+            )
+            CircleIconButton(
+                icon = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                contentDescription = if (paused) "Play" else "Pause",
+                onClick = onTogglePause,
+            )
+            CircleIconButton(
+                icon = Icons.Filled.Forward30,
+                contentDescription = "Forward 30 seconds",
+                onClick = { onSeekWall(current + 30_000) },
+            )
+            val behindMs = head - current
+            Text(
+                text = if (state.timeshifting && behindMs > 5_000) {
+                    val totalSec = behindMs / 1000
+                    val m = totalSec / 60
+                    val sec = totalSec % 60
+                    String.format("-%d:%02d", m, sec)
+                } else {
+                    "LIVE"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (state.timeshifting && behindMs > 5_000) {
+                    Color.White.copy(alpha = 0.8f)
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            )
+            Spacer(Modifier.weight(1f))
+            if (state.timeshifting) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary,
+                    onClick = onGoLive,
+                ) {
+                    Text(
+                        text = "Go Live",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
             }

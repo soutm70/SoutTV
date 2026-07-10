@@ -136,6 +136,35 @@ fun AppBehaviorsSettingsScreen(
                 }
             }
 
+            // Live Rewind (task #143 P1): interim surface until the P2
+            // dedicated page (onboarding prompt, storage budget, retention,
+            // external targets) lands.
+            val liveRewindEnabled by viewModel.liveRewindEnabled.collectAsStateWithLifecycle(initialValue = false)
+            val liveRewindDepth by viewModel.liveRewindDepthMinutes.collectAsStateWithLifecycle(initialValue = 30)
+            SettingsSection(
+                header = "Live Rewind",
+                footer = "Buffers the channel you are watching so you can pause and " +
+                    "rewind live TV. Uses device storage while you watch; buffered " +
+                    "video is removed automatically.",
+            ) {
+                SettingsToggleRow(
+                    title = "Pause & rewind live TV",
+                    subtitle = "Buffer fullscreen live playback on this device",
+                    checked = liveRewindEnabled,
+                    onCheckedChange = viewModel::setLiveRewindEnabled,
+                )
+                if (liveRewindEnabled) {
+                    listOf(15, 30, 60, 120).forEach { mins ->
+                        SettingsSelectionRow(
+                            label = if (mins < 60) "$mins minutes" else "${mins / 60} hour" + if (mins > 60) "s" else "",
+                            subtitle = if (mins == 30) "Default" else null,
+                            selected = liveRewindDepth == mins,
+                            onClick = { viewModel.setLiveRewindDepthMinutes(mins) },
+                        )
+                    }
+                }
+            }
+
             SettingsSection(
                 header = "Channel Flip Gesture",
                 // tvOS / Android TV flip channels with D-pad up/down, not a

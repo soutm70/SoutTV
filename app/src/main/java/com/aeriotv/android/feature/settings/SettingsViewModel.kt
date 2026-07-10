@@ -114,6 +114,16 @@ class SettingsViewModel @Inject constructor(
 
 
     // App Behaviors
+    val liveRewindEnabled: Flow<Boolean> = prefs.liveRewindEnabled
+    fun setLiveRewindEnabled(value: Boolean) {
+        viewModelScope.launch { prefs.setLiveRewindEnabled(value) }
+    }
+
+    val liveRewindDepthMinutes: Flow<Int> = prefs.liveRewindDepthMinutes
+    fun setLiveRewindDepthMinutes(value: Int) {
+        viewModelScope.launch { prefs.setLiveRewindDepthMinutes(value) }
+    }
+
     val skipLoadingScreen: Flow<Boolean> = prefs.skipLoadingScreen
     fun setSkipLoadingScreen(value: Boolean) {
         viewModelScope.launch { prefs.setSkipLoadingScreen(value) }

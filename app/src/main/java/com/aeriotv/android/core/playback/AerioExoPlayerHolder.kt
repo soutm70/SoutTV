@@ -339,6 +339,24 @@ class AerioExoPlayerHolder @Inject constructor(
             // failover hook is set (PlayerScreen mount), ask it to re-probe and
             // hand back a fresh URL so we don't just replay a dead-host
             // lastPlayUrl (iOS PlayerSession.failoverRetryCurrent).
+            // Live Rewind: an error while playing the buffer is a local
+            // condition (typically ring eviction after a very long pause),
+            // never a network failover case. Recover INSIDE the buffer by
+            // re-entering at the current tail; if the session is gone,
+            // fall back to the live stream.
+            if (isTimeshifting) {
+                val w = timeshift.get().activeWriter
+                if (w != null && !w.closed) {
+                    Log.w(TAG, "[REWIND] buffer error ${error.errorCodeName}; bumping to tail")
+                    isTimeshifting = false
+                    playTimeshift(w.tailWallMs + 2_000)
+                } else {
+                    Log.w(TAG, "[REWIND] buffer gone; returning to live")
+                    isTimeshifting = false
+                    lastPlayUrl?.let { playUrl(it, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri) }
+                }
+                return
+            }
             if (lastPlayUrl != null) {
                 val hook = onTerminalErrorRebuildUrl
                 if (hook != null) {
@@ -600,14 +618,7 @@ class AerioExoPlayerHolder @Inject constructor(
                 // join with no sniff and no reload. We still source it from
                 // DefaultExtractorsFactory(MODE_SINGLE_PMT) so its TsExtractor config is
                 // identical to before; we just hand ProgressiveMediaSource that one extractor.
-                val tsExtractorsFactory = ExtractorsFactory {
-                    val all: Array<Extractor> = DefaultExtractorsFactory()
-                        .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
-                        .createExtractors()
-                    val tsOnly: List<Extractor> = all.filterIsInstance<TsExtractor>()
-                    if (tsOnly.isNotEmpty()) tsOnly.toTypedArray() else all
-                }
-                ProgressiveMediaSource.Factory(dataSourceFactory, tsExtractorsFactory)
+                ProgressiveMediaSource.Factory(dataSourceFactory, tsOnlyExtractorsFactory())
                     .createMediaSource(mediaItem)
             }
             url.endsWith(".m3u8", ignoreCase = true) -> {
@@ -619,6 +630,62 @@ class AerioExoPlayerHolder @Inject constructor(
                     .createMediaSource(mediaItem)
             }
         }
+    }
+
+    /** TS-only extractor factory shared by the live raw-TS path and the
+     *  timeshift buffer reader (same no-sniff rationale, see buildMediaSource). */
+    private fun tsOnlyExtractorsFactory(): ExtractorsFactory = ExtractorsFactory {
+        val all: Array<Extractor> = DefaultExtractorsFactory()
+            .setTsExtractorMode(TsExtractor.MODE_SINGLE_PMT)
+            .createExtractors()
+        val tsOnly: List<Extractor> = all.filterIsInstance<TsExtractor>()
+        if (tsOnly.isNotEmpty()) tsOnly.toTypedArray() else all
+    }
+
+    // MARK Live Rewind (task #143)
+
+    /** True while playback runs from the local timeshift buffer instead of
+     *  the direct live stream. Gates the stall watchdog and the LAN/WAN
+     *  terminal-error rebuild, both of which would otherwise yank playback
+     *  back to the live URL mid-rewind. */
+    @Volatile
+    var isTimeshifting = false
+        private set
+
+    /**
+     * Switch the shared player onto the local timeshift buffer starting at
+     * [fromWallMs] (wall-clock). The live tee keeps rolling: the buffer
+     * continues to grow while the user is paused or rewound, exactly like
+     * a cable DVR. Returns false when no buffer session is active.
+     */
+    fun playTimeshift(fromWallMs: Long): Boolean {
+        val p = player ?: return false
+        val ts = timeshift.get()
+        if (ts.activeWriter == null) return false
+        isTimeshifting = true
+        val factory = com.aeriotv.android.core.timeshift.TimeshiftDataSource.Factory { ts.activeWriter }
+        val item = MediaItem.Builder()
+            .setUri(com.aeriotv.android.core.timeshift.TimeshiftDataSource.uri(fromWallMs))
+            .setMediaId("live-rewind")
+            .build()
+        val source = ProgressiveMediaSource.Factory(factory, tsOnlyExtractorsFactory())
+            .createMediaSource(item)
+        p.setMediaSource(source)
+        p.prepare()
+        p.playWhenReady = true
+        ts.onEnterTimeshift(fromWallMs)
+        Log.i(TAG, "[REWIND] entered timeshift at $fromWallMs")
+        return true
+    }
+
+    /** Leave the timeshift buffer and re-tune the direct live stream. */
+    fun goLive() {
+        if (!isTimeshifting) return
+        isTimeshifting = false
+        timeshift.get().onGoLive()
+        val url = lastPlayUrl ?: return
+        Log.i(TAG, "[REWIND] go live -> re-tune direct stream")
+        playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
     }
 
     /**
@@ -644,6 +711,7 @@ class AerioExoPlayerHolder @Inject constructor(
         }
         // Remember the args so the stall watchdog can re-prime the same stream;
         // reset its state for this fresh stream.
+        isTimeshifting = false
         lastPlayUrl = url
         lastPlayTitle = title
         lastPlaySubtitle = subtitle
@@ -828,7 +896,7 @@ class AerioExoPlayerHolder @Inject constructor(
                 // Only when we intend to play, have a url to reload, have reached
                 // steady playback at least once (skip cold-start probes + user
                 // pauses), and aren't at end-of-stream.
-                if (lastPlayUrl == null || !p.playWhenReady ||
+                if (lastPlayUrl == null || isTimeshifting || !p.playWhenReady ||
                     !hasReachedPlaybackRestart || p.playbackState == Player.STATE_ENDED
                 ) {
                     continue
@@ -873,6 +941,7 @@ class AerioExoPlayerHolder @Inject constructor(
      *  replace). Returns true when a reload actually ran (false while inside
      *  the cooldown or past the attempt cap). */
     private fun forceReload(reason: String): Boolean {
+        if (isTimeshifting) return false
         val p = player ?: return false
         val url = lastPlayUrl ?: return false
         val now = SystemClock.elapsedRealtime()
