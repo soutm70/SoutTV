@@ -988,7 +988,11 @@ private fun RewindTransportBar(
         // rewound.
         val behindMs = head - current
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                // Keep the status text off the physical display edge
+                // (the timeline track intentionally runs wider).
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             programme?.let { prog ->
