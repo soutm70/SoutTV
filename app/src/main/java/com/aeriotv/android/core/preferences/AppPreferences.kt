@@ -897,6 +897,21 @@ class AppPreferences @Inject constructor(
 
     // ── DVR ──────────────────────────────────────────────────────────────
 
+    /** Live Rewind (task #143): master enable. Off until the user
+     *  accepts the onboarding/update prompt (P2) or flips the toggle. */
+    val liveRewindEnabled: kotlinx.coroutines.flow.Flow<Boolean> =
+        store.data.map { it[KEY_LIVE_REWIND_ENABLED] ?: false }
+    suspend fun setLiveRewindEnabled(value: Boolean) {
+        store.edit { it[KEY_LIVE_REWIND_ENABLED] = value }
+    }
+
+    /** Live Rewind: rewind depth in minutes (15/30/60/120, default 30). */
+    val liveRewindDepthMinutes: kotlinx.coroutines.flow.Flow<Int> =
+        store.data.map { it[KEY_LIVE_REWIND_DEPTH_MIN] ?: 30 }
+    suspend fun setLiveRewindDepthMinutes(value: Int) {
+        store.edit { it[KEY_LIVE_REWIND_DEPTH_MIN] = value }
+    }
+
     /** iOS `dvrMaxLocalStorageMB` parity. Default 10 GB. */
     val dvrMaxLocalStorageMB: Flow<Int> = store.data.map { it[KEY_DVR_MAX_LOCAL_STORAGE_MB] ?: 10_240 }
     suspend fun setDvrMaxLocalStorageMB(value: Int) {
@@ -1055,6 +1070,8 @@ class AppPreferences @Inject constructor(
         val KEY_DVR_MAX_LOCAL_STORAGE_MB = intPreferencesKey("dvr_max_local_storage_mb")
         val KEY_DVR_DEFAULT_PRE_ROLL = intPreferencesKey("dvr_default_pre_roll_mins")
         val KEY_DVR_DEFAULT_POST_ROLL = intPreferencesKey("dvr_default_post_roll_mins")
+        val KEY_LIVE_REWIND_ENABLED = booleanPreferencesKey("live_rewind_enabled")
+        val KEY_LIVE_REWIND_DEPTH_MIN = intPreferencesKey("live_rewind_depth_minutes")
         val KEY_DVR_CUSTOM_FOLDER_URI = stringPreferencesKey("dvr_custom_folder_uri")
         val KEY_DVR_KEEP_AWAKE = booleanPreferencesKey("dvr_keep_awake_during_recording")
         // JSON object {recordingId: category}. Device-local cache so completed

@@ -76,6 +76,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 @OptIn(UnstableApi::class)
 @Singleton
 class AerioExoPlayerHolder @Inject constructor(
+    private val timeshift: dagger.Lazy<com.aeriotv.android.core.timeshift.TimeshiftController>,
     private val appPreferences: com.aeriotv.android.core.preferences.AppPreferences,
 ) {
 
@@ -539,7 +540,19 @@ class AerioExoPlayerHolder @Inject constructor(
         subtitle: String? = null,
         artworkUri: android.net.Uri? = null,
     ): MediaSource {
-        val dataSourceFactory = httpDataSourceFactory(isRawTsUrl(url))
+        // Live Rewind: mirror the player's own bytes into the active
+        // timeshift buffer (nil-safe; inert when no session is rolling).
+        // Wrapping here means the tee survives LAN/WAN failover and the
+        // stall-watchdog re-prime, both of which come back through
+        // buildMediaSource with a fresh connection.
+        val rawTs = isRawTsUrl(url)
+        var dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
+            httpDataSourceFactory(rawTs)
+        if (rawTs) {
+            dataSourceFactory = com.aeriotv.android.core.timeshift.TeeDataSource.Factory(
+                dataSourceFactory,
+            ) { timeshift.get().activeWriter }
+        }
 
         // Force-route raw .ts URLs through ProgressiveMediaSource +
         // TsExtractor. Without this, DefaultMediaSourceFactory looks at
