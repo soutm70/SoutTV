@@ -25,7 +25,9 @@ class TeeDataSource(
     private val upstream: DataSource,
     private val writerProvider: () -> TimeshiftWriter?,
 ) : DataSource {
-    private var writer: TimeshiftWriter? = null
+    /** Last writer this connection appended to; tracked only to detect
+     *  a session swap so the replacement realigns. */
+    private var lastWriter: TimeshiftWriter? = null
 
     class Factory(
         private val upstreamFactory: DataSource.Factory,
@@ -36,16 +38,32 @@ class TeeDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        writer = writerProvider()
         // Every open is a new HTTP connection that joins the proxy
         // stream mid-packet; realign before consuming its bytes.
-        writer?.markDiscontinuity()
+        lastWriter = writerProvider()
+        lastWriter?.markDiscontinuity()
         return upstream.open(dataSpec)
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         val n = upstream.read(buffer, offset, length)
-        if (n > 0) writer?.append(buffer, offset, n)
+        if (n > 0) {
+            // Resolve the writer PER READ, not per open: on a channel
+            // change the player opens this connection BEFORE the
+            // controller's coroutine has created the new session (and
+            // the old captured writer gets closed under us), so an
+            // open-time snapshot left the buffer permanently empty on
+            // the Streamer ("pause works but nothing else does" field
+            // report). A freshly-created writer starts with its resync
+            // flag set, so picking it up mid-stream self-realigns; an
+            // explicit mark covers writer swaps between reads.
+            val w = writerProvider()
+            if (w !== lastWriter) {
+                lastWriter = w
+                w?.markDiscontinuity()
+            }
+            w?.append(buffer, offset, n)
+        }
         return n
     }
 
@@ -55,7 +73,7 @@ class TeeDataSource(
     override fun getUri(): Uri? = upstream.uri
     override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
     override fun close() {
-        writer = null
+        lastWriter = null
         upstream.close()
     }
 }
