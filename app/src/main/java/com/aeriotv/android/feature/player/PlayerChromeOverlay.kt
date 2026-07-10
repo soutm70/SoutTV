@@ -981,16 +981,29 @@ private fun RewindTransportBar(
                 inactiveTrackColor = Color.White.copy(alpha = 0.18f),
             ),
         )
-        // Status line under the timeline, LEFT-aligned: the LIVE /
-        // behind-live indicator first, then the remaining time. Both are
-        // computed against the (possibly shifted) playback position so
-        // they stay truthful while rewound.
+        // Status line under the timeline: remaining time on the LEFT,
+        // LIVE / behind-live indicator on the RIGHT (under the live edge
+        // of the track). Both are computed against the (possibly
+        // shifted) playback position so they stay truthful while
+        // rewound.
         val behindMs = head - current
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            programme?.let { prog ->
+                val remMin = ((prog.endMillis - current).coerceAtLeast(0) / 60_000).toInt()
+                Text(
+                    text = if (remMin >= 60) {
+                        "${remMin / 60} h ${remMin % 60} min remaining"
+                    } else {
+                        "$remMin min remaining"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.7f),
+                )
+            }
+            Spacer(Modifier.weight(1f))
             Text(
                 text = if (state.timeshifting && behindMs > 5_000) {
                     val totalSec = behindMs / 1000
@@ -1006,18 +1019,6 @@ private fun RewindTransportBar(
                     MaterialTheme.colorScheme.primary
                 },
             )
-            programme?.let { prog ->
-                val remMin = ((prog.endMillis - current).coerceAtLeast(0) / 60_000).toInt()
-                Text(
-                    text = if (remMin >= 60) {
-                        "${remMin / 60} h ${remMin % 60} min remaining"
-                    } else {
-                        "$remMin min remaining"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.7f),
-                )
-            }
         }
         Spacer(Modifier.height(6.dp))
         // Transport buttons centered; the Go Live pill (only while
