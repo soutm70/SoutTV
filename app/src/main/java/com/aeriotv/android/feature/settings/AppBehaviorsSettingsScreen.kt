@@ -32,6 +32,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -54,6 +56,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aeriotv.android.feature.main.AppTab
 import com.aeriotv.android.ui.tv.dpadFocusEscape
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import com.aeriotv.android.ui.tv.TvKeyboardOnOkHost
 import com.aeriotv.android.ui.tv.tvFormFieldInput
 
@@ -141,7 +145,6 @@ fun AppBehaviorsSettingsScreen(
             val liveRewindEnabled by viewModel.liveRewindEnabled.collectAsStateWithLifecycle(initialValue = false)
             val liveRewindDepth by viewModel.liveRewindDepthMinutes.collectAsStateWithLifecycle(initialValue = 30)
             val liveRewindRetention by viewModel.liveRewindRetentionHours.collectAsStateWithLifecycle(initialValue = 24)
-            val liveRewindBudget by viewModel.liveRewindBudgetGB.collectAsStateWithLifecycle(initialValue = 10)
             SettingsSection(
                 header = "Live Rewind",
                 footer = "Buffers the channel you are watching so you can pause and " +
@@ -156,70 +159,37 @@ fun AppBehaviorsSettingsScreen(
                 )
             }
             if (liveRewindEnabled) {
+                // Redesigned 2026-07-11 (user directive): sliders instead
+                // of option rows, and the Storage Limit setting is GONE -
+                // retention is the knob, with live storage estimates under
+                // it so the choice is informed. An invisible free-space
+                // floor in TimeshiftBufferStore is the seatbelt.
                 SettingsSection(
                     header = "Rewind Depth",
                     footer = "How far back you can rewind while watching. Deeper " +
                         "buffers use more storage while you watch.",
                 ) {
-                    listOf(15, 30, 60, 120).forEach { mins ->
-                        SettingsSelectionRow(
-                            label = if (mins < 60) "$mins minutes" else "${mins / 60} hour" + if (mins > 60) "s" else "",
-                            subtitle = if (mins == 30) "Default" else null,
-                            selected = liveRewindDepth == mins,
-                            onClick = { viewModel.setLiveRewindDepthMinutes(mins) },
-                        )
-                    }
+                    SteppedSliderRow(
+                        label = "Depth",
+                        values = REWIND_DEPTH_MINUTES,
+                        selected = liveRewindDepth,
+                        format = ::formatDepthMinutes,
+                        onSelect = viewModel::setLiveRewindDepthMinutes,
+                    )
                 }
-                var showCustomRetention by remember { mutableStateOf(false) }
-                val retentionPresets = listOf(
-                    1 to "1 hour", 6 to "6 hours", 12 to "12 hours",
-                    24 to "24 hours", 72 to "3 days", 168 to "1 week",
-                )
                 SettingsSection(
                     header = "Keep Buffered Video",
                     footer = "Buffered video stays on this device after you stop " +
-                        "watching and is deleted once it reaches this age.",
+                        "watching and is deleted once it reaches this age. " +
+                        retentionEstimateText(liveRewindRetention),
                 ) {
-                    retentionPresets.forEach { (hours, label) ->
-                        SettingsSelectionRow(
-                            label = label,
-                            subtitle = if (hours == 24) "Default" else null,
-                            selected = liveRewindRetention == hours,
-                            onClick = { viewModel.setLiveRewindRetentionHours(hours) },
-                        )
-                    }
-                    val isCustom = retentionPresets.none { it.first == liveRewindRetention }
-                    SettingsSelectionRow(
-                        label = "Custom",
-                        subtitle = if (isCustom) formatRetentionHours(liveRewindRetention) else null,
-                        selected = isCustom,
-                        onClick = { showCustomRetention = true },
+                    SteppedSliderRow(
+                        label = "Keep for",
+                        values = RETENTION_HOURS,
+                        selected = liveRewindRetention,
+                        format = ::formatRetentionHours,
+                        onSelect = viewModel::setLiveRewindRetentionHours,
                     )
-                }
-                if (showCustomRetention) {
-                    CustomRetentionDialog(
-                        currentHours = liveRewindRetention,
-                        onConfirm = { hours ->
-                            viewModel.setLiveRewindRetentionHours(hours)
-                            showCustomRetention = false
-                        },
-                        onDismiss = { showCustomRetention = false },
-                    )
-                }
-                SettingsSection(
-                    header = "Storage Limit",
-                    footer = "Total space buffered video may use across all " +
-                        "sessions. The oldest video is removed first when the " +
-                        "limit is reached.",
-                ) {
-                    listOf(2, 5, 10, 20, 50).forEach { gb ->
-                        SettingsSelectionRow(
-                            label = "$gb GB",
-                            subtitle = if (gb == 10) "Default" else null,
-                            selected = liveRewindBudget == gb,
-                            onClick = { viewModel.setLiveRewindBudgetGB(gb) },
-                        )
-                    }
                 }
             }
 
@@ -362,49 +332,81 @@ private fun formatRetentionHours(hours: Int): String = when {
     else -> "$hours hours"
 }
 
+/** Live Rewind slider ladders (2026-07-11 redesign). A slider over the
+ *  same discrete stops the old option rows offered; the custom-hours
+ *  dialog died with the redesign (the ladder covers the range). */
+private val REWIND_DEPTH_MINUTES = listOf(15, 30, 60, 120)
+private val RETENTION_HOURS = listOf(1, 6, 12, 24, 72, 168)
+
+private fun formatDepthMinutes(mins: Int): String = when {
+    mins < 60 -> "$mins minutes"
+    mins == 60 -> "1 hour"
+    else -> "${mins / 60} hours"
+}
+
 /**
- * Live Rewind custom retention entry (task #145). Hours-based numeric
- * field; [tvFormFieldInput] gives the TV remote a usable keyboard path.
+ * Storage estimate shown under the Keep Buffered Video slider (the
+ * Storage Limit setting it replaces was removed). Scales with the
+ * retention choice at typical stream bitrates - HD ~4 Mbps, FHD ~8,
+ * UHD ~20 - so the user can pick what fits their streams and disk.
+ * Worst case (continuous watching); only watched video is buffered.
+ */
+private fun retentionEstimateText(hours: Int): String {
+    fun gb(mbps: Int): String {
+        val v = mbps * 450.0 * hours / 1024.0
+        return if (v < 10) String.format("~%.1f GB", v) else "~${v.roundToInt()} GB"
+    }
+    return "Keeping ${formatRetentionHours(hours)} can use up to " +
+        "${gb(4)} in HD, ${gb(8)} in FHD, or ${gb(20)} in UHD " +
+        "if you watch continuously."
+}
+
+/**
+ * Discrete-stop slider row: label left, current value right, a stepped
+ * Material slider beneath. TV-safe via [dpadFocusEscape] (the #90
+ * lesson: UP/DOWN must move focus off the slider, LEFT/RIGHT adjust).
  */
 @Composable
-private fun CustomRetentionDialog(
-    currentHours: Int,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit,
+private fun SteppedSliderRow(
+    label: String,
+    values: List<Int>,
+    selected: Int,
+    format: (Int) -> String,
+    onSelect: (Int) -> Unit,
 ) {
-    var text by remember { mutableStateOf(currentHours.toString()) }
-    val parsed = text.trim().toIntOrNull()?.takeIf { it in 1..(24 * 30) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Custom retention") },
-        text = {
-            Column {
-                Text(
-                    "How long buffered video is kept, in hours (1 to 720).",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it.filter(Char::isDigit).take(3) },
-                    singleLine = true,
-                    label = { Text("Hours") },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                    ),
-                    modifier = Modifier.fillMaxWidth().tvFormFieldInput(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { parsed?.let(onConfirm) },
-                enabled = parsed != null,
-            ) { Text("Set") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+    // Snap legacy/custom persisted values (e.g. 48h from the removed
+    // custom dialog) to the nearest ladder stop for display; the pref
+    // itself is only rewritten when the user moves the slider.
+    val idx = values.indices.minByOrNull { abs(values[it] - selected) } ?: 0
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = format(values[idx]),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Slider(
+            value = idx.toFloat(),
+            onValueChange = { raw ->
+                val newIdx = raw.roundToInt().coerceIn(0, values.lastIndex)
+                if (values[newIdx] != selected) onSelect(values[newIdx])
+            },
+            valueRange = 0f..values.lastIndex.toFloat(),
+            steps = (values.size - 2).coerceAtLeast(0),
+            modifier = Modifier.dpadFocusEscape(),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
+    }
 }

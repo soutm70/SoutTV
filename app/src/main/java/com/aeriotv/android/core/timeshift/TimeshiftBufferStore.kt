@@ -47,6 +47,10 @@ class TimeshiftBufferStore @Inject constructor(
         const val TS_PACKET = 188
         private const val META_FILE = "meta.json"
 
+        /** Free-space seatbelt: the buffer may grow until the volume
+         *  would drop below this much free space. */
+        const val FREE_SPACE_FLOOR_BYTES = 2L * 1024 * 1024 * 1024
+
         /** Directory name pattern: sess_<startEpochMs>. */
         fun sessionDirName(startedAtMs: Long) = "sess_$startedAtMs"
     }
@@ -117,6 +121,24 @@ class TimeshiftBufferStore @Inject constructor(
 
     fun totalBytes(): Long =
         rootDir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+
+    /**
+     * The Storage Limit SETTING was removed (user directive 2026-07-11:
+     * retention is the only user-facing knob, with storage estimates
+     * shown under it). This computes the internal seatbelt budget that
+     * replaced it: current buffer usage plus whatever free space the
+     * volume has above [FREE_SPACE_FLOOR_BYTES], so a long retention on
+     * a small disk evicts oldest video instead of filling the device.
+     * Recomputed at every session start and reaper pass; drift within a
+     * single session is bounded and harmless (the mid-roll enforcement
+     * uses the value captured at session start).
+     */
+    fun freeSpaceBudgetBytes(): Long {
+        val usable = runCatching {
+            rootDir.apply { mkdirs() }.usableSpace
+        }.getOrDefault(0L)
+        return totalBytes() + (usable - FREE_SPACE_FLOOR_BYTES).coerceAtLeast(0L)
+    }
 }
 
 /**

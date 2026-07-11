@@ -57,7 +57,9 @@ class TimeshiftController @Inject constructor(
         scope.launch {
             runCatching {
                 store.pruneExpired(prefs.liveRewindRetentionHours.first() * 3_600_000L)
-                store.enforceBudget(prefs.liveRewindBudgetGB.first() * 1024L * 1024 * 1024)
+                // Storage Limit setting removed: retention is the knob;
+                // the free-space floor is the invisible seatbelt.
+                store.enforceBudget(store.freeSpaceBudgetBytes())
             }.onFailure { Log.w(TAG, "startup reaper failed: $it") }
         }
     }
@@ -117,14 +119,13 @@ class TimeshiftController @Inject constructor(
                 if (!prefs.liveRewindEnabled.first()) return@launch
                 val depthMin = prefs.liveRewindDepthMinutes.first()
                 val retentionHours = prefs.liveRewindRetentionHours.first()
-                val budgetGB = prefs.liveRewindBudgetGB.first()
                 stopSessionInternal()
                 val writer = store.startSession(
                     channelId = channelId,
                     channelName = channelName,
                     depthMs = depthMin * 60_000L,
                     retentionMs = retentionHours * 60L * 60 * 1000,
-                    budgetBytes = budgetGB * 1024L * 1024 * 1024,
+                    budgetBytes = store.freeSpaceBudgetBytes(),
                 )
                 activeWriter = writer
                 _state.value = State(
