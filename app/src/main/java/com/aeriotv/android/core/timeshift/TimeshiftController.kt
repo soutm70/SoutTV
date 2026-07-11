@@ -38,6 +38,13 @@ class TimeshiftController @Inject constructor(
 ) {
     companion object {
         private const val TAG = "TimeshiftController"
+
+        /** Retention as a USER concept died in the 2026-07-11 settings
+         *  rework ("we don't really care how long the files are stored
+         *  ... just delete the buffered video after an hour"): buffered
+         *  video is removed this long after its session goes quiet. The
+         *  liveRewindRetentionHours pref is dormant. */
+        const val FIXED_RETENTION_MS = 60L * 60 * 1000
     }
 
     // Single-threaded: session start/stop/enter/exit all mutate the same
@@ -56,9 +63,9 @@ class TimeshiftController @Inject constructor(
         // stranded old buffers on disk until app data was cleared.
         scope.launch {
             runCatching {
-                store.pruneExpired(prefs.liveRewindRetentionHours.first() * 3_600_000L)
-                // Storage Limit setting removed: retention is the knob;
-                // the free-space floor is the invisible seatbelt.
+                store.pruneExpired(FIXED_RETENTION_MS)
+                // Storage Limit setting removed: depth is the knob; the
+                // free-space floor is the invisible seatbelt.
                 store.enforceBudget(store.freeSpaceBudgetBytes())
             }.onFailure { Log.w(TAG, "startup reaper failed: $it") }
         }
@@ -118,13 +125,12 @@ class TimeshiftController @Inject constructor(
             runCatching {
                 if (!prefs.liveRewindEnabled.first()) return@launch
                 val depthMin = prefs.liveRewindDepthMinutes.first()
-                val retentionHours = prefs.liveRewindRetentionHours.first()
                 stopSessionInternal()
                 val writer = store.startSession(
                     channelId = channelId,
                     channelName = channelName,
                     depthMs = depthMin * 60_000L,
-                    retentionMs = retentionHours * 60L * 60 * 1000,
+                    retentionMs = FIXED_RETENTION_MS,
                     budgetBytes = store.freeSpaceBudgetBytes(),
                 )
                 activeWriter = writer

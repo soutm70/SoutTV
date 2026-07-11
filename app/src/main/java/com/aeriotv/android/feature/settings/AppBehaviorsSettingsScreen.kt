@@ -144,7 +144,6 @@ fun AppBehaviorsSettingsScreen(
             // (USB / network targets) arrives in P3.
             val liveRewindEnabled by viewModel.liveRewindEnabled.collectAsStateWithLifecycle(initialValue = false)
             val liveRewindDepth by viewModel.liveRewindDepthMinutes.collectAsStateWithLifecycle(initialValue = 30)
-            val liveRewindRetention by viewModel.liveRewindRetentionHours.collectAsStateWithLifecycle(initialValue = 24)
             SettingsSection(
                 header = "Live Rewind",
                 footer = "Buffers the channel you are watching so you can pause and " +
@@ -159,36 +158,27 @@ fun AppBehaviorsSettingsScreen(
                 )
             }
             if (liveRewindEnabled) {
-                // Redesigned 2026-07-11 (user directive): sliders instead
-                // of option rows, and the Storage Limit setting is GONE -
-                // retention is the knob, with live storage estimates under
-                // it so the choice is informed. An invisible free-space
-                // floor in TimeshiftBufferStore is the seatbelt.
+                // Reworked 2026-07-11 (user directive, round 2): ONE
+                // slider - how far back the user can rewind. Retention
+                // as a user concept is gone; buffered video is deleted
+                // about an hour after the session ends (fixed, internal:
+                // TimeshiftController.FIXED_RETENTION_MS), and the
+                // free-space floor in TimeshiftBufferStore stays as the
+                // seatbelt. Storage estimates scale with the depth
+                // choice since that bounds live disk usage.
                 SettingsSection(
-                    header = "Rewind Depth",
-                    footer = "How far back you can rewind while watching. Deeper " +
-                        "buffers use more storage while you watch.",
+                    header = "Keep Available",
+                    footer = "How far back you can rewind the channel you are " +
+                        "watching. Buffered video is removed about an hour " +
+                        "after you leave a channel. " +
+                        depthEstimateText(liveRewindDepth),
                 ) {
                     SteppedSliderRow(
-                        label = "Depth",
+                        label = "Rewind up to",
                         values = REWIND_DEPTH_MINUTES,
                         selected = liveRewindDepth,
                         format = ::formatDepthMinutes,
                         onSelect = viewModel::setLiveRewindDepthMinutes,
-                    )
-                }
-                SettingsSection(
-                    header = "Keep Buffered Video",
-                    footer = "Buffered video stays on this device after you stop " +
-                        "watching and is deleted once it reaches this age. " +
-                        retentionEstimateText(liveRewindRetention),
-                ) {
-                    SteppedSliderRow(
-                        label = "Keep for",
-                        values = RETENTION_HOURS,
-                        selected = liveRewindRetention,
-                        format = ::formatRetentionHours,
-                        onSelect = viewModel::setLiveRewindRetentionHours,
                     )
                 }
             }
@@ -324,41 +314,30 @@ fun AppBehaviorsSettingsScreen(
     }
 }
 
-/** "36 hours" / "2 days" style label for a non-preset retention value. */
-private fun formatRetentionHours(hours: Int): String = when {
-    hours % 24 == 0 && hours >= 48 -> "${hours / 24} days"
-    hours == 24 -> "1 day"
-    hours == 1 -> "1 hour"
-    else -> "$hours hours"
-}
-
-/** Live Rewind slider ladders (2026-07-11 redesign). A slider over the
- *  same discrete stops the old option rows offered; the custom-hours
- *  dialog died with the redesign (the ladder covers the range). */
-private val REWIND_DEPTH_MINUTES = listOf(15, 30, 60, 120)
-private val RETENTION_HOURS = listOf(1, 6, 12, 24, 72, 168)
+/** Keep Available ladder (2026-07-11 rework, user directive round 2:
+ *  the user-meaningful knob is HOW FAR BACK you can rewind, not how
+ *  long files persist - retention is now a fixed internal 1 hour). */
+private val REWIND_DEPTH_MINUTES = listOf(15, 30, 60, 90, 120, 180)
 
 private fun formatDepthMinutes(mins: Int): String = when {
     mins < 60 -> "$mins minutes"
     mins == 60 -> "1 hour"
-    else -> "${mins / 60} hours"
+    mins % 60 == 0 -> "${mins / 60} hours"
+    else -> "${mins / 60}h ${mins % 60}m"
 }
 
 /**
- * Storage estimate shown under the Keep Buffered Video slider (the
- * Storage Limit setting it replaces was removed). Scales with the
- * retention choice at typical stream bitrates - HD ~4 Mbps, FHD ~8,
+ * Storage estimate under the Keep Available slider: scales with the
+ * depth choice (which bounds live disk usage now that retention is a
+ * fixed short window) at typical stream bitrates - HD ~4 Mbps, FHD ~8,
  * UHD ~20 - so the user can pick what fits their streams and disk.
- * Worst case (continuous watching); only watched video is buffered.
  */
-private fun retentionEstimateText(hours: Int): String {
+private fun depthEstimateText(mins: Int): String {
     fun gb(mbps: Int): String {
-        val v = mbps * 450.0 * hours / 1024.0
+        val v = mbps * 7.5 * mins / 1024.0
         return if (v < 10) String.format("~%.1f GB", v) else "~${v.roundToInt()} GB"
     }
-    return "Keeping ${formatRetentionHours(hours)} can use up to " +
-        "${gb(4)} in HD, ${gb(8)} in FHD, or ${gb(20)} in UHD " +
-        "if you watch continuously."
+    return "Uses up to ${gb(4)} in HD, ${gb(8)} in FHD, or ${gb(20)} in UHD while you watch."
 }
 
 /**
