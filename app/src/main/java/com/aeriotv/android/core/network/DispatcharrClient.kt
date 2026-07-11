@@ -266,7 +266,20 @@ class DispatcharrClient @Inject constructor() {
         // admin so a real admin is never demoted below the server-recording bar
         // (user_level >= 10). Mirrors Dispatcharr's own pre-v0.20.0
         // is_superuser/is_staff admin checks.
-        if (me.isSuperuser || me.isStaff) 10 else me.userLevel
+        val computed = if (me.isSuperuser || me.isStaff) 10 else me.userLevel
+        if (computed == null || computed >= 10) return@runCatching computed
+        // The flags above only exist in Dispatcharr's /me/ payload since
+        // 2025-06 (serializer commit 1e91dd75); on older servers a legacy
+        // superuser reads as plain user_level 0 here and every admin
+        // surface (server DVR destination, Comskip, Switch Stream,
+        // future-program Record) silently vanishes - Discord field
+        // report 2026-07-11, an admin API key saw only "This device".
+        // Settle sub-admin levels with a capability probe: the users
+        // LIST endpoint is IsAdmin-gated server-side, so a 2xx proves
+        // admin regardless of what /me/ claims. Runs only at playlist
+        // load/refresh, so the extra request is negligible.
+        val probe = client.get("${baseUrl.trimEnd('/')}/api/accounts/users/") { applyAuth(apiKey) }
+        if (probe.status.isSuccess()) 10 else computed
     }.getOrNull()
 
     /**
