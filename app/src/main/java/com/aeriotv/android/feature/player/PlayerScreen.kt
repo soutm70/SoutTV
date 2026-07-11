@@ -622,6 +622,12 @@ fun PlayerScreen(
     var scrubAccelCount by remember { mutableStateOf(0) }
     var scrubLastDirection by remember { mutableStateOf(0) }
     var scrubLastStepAt by remember { mutableStateOf(0L) }
+    // Bumped on EVERY step so the commit debounce restarts even when the
+    // preview VALUE stops changing (held key clamped at the buffer tail
+    // or head). Without it the value-keyed effect committed once per
+    // ~750ms for the whole hold - 8 identical buffer re-opens in the
+    // 2026-07-11 Streamer field log.
+    var scrubStepSerial by remember { mutableStateOf(0) }
     // Commit through the SAME fresh-window logic the transport pills
     // use (the composed state snapshot can lag; Streamer field lesson).
     val commitScrubWall: (Long) -> Unit = { target ->
@@ -655,13 +661,15 @@ fun PlayerScreen(
         val base = scrubTargetWallMs
             ?: if (tsState.timeshifting) tsPositionWallMs else head
         scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(tail, head)
+        scrubStepSerial += 1
         scrubHudVisible = true
         lastInteractionAt = android.os.SystemClock.uptimeMillis()
     }
     // Deferred single commit; the null branch runs after a commit (or
     // cancel) and lets the HUD linger briefly so the user sees where
-    // playback landed.
-    LaunchedEffect(scrubTargetWallMs) {
+    // playback landed. Keyed on the step serial too so a clamped-value
+    // hold keeps deferring instead of committing mid-hold.
+    LaunchedEffect(scrubTargetWallMs, scrubStepSerial) {
         val target = scrubTargetWallMs
         if (target == null) {
             delay(1_500)
