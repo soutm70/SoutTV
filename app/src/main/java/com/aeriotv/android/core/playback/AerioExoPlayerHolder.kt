@@ -919,6 +919,16 @@ class AerioExoPlayerHolder @Inject constructor(
         p.clearMediaItems()
     }
 
+    /** GH #22: true when there is nothing actually playing or loading --
+     *  no player, or a player sitting in STATE_IDLE. PlayerScreen's prime
+     *  gate consults this so a stale currentChannelId latch (any stop path
+     *  that missed clearing it) can never skip the prime against a dead
+     *  player and strand the user on a silent black screen. */
+    fun isIdle(): Boolean {
+        val p = player ?: return true
+        return p.playbackState == Player.STATE_IDLE
+    }
+
     fun setPaused(paused: Boolean) {
         player?.playWhenReady = !paused
     }

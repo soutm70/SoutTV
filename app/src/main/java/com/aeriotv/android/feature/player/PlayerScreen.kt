@@ -139,6 +139,80 @@ fun PlayerScreen(
     }
     var currentIndex by remember(channels) { mutableIntStateOf(initialIndex) }
     val currentChannel = channels.getOrNull(currentIndex)
+
+    // GH #22: a tapped id that is NOT in the active playlist's channel list
+    // used to render a silent forever-black player -- no prime, no log lines
+    // at all (FractalBoy's 0.3.1 report: repro after switching playlists,
+    // Stream Info idle, Dispatcharr shows no client). An EMPTY list is the
+    // normal hydration race and keeps the loading state (the remembers above
+    // re-resolve when it lands); a NON-empty list that's missing the id is a
+    // real miss -- surface it and offer the way out instead of dying quietly.
+    if (channels.isNotEmpty() && currentChannel == null) {
+        LaunchedEffect(initialChannelId) {
+            Log.w(
+                TAG,
+                "[TUNE] channel id $initialChannelId not in active list " +
+                    "(n=${channels.size}) -- surfacing not-found instead of idling",
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Channel Not Available",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+            )
+            Text(
+                text = "This channel isn't in the active playlist. If you just " +
+                    "switched playlists, go back and pick it again from the " +
+                    "refreshed guide.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center,
+            )
+            Button(onClick = onClose) {
+                Text("Go Back")
+            }
+        }
+        return
+    }
+    // Same treatment for a channel with no stream URL (event channels whose
+    // stream isn't assigned yet). The prime effect already no-ops on a blank
+    // url; without this the user sat on a silent black screen. A later
+    // channels refresh that fills the url recomposes straight into playback.
+    if (currentChannel != null && currentChannel.url.isBlank()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .padding(32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "No Stream Assigned",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+            )
+            Text(
+                text = "This channel doesn't have a stream yet. Event channels " +
+                    "usually get one shortly before air time.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.72f),
+                textAlign = TextAlign.Center,
+            )
+            Button(onClick = onClose) {
+                Text("Go Back")
+            }
+        }
+        return
+    }
     // Focus target that holds D-pad focus during fullscreen playback (chrome
     // hidden) so the remote's up/down reaches the channel-flip handler on TV.
     val playbackFocus = remember { FocusRequester() }
@@ -209,7 +283,11 @@ fun PlayerScreen(
         val ch = currentChannel ?: return@LaunchedEffect
         val url = ch.url
         if (url.isBlank()) return@LaunchedEffect
-        if (exoHolder.currentChannelId != channelId) {
+        // GH #22: also re-prime when the holder claims this channel but is
+        // actually IDLE (a stop path that missed clearing currentChannelId).
+        // Skipping the prime against a dead player was the silent-black-
+        // screen failure: no logs, Stream Info idle, no server client.
+        if (exoHolder.currentChannelId != channelId || exoHolder.isIdle()) {
             Log.i(TAG, "Channel switch on Exo persistent player -> $url")
             // Refresh headers each switch -- some Dispatcharr deployments
             // rotate the API key per stream.
@@ -228,6 +306,11 @@ fun PlayerScreen(
                 artworkUri = artworkUri,
             )
             exoHolder.currentChannelId = channelId
+        } else {
+            // GH #22 diagnosability: a skipped prime used to be invisible
+            // in logs. The idle case above re-primes; this remaining skip
+            // is the legitimate "already playing this channel" path.
+            Log.i(TAG, "[TUNE] prime skipped: holder already playing $channelId")
         }
         // Live Rewind: (re)start the timeshift buffer for this channel.
         // No-op when the pref is off. Fullscreen single-stream only per

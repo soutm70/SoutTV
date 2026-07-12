@@ -47,6 +47,10 @@ class PlaylistViewModel @Inject constructor(
     private val vodResetBus: VodResetBus,
     private val appPreferences: AppPreferences,
     private val catchupResolver: com.aeriotv.android.core.playback.CatchupPlaybackResolver,
+    // GH #22: playback teardown on playlist switch (see switchToPlaylist).
+    private val exoHolder: com.aeriotv.android.core.playback.AerioExoPlayerHolder,
+    private val exoWindowState: com.aeriotv.android.feature.player.ExoWindowState,
+    private val miniPlayerSession: com.aeriotv.android.feature.miniplayer.MiniPlayerSession,
 ) : ViewModel() {
 
     enum class Phase { Bootstrapping, NeedsUrl, ChannelsReady }
@@ -1346,6 +1350,16 @@ class PlaylistViewModel @Inject constructor(
      * for User+Pass since the apiKey is already cached on the row. */
     fun switchToPlaylist(playlistId: String) {
         viewModelScope.launch {
+            // GH #22: stop whatever the OLD source is still playing (phone
+            // mini-player / background audio keeps rolling across a switch;
+            // TV already stops on leave). Besides being the right product
+            // behavior -- the old source is gone -- this clears the holder's
+            // currentChannelId latch so the next tune of a same-id channel
+            // (same Dispatcharr server on both playlists) always re-primes
+            // instead of being skipped as "already playing".
+            runCatching { miniPlayerSession.dismiss() }
+            runCatching { exoWindowState.hide() }
+            runCatching { exoHolder.stop() }
             _state.update { it.copy(isLoading = true, error = null) }
             repository.switchActive(playlistId).fold(
                 onSuccess = { (entity, channels) ->
