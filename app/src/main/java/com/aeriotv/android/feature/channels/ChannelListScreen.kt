@@ -131,13 +131,14 @@ fun ChannelListScreen(
     /** Catch-up (task #137): play a resolved timeshift URL in the recording
      *  player; same shape as GuideScreen's onPlayCatchup. */
     onPlayCatchup: (
+        channelId: String,
         playbackUrl: String,
         title: String,
         progStartMillis: Long,
         progEndMillis: Long,
         panelTz: String,
         channelUuid: String,
-    ) -> Unit = { _, _, _, _, _, _ -> },
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val favoritesVm: FavoritesViewModel = hiltViewModel()
@@ -160,7 +161,7 @@ fun ChannelListScreen(
             result
                 .onSuccess { pb ->
                     onPlayCatchup(
-                        pb.url, prog.title,
+                        ch.id, pb.url, prog.title,
                         prog.startMillis, prog.endMillis, pb.panelTimeZoneId,
                         pb.channelUuid.orEmpty(),
                     )

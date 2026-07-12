@@ -78,7 +78,11 @@ object Routes {
     const val CHOOSE_TYPE = "choose_type"
     const val CONFIGURE = "configure/{type}"
     const val MAIN = "main"
-    const val PLAYER = "player/{channelId}"
+    // Task #148 milestone B: optional cs* args put the LIVE player into
+    // catch-up mode on TV (phone keeps the recording player, mirroring
+    // iPhone vs the tvOS unified player). csEnd <= csStart = not catch-up.
+    const val PLAYER = "player/{channelId}?csUrl={csUrl}&csTitle={csTitle}" +
+        "&csStart={csStart}&csEnd={csEnd}&csTz={csTz}&csUuid={csUuid}"
     const val VOD_PLAYER = "vod_player/{movieUuid}"
     const val MOVIE_DETAIL = "movie_detail/{movieUuid}"
     const val SERIES_DETAIL = "series_detail/{seriesId}"
@@ -89,6 +93,19 @@ object Routes {
 
     fun configure(type: SourceType) = "configure/${type.name}"
     fun player(channelId: String) = "player/${Uri.encode(channelId)}"
+    /** Task #148 milestone B: the unified TV path - catch-up plays inside
+     *  the live PlayerScreen with its shared d-pad scrub. */
+    fun playerCatchup(
+        channelId: String,
+        playbackUrl: String,
+        title: String,
+        csStart: Long,
+        csEnd: Long,
+        csTz: String,
+        csUuid: String,
+    ) = "player/${Uri.encode(channelId)}" +
+        "?csUrl=${Uri.encode(playbackUrl)}&csTitle=${Uri.encode(title)}" +
+        "&csStart=$csStart&csEnd=$csEnd&csTz=${Uri.encode(csTz)}&csUuid=${Uri.encode(csUuid)}"
     fun vodPlayer(movieUuid: String) = "vod_player/${Uri.encode(movieUuid)}"
     fun movieDetail(movieUuid: String) = "movie_detail/${Uri.encode(movieUuid)}"
     fun seriesDetail(seriesId: Int) = "series_detail/$seriesId"
@@ -517,6 +534,9 @@ fun AerioTVNavHost(
                     }
                 }
 
+                // Task #148 milestone B: routing decision for catch-up
+                // (TV = unified live player, phone = recording player).
+                val isTvDevice = com.aeriotv.android.feature.settings.rememberIsTvDevice()
                 CompositionLocalProvider(
                     LocalCanRecordToServer provides (state.playlist?.canRecordToServer() ?: false),
                 ) {
@@ -541,14 +561,28 @@ fun AerioTVNavHost(
                     onPlayRecording = { playbackUrl, title ->
                         navController.navigate(Routes.recordingPlayer(playbackUrl, title))
                     },
-                    onPlayCatchup = { playbackUrl, title, progStart, progEnd, panelTz, channelUuid ->
-                        navController.navigate(
-                            Routes.recordingPlayer(
-                                playbackUrl, title,
-                                csStart = progStart, csEnd = progEnd, csTz = panelTz,
-                                csUuid = channelUuid,
-                            ),
-                        )
+                    onPlayCatchup = { catchupChannelId, playbackUrl, title, progStart, progEnd, panelTz, channelUuid ->
+                        // Task #148 milestone B: TV plays catch-up INSIDE the
+                        // live PlayerScreen (unified transport + shared d-pad
+                        // scrub, tvOS parity); phone keeps the seekable
+                        // recording player (iPhone parity).
+                        if (isTvDevice) {
+                            navController.navigate(
+                                Routes.playerCatchup(
+                                    catchupChannelId, playbackUrl, title,
+                                    csStart = progStart, csEnd = progEnd,
+                                    csTz = panelTz, csUuid = channelUuid,
+                                ),
+                            )
+                        } else {
+                            navController.navigate(
+                                Routes.recordingPlayer(
+                                    playbackUrl, title,
+                                    csStart = progStart, csEnd = progEnd, csTz = panelTz,
+                                    csUuid = channelUuid,
+                                ),
+                            )
+                        }
                     },
                     onLaunchMultiview = {
                         // Tile spin-up takes seconds on real hardware, inviting
@@ -595,7 +629,16 @@ fun AerioTVNavHost(
 
             composable(
                 route = Routes.PLAYER,
-                arguments = listOf(navArgument("channelId") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("channelId") { type = NavType.StringType },
+                    // Task #148 milestone B: optional catch-up context (TV).
+                    navArgument("csUrl") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("csTitle") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("csStart") { type = NavType.LongType; defaultValue = 0L },
+                    navArgument("csEnd") { type = NavType.LongType; defaultValue = 0L },
+                    navArgument("csTz") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("csUuid") { type = NavType.StringType; defaultValue = "" },
+                ),
             ) { entry ->
                 val parent = remember(entry) {
                     navController.getBackStackEntry(Routes.PLAYLIST_GRAPH)
@@ -603,6 +646,13 @@ fun AerioTVNavHost(
                 val vm: PlaylistViewModel = hiltViewModel(parent)
                 val state by vm.state.collectAsStateWithLifecycle()
                 val channelId = Uri.decode(entry.arguments?.getString("channelId").orEmpty())
+                // Task #148 milestone B: catch-up context (blank/0 = live).
+                val csUrl = Uri.decode(entry.arguments?.getString("csUrl").orEmpty())
+                val csTitle = Uri.decode(entry.arguments?.getString("csTitle").orEmpty())
+                val csStart = entry.arguments?.getLong("csStart") ?: 0L
+                val csEnd = entry.arguments?.getLong("csEnd") ?: 0L
+                val csTz = Uri.decode(entry.arguments?.getString("csTz").orEmpty())
+                val csUuid = Uri.decode(entry.arguments?.getString("csUuid").orEmpty())
                 val headers = remember(state.playlist?.apiKey, state.playlist?.sourceType) {
                     val pl = state.playlist
                     val key = pl?.apiKey?.takeIf { it.isNotBlank() }
@@ -631,6 +681,16 @@ fun AerioTVNavHost(
                     isLive = true,
                     httpHeaders = headers,
                     epgByChannel = state.epgByChannel,
+                    catchupUrl = csUrl,
+                    catchupTitle = csTitle,
+                    catchupStartMillis = csStart,
+                    catchupEndMillis = csEnd,
+                    catchupTz = csTz,
+                    catchupChannelUuid = csUuid,
+                    onRemintCatchup = { uuid, currentUrl, absStartMillis ->
+                        vm.remintCatchupSession(uuid, currentUrl, absStartMillis)
+                    },
+                    onRevokeCatchup = { url -> vm.revokeCatchupSession(url) },
                     onClose = { navController.popBackStack() },
                     onLaunchMultiview = {
                         // The now-playing stream is being absorbed into the

@@ -88,6 +88,23 @@ fun PlayerScreen(
     isLive: Boolean = true,
     httpHeaders: Map<String, String> = emptyMap(),
     epgByChannel: Map<String, List<EPGProgramme>> = emptyMap(),
+    // Task #148 milestone B (tvOS unified-player parity): non-blank
+    // catchupUrl + csEnd > csStart puts this screen in CATCH-UP mode - the
+    // live prime is skipped, the archive replay plays through
+    // exoHolder.playCatchup, and the shared d-pad scrub commits re-tunes in
+    // the programme domain [0, duration]. Phone never enters this mode (it
+    // keeps VODPlayerScreen for catch-up, mirroring iPhone).
+    catchupUrl: String = "",
+    catchupTitle: String = "",
+    catchupStartMillis: Long = 0L,
+    catchupEndMillis: Long = 0L,
+    catchupTz: String = "",
+    catchupChannelUuid: String = "",
+    /** Task #149: mint a fresh native session for a seek re-tune. */
+    onRemintCatchup: suspend (channelUuid: String, currentUrl: String, absStartMillis: Long) -> String? =
+        { _, _, _ -> null },
+    /** Task #149: best-effort revoke of a native session (exit + re-tune). */
+    onRevokeCatchup: (playbackUrl: String) -> Unit = {},
     onClose: () -> Unit = {},
     onLaunchMultiview: () -> Unit = {},
     onLoadChannelStreams: suspend (Int) -> List<StreamOption> = { emptyList() },
@@ -139,6 +156,20 @@ fun PlayerScreen(
     }
     var currentIndex by remember(channels) { mutableIntStateOf(initialIndex) }
     val currentChannel = channels.getOrNull(currentIndex)
+
+    // Task #148 milestone B: catch-up mode state. scrubTargetWallMs (below)
+    // holds PROGRAMME-relative ms in this mode instead of wall-clock.
+    val isCatchupMode = catchupUrl.isNotBlank() && catchupEndMillis > catchupStartMillis
+    val isNativeCatchup = isCatchupMode &&
+        (catchupChannelUuid.isNotBlank() || catchupUrl.contains("/proxy/catchup/"))
+    val catchupDurationMs = (catchupEndMillis - catchupStartMillis).coerceAtLeast(0L)
+    var catchupCurrentUrl by remember { mutableStateOf(catchupUrl) }
+    var catchupOffsetMs by remember { mutableStateOf(0L) }
+    var catchupPositionMs by remember { mutableStateOf(0L) }
+    // Task #149: serialized native re-mints (rapid skips coalesce to the
+    // latest target; see VODPlayerScreen's twin for the rationale).
+    var nativeRemintInFlight by remember { mutableStateOf(false) }
+    var nativeRemintPendingMs by remember { mutableStateOf<Long?>(null) }
 
     // GH #22: a tapped id that is NOT in the active playlist's channel list
     // used to render a silent forever-black player -- no prime, no log lines
@@ -226,6 +257,9 @@ fun PlayerScreen(
     // player. Also seeds the mini-player session so a system back can promote
     // it without losing channel context.
     LaunchedEffect(currentChannel?.id) {
+        // Catch-up replays never become the resume target / recents entry /
+        // mini-player session (task #148 milestone B).
+        if (isCatchupMode) return@LaunchedEffect
         currentChannel?.let { ch ->
             if (ch.id.isNotBlank()) {
                 settingsVm.setLastWatchedChannelId(ch.id)
@@ -279,6 +313,9 @@ fun PlayerScreen(
     // swap streams via setMediaSource. The PlayerView at MainActivity
     // root holds the surface across this so no reattach is required.
     LaunchedEffect(currentChannel?.id) {
+        // Task #148 milestone B: catch-up mode never primes the LIVE stream
+        // (and never starts a rewind buffer session below).
+        if (isCatchupMode) return@LaunchedEffect
         val channelId = currentChannel?.id ?: return@LaunchedEffect
         val ch = currentChannel ?: return@LaunchedEffect
         val url = ch.url
@@ -420,7 +457,14 @@ fun PlayerScreen(
     // mid-traversal. Phase 172.
     var lastInteractionAt by remember { mutableStateOf(0L) }
     androidx.activity.compose.BackHandler {
-        if (isTvForm) {
+        if (isCatchupMode) {
+            // Task #148 milestone B: Back on a catch-up replay exits to where
+            // the user came from (tvOS parity: Menu on the catch-up player
+            // returns to the guide). No mini for a replay - the mini is a
+            // LIVE affordance. The native session revoke runs in onDispose.
+            exoHolder.stop()
+            onClose()
+        } else if (isTvForm) {
             // #10 back model (Archie 2026-07-02): a SINGLE Back minimizes the
             // fullscreen player straight to the corner mini. OK/Select is now
             // what raises the media controls (the tap-target toggles
@@ -496,7 +540,7 @@ fun PlayerScreen(
     // the cold-start no-data watchdog, and parked during a manual switch / any
     // in-flight re-prime. repeatOnLifecycle(RESUMED) pauses it when backgrounded/PiP.
     val followLifecycleOwner = LocalLifecycleOwner.current
-    val isDispatcharrLive = currentChannel?.dispatcharrChannelId != null &&
+    val isDispatcharrLive = !isCatchupMode && currentChannel?.dispatcharrChannelId != null &&
         currentChannel?.id?.startsWith("disp:") == true
     LaunchedEffect(currentChannel?.id, isDispatcharrLive) {
         if (!isDispatcharrLive) return@LaunchedEffect
@@ -717,8 +761,99 @@ fun PlayerScreen(
             exoHolder.playTimeshift(target.coerceAtLeast(tail))
         }
     }
+
+    // Task #148 milestone B: tune the archive replay + drive the position
+    // ticker. The live prime effect above is fully gated off in this mode.
+    LaunchedEffect(Unit) {
+        if (!isCatchupMode) return@LaunchedEffect
+        exoHolder.httpHeaders = httpHeaders
+        exoHolder.playCatchup(
+            url = catchupUrl,
+            title = catchupTitle.ifBlank { currentChannel?.name },
+            subtitle = currentChannel?.name,
+        )
+        exoHolder.currentChannelId = null
+        while (true) {
+            catchupPositionMs = (catchupOffsetMs + (exoHolder.player?.contentPosition ?: 0L))
+                .coerceIn(0L, catchupDurationMs)
+            tsPaused = exoHolder.isPaused()
+            delay(500)
+        }
+    }
+    // Task #149: revoke the native session when the replay screen leaves
+    // composition (Back, X, nav-away). Re-tunes revoke their outgoing
+    // session inline in commitScrubCatchup.
+    val catchupUrlForRevoke by rememberUpdatedState(catchupCurrentUrl)
+    DisposableEffect(Unit) {
+        onDispose {
+            if (isNativeCatchup) onRevokeCatchup(catchupUrlForRevoke)
+        }
+    }
+    // Re-tune helper: swap the window URL on the same held player.
+    val retuneCatchup: (String, Long) -> Unit = { newUrl, offsetMs ->
+        catchupOffsetMs = offsetMs
+        catchupPositionMs = offsetMs
+        catchupCurrentUrl = newUrl
+        exoHolder.playCatchup(
+            url = newUrl,
+            title = catchupTitle.ifBlank { currentChannel?.name },
+            subtitle = currentChannel?.name,
+        )
+    }
+    // Commit a catch-up scrub: native sessions mint at the EXACT second
+    // (serialized; rapid skips coalesce to the latest target - see
+    // VODPlayerScreen's twin); XC rebuilds the wall-clock URL at the floored
+    // minute (the URL format has nothing finer).
+    val commitScrubCatchup: (Long) -> Unit = { target ->
+        val clamped = target.coerceIn(0L, (catchupDurationMs - 5_000L).coerceAtLeast(0L))
+        if (isNativeCatchup) {
+            if (nativeRemintInFlight) {
+                nativeRemintPendingMs = clamped
+                catchupPositionMs = clamped
+            } else scope.launch {
+                nativeRemintInFlight = true
+                var t = clamped
+                while (true) {
+                    val outgoing = catchupCurrentUrl
+                    val minted = onRemintCatchup(catchupChannelUuid, outgoing, catchupStartMillis + t)
+                    val pending = nativeRemintPendingMs
+                    if (pending != null) {
+                        nativeRemintPendingMs = null
+                        if (minted != null) onRevokeCatchup(minted)
+                        t = pending
+                        continue
+                    }
+                    if (minted == null) {
+                        Log.w(TAG, "[CATCHUP] native re-mint failed; keeping current window")
+                        break
+                    }
+                    onRevokeCatchup(outgoing)
+                    retuneCatchup(minted, t)
+                    Log.i(TAG, "[CATCHUP] native re-tune to ${t / 1000}s")
+                    break
+                }
+                nativeRemintInFlight = false
+            }
+        } else {
+            val absFlooredStart = ((catchupStartMillis + clamped) / 60_000L) * 60_000L
+            val windowOffset = (absFlooredStart - catchupStartMillis).coerceAtLeast(0L)
+            val newUrl = com.aeriotv.android.core.playback.CatchupUrlBuilder.rebuildForOffset(
+                url = catchupUrl,
+                panelTimeZoneId = catchupTz.ifBlank { "UTC" },
+                programmeStartMillis = catchupStartMillis,
+                programmeEndMillis = catchupEndMillis,
+                offsetMillis = windowOffset,
+            )
+            if (newUrl == null) {
+                Log.w(TAG, "[CATCHUP] re-tune URL rebuild failed; ignoring seek")
+            } else {
+                retuneCatchup(newUrl, windowOffset)
+                Log.i(TAG, "[CATCHUP] re-tune to window ${windowOffset / 1000}s")
+            }
+        }
+    }
     val scrubStep: (Int, Boolean) -> Unit = step@{ dir, isRepeat ->
-        if (!tsState.buffering) return@step
+        if (!tsState.buffering && !isCatchupMode) return@step
         val now = android.os.SystemClock.uptimeMillis()
         // Native autorepeat arrives ~every 50ms on some remotes; 250ms
         // throttle keeps held-scrub speed device-independent (VOD
@@ -732,12 +867,18 @@ fun PlayerScreen(
         scrubLastDirection = dir
         scrubLastStepAt = now
         val mult = minOf(12, 1 + scrubAccelCount / 2)
-        val w = timeshiftController.activeWriter
-        val head = w?.headWallMs ?: tsState.headWallMs
-        val tail = w?.tailWallMs ?: tsState.tailWallMs
-        val base = scrubTargetWallMs
-            ?: if (tsState.timeshifting) tsPositionWallMs else head
-        scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(tail, head)
+        if (isCatchupMode) {
+            // Catch-up domain: PROGRAMME-relative ms in [0, duration].
+            val base = scrubTargetWallMs ?: catchupPositionMs
+            scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(0L, catchupDurationMs)
+        } else {
+            val w = timeshiftController.activeWriter
+            val head = w?.headWallMs ?: tsState.headWallMs
+            val tail = w?.tailWallMs ?: tsState.tailWallMs
+            val base = scrubTargetWallMs
+                ?: if (tsState.timeshifting) tsPositionWallMs else head
+            scrubTargetWallMs = (base + dir * 10_000L * mult).coerceIn(tail, head)
+        }
         scrubStepSerial += 1
         scrubHudVisible = true
         lastInteractionAt = android.os.SystemClock.uptimeMillis()
@@ -753,7 +894,7 @@ fun PlayerScreen(
             scrubHudVisible = false
         } else {
             delay(650)
-            commitScrubWall(target)
+            if (isCatchupMode) commitScrubCatchup(target) else commitScrubWall(target)
             scrubTargetWallMs = null
         }
     }
@@ -781,7 +922,7 @@ fun PlayerScreen(
                 // seek commits after the presses stop). Consume both
                 // actions so the release can't click anything behind.
                 val native = event.nativeKeyEvent
-                if (isTvForm && !chromeVisible && tsState.buffering &&
+                if (isTvForm && !chromeVisible && (tsState.buffering || isCatchupMode) &&
                     (
                         native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
                             native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
@@ -843,7 +984,46 @@ fun PlayerScreen(
         // escalating 5s->30s delay, and offer a manual Retry button. D-pad
         // up/down still bubbles to the root key handler so channel flips keep
         // working (a flip clears the flag and resets the escalation).
-        if (streamUnavailable) {
+        if (streamUnavailable && isCatchupMode) {
+            // Task #148 milestone B: a catch-up 4xx means the provider has no
+            // archive for this window (flag-but-no-archive class). Retrying
+            // can't conjure one, so no auto-reconnect - show why + Go Back.
+            val lastErrorText by exoHolder.lastErrorText.collectAsStateWithLifecycle()
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "Catch-up Unavailable",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                )
+                Text(
+                    text = "Your provider doesn't have an archive for this programme.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.72f),
+                    textAlign = TextAlign.Center,
+                )
+                if (!lastErrorText.isNullOrBlank()) {
+                    Text(
+                        text = lastErrorText.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.6f),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                Button(onClick = {
+                    exoHolder.stop()
+                    onClose()
+                }) {
+                    Text("Go Back")
+                }
+            }
+        } else if (streamUnavailable) {
             val lastErrorText by exoHolder.lastErrorText.collectAsStateWithLifecycle()
             var retryCountdown by remember { mutableIntStateOf(0) }
             var reconnecting by remember { mutableStateOf(false) }
@@ -952,6 +1132,12 @@ fun PlayerScreen(
             nowProgramme = nowProgramme,
             timeshiftState = if (tsState.buffering) tsState else null,
             timeshiftPositionWallMs = tsPositionWallMs,
+            // Task #148 milestone B: catch-up transport context.
+            catchupMode = isCatchupMode,
+            catchupTitle = catchupTitle,
+            catchupPositionMs = catchupPositionMs,
+            catchupDurationMs = catchupDurationMs,
+            onCatchupSeekTo = { target -> commitScrubCatchup(target) },
             isPlayerPaused = tsPaused,
             onRewindTogglePause = {
                 when {
@@ -1006,7 +1192,7 @@ fun PlayerScreen(
                 // OK on the focused timeline: commit the pending scrub
                 // immediately instead of waiting out the debounce.
                 scrubTargetWallMs?.let { target ->
-                    commitScrubWall(target)
+                    if (isCatchupMode) commitScrubCatchup(target) else commitScrubWall(target)
                     scrubTargetWallMs = null
                 }
             },
@@ -1143,7 +1329,11 @@ fun PlayerScreen(
     // fresh state without re-registering. Debounced so a held key surfs one channel
     // per ~120ms instead of skipping wildly. Declines (returns false) while a
     // menu/sheet is open (interactionLocked) so UP/DOWN navigate those instead.
-    val flipEnabled by rememberUpdatedState(isTvForm && appleTVChannelFlip && channels.size >= 2)
+    // Task #148 milestone B: no channel flips during a catch-up replay
+    // (tvOS parity: the catch-up tile gates channel-flip off entirely).
+    val flipEnabled by rememberUpdatedState(
+        isTvForm && appleTVChannelFlip && channels.size >= 2 && !isCatchupMode,
+    )
     val flipLocked by rememberUpdatedState(interactionLocked)
     val flipIndex by rememberUpdatedState(currentIndex)
     val flipChannels by rememberUpdatedState(channels)

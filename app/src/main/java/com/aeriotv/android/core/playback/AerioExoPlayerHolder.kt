@@ -411,6 +411,10 @@ class AerioExoPlayerHolder @Inject constructor(
             // state; the unified player surface owns recovery/exit.
             if (isCatchup) {
                 Log.w(TAG, "[CATCHUP] terminal error ${error.errorCodeName}; staying (no live re-prime)")
+                // Task #148 milestone B: surface it - the unified TV player
+                // renders its catch-up error overlay off these (a provider
+                // that flags tv_archive but serves no archive 404s here).
+                _streamUnavailable.value = true
                 return
             }
             if (lastPlayUrl != null) {

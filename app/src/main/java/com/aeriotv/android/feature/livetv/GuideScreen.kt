@@ -195,13 +195,14 @@ fun GuideScreen(
      *  recording player, carrying the programme window + panel timezone the
      *  player needs to rebuild the URL for scrub-seeks. */
     onPlayCatchup: (
+        channelId: String,
         playbackUrl: String,
         title: String,
         progStartMillis: Long,
         progEndMillis: Long,
         panelTz: String,
         channelUuid: String,
-    ) -> Unit = { _, _, _, _, _, _ -> },
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
     modifier: Modifier = Modifier,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
@@ -215,7 +216,7 @@ fun GuideScreen(
             result
                 .onSuccess { pb ->
                     onPlayCatchup(
-                        pb.url, prog.title,
+                        ch.id, pb.url, prog.title,
                         prog.startMillis, prog.endMillis, pb.panelTimeZoneId,
                         pb.channelUuid.orEmpty(),
                     )

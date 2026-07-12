@@ -91,6 +91,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -158,6 +159,15 @@ fun PlayerChromeOverlay(
     onRewindTogglePause: () -> Unit = {},
     onRewindSeekWall: (Long) -> Unit = {},
     onGoLive: () -> Unit = {},
+    // Task #148 milestone B (tvOS unified-player parity): catch-up
+    // transport. catchupMode renders the SAME transport row with a
+    // programme-domain timeline instead of the rewind band; the +/-30s
+    // pills commit through onCatchupSeekTo.
+    catchupMode: Boolean = false,
+    catchupTitle: String = "",
+    catchupPositionMs: Long = 0L,
+    catchupDurationMs: Long = 0L,
+    onCatchupSeekTo: (Long) -> Unit = {},
     // Shared D-pad scrub (task #148, tvOS parity). Preview position while
     // a scrub is in flight (host commits the single seek after the
     // presses stop); HUD flag renders the timeline alone while the
@@ -288,7 +298,9 @@ fun PlayerChromeOverlay(
             // buffering, a read-only timeline rides above the row and the
             // transport joins the SAME focus row as pills (identical focus
             // visuals; Options keeps initial focus, LEFT reaches transport).
-            val tvRewind = timeshiftState?.buffering == true
+            val tvRewind = timeshiftState?.buffering == true && !catchupMode
+            // Task #148 milestone B: catch-up shares the rewind transport row.
+            val tvTransport = tvRewind || catchupMode
             // Anchor skips on wall-clock "now" when live: the head in the
             // composed state can lag several seconds (or worse if a
             // recomposition was starved), and System.currentTimeMillis()
@@ -306,17 +318,29 @@ fun PlayerChromeOverlay(
                     .padding(bottom = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-            if (tvRewind) {
-                timeshiftState?.let { ts ->
-                    TvRewindTimeline(
-                        state = ts,
-                        positionWallMs = timeshiftPositionWallMs,
-                        programme = nowProgramme,
-                        previewWallMs = scrubPreviewWallMs,
+            if (tvTransport) {
+                if (catchupMode) {
+                    TvCatchupTimeline(
+                        positionMs = catchupPositionMs,
+                        durationMs = catchupDurationMs,
+                        title = catchupTitle.ifBlank { nowProgramme?.title.orEmpty() },
+                        previewMs = scrubPreviewWallMs,
                         focusable = true,
                         onScrubStep = onScrubStep,
                         onScrubCommit = onScrubCommit,
                     )
+                } else {
+                    timeshiftState?.let { ts ->
+                        TvRewindTimeline(
+                            state = ts,
+                            positionWallMs = timeshiftPositionWallMs,
+                            programme = nowProgramme,
+                            previewWallMs = scrubPreviewWallMs,
+                            focusable = true,
+                            onScrubStep = onScrubStep,
+                            onScrubCommit = onScrubCommit,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -325,11 +349,14 @@ fun PlayerChromeOverlay(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (tvRewind) {
+                if (tvTransport) {
                     PlayerPill(
                         icon = Icons.Filled.Replay30,
                         label = "Rewind",
-                        onClick = { onRewindSeekWall(tvCurrentWall - 30_000) },
+                        onClick = {
+                            if (catchupMode) onCatchupSeekTo(catchupPositionMs - 30_000)
+                            else onRewindSeekWall(tvCurrentWall - 30_000)
+                        },
                     )
                     PlayerPill(
                         icon = if (isPlayerPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
@@ -339,9 +366,12 @@ fun PlayerChromeOverlay(
                     PlayerPill(
                         icon = Icons.Filled.Forward30,
                         label = "Forward",
-                        onClick = { onRewindSeekWall(tvCurrentWall + 30_000) },
+                        onClick = {
+                            if (catchupMode) onCatchupSeekTo(catchupPositionMs + 30_000)
+                            else onRewindSeekWall(tvCurrentWall + 30_000)
+                        },
                     )
-                    if (timeshiftState?.timeshifting == true) {
+                    if (!catchupMode && timeshiftState?.timeshifting == true) {
                         PlayerPill(
                             icon = Icons.Filled.PlayArrow,
                             label = "Go Live",
@@ -400,7 +430,9 @@ fun PlayerChromeOverlay(
                         },
                     )
                 }
-                if (canRecord) {
+                // Task #148 milestone B: an archive replay can't be recorded
+                // or joined by live tiles (tvOS parity: catch-up gates both).
+                if (canRecord && !catchupMode) {
                     PlayerPill(
                         icon = Icons.Filled.FiberManualRecord,
                         label = "Record",
@@ -408,11 +440,13 @@ fun PlayerChromeOverlay(
                         onClick = { recordCurrent() },
                     )
                 }
-                PlayerPill(
-                    icon = Icons.Filled.Add,
-                    label = "Add Stream",
-                    onClick = onAddToMultiview,
-                )
+                if (!catchupMode) {
+                    PlayerPill(
+                        icon = Icons.Filled.Add,
+                        label = "Add Stream",
+                        onClick = onAddToMultiview,
+                    )
+                }
             }
             }
             } else {
@@ -623,7 +657,7 @@ fun PlayerChromeOverlay(
     // in. Mutually exclusive with the full chrome above.
     AnimatedVisibility(
         visible = isTv && scrubHudVisible && !chromeVisible && !inPip &&
-            timeshiftState?.buffering == true,
+            (timeshiftState?.buffering == true || catchupMode),
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = Modifier.align(Alignment.BottomCenter),
@@ -638,13 +672,22 @@ fun PlayerChromeOverlay(
                 )
                 .padding(top = 28.dp, bottom = 32.dp),
         ) {
-            timeshiftState?.let { ts ->
-                TvRewindTimeline(
-                    state = ts,
-                    positionWallMs = timeshiftPositionWallMs,
-                    programme = nowProgramme,
-                    previewWallMs = scrubPreviewWallMs,
+            if (catchupMode) {
+                TvCatchupTimeline(
+                    positionMs = catchupPositionMs,
+                    durationMs = catchupDurationMs,
+                    title = catchupTitle.ifBlank { nowProgramme?.title.orEmpty() },
+                    previewMs = scrubPreviewWallMs,
                 )
+            } else {
+                timeshiftState?.let { ts ->
+                    TvRewindTimeline(
+                        state = ts,
+                        positionWallMs = timeshiftPositionWallMs,
+                        programme = nowProgramme,
+                        previewWallMs = scrubPreviewWallMs,
+                    )
+                }
             }
         }
     }
@@ -1220,6 +1263,125 @@ private fun RewindTransportBar(
  * re-open, so previewing per press and committing once is the only
  * smooth model (tvOS `.timeline` focus-target parity).
  */
+/** Task #148 milestone B: the catch-up twin of [TvRewindTimeline]. Same
+ *  focus/key/scrub behavior, but the domain is PROGRAMME-relative
+ *  [0, durationMs] (tvOS CatchupTimelineBand parity): title on the left,
+ *  position / duration clock on the right. */
+@Composable
+private fun TvCatchupTimeline(
+    positionMs: Long,
+    durationMs: Long,
+    title: String,
+    previewMs: Long? = null,
+    focusable: Boolean = false,
+    onScrubStep: (Int, Boolean) -> Unit = { _, _ -> },
+    onScrubCommit: () -> Unit = {},
+) {
+    val dur = durationMs.coerceAtLeast(1L)
+    val current = (previewMs ?: positionMs).coerceIn(0L, dur)
+    val fraction = (current.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+    var focused by remember { mutableStateOf(false) }
+    var trackWidthPx by remember { mutableStateOf(0f) }
+    val focusModifier = if (focusable) {
+        Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .onPreviewKeyEvent { event ->
+                if (!focused) return@onPreviewKeyEvent false
+                val native = event.nativeKeyEvent
+                when (native.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                    -> {
+                        if (native.action == android.view.KeyEvent.ACTION_DOWN) {
+                            val dir = if (native.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) -1 else +1
+                            onScrubStep(dir, native.repeatCount > 0)
+                        }
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    -> {
+                        if (native.action == android.view.KeyEvent.ACTION_DOWN) onScrubCommit()
+                        true
+                    }
+                    // Dead-end above the timeline (tvOS: UP is swallowed).
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> true
+                    // DOWN falls through -> focus traversal to the pills.
+                    else -> false
+                }
+            }
+            .focusable()
+    } else {
+        Modifier
+    }
+    fun clock(ms: Long): String {
+        val totalSecs = (ms / 1000).coerceAtLeast(0)
+        val h = totalSecs / 3600
+        val m = (totalSecs % 3600) / 60
+        val s = totalSecs % 60
+        return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
+        else String.format("%d:%02d", m, s)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 56.dp)
+            .then(focusModifier),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onSizeChanged { trackWidthPx = it.width.toFloat() },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (focused) 7.dp else 5.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = Color.White.copy(alpha = if (focused) 0.3f else 0.18f),
+                drawStopIndicator = {},
+            )
+            if (focused) {
+                val thumbX = with(LocalDensity.current) {
+                    (trackWidthPx * fraction).toDp() - 8.dp
+                }
+                Box(
+                    modifier = Modifier
+                        .padding(start = thumbX.coerceAtLeast(0.dp))
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(Color.White),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (title.isNotBlank()) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "${clock(current)} / ${clock(dur)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.85f),
+            )
+        }
+    }
+}
+
 @Composable
 private fun TvRewindTimeline(
     state: com.aeriotv.android.core.timeshift.TimeshiftController.State,
