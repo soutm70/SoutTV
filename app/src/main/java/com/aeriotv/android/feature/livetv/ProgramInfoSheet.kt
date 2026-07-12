@@ -262,15 +262,28 @@ private fun ProgramInfoBody(
         }
         if (posterUrl != null) {
             Spacer(Modifier.width(16.dp))
+            // GH #53: frame follows the REAL image ratio (width fixed,
+            // height derived). XMLTV `<icon>` art is usually landscape
+            // (EPG Guru sends 16:9); the old hard 2:3 portrait frame
+            // cropped the sides off. TMDB fallback posters (genuinely
+            // 2:3) render exactly as before. Clamped so a pathological
+            // banner can't stretch the sheet.
+            var posterRatio by remember(posterUrl) { mutableStateOf(2f / 3f) }
             // Decoration only: deliberately NOT focusable, or it would insert
             // itself into the TV dialog's D-pad scroll order.
             AsyncImage(
                 model = posterUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onSuccess = { state ->
+                    val s = state.painter.intrinsicSize
+                    if (s.width > 0f && s.height > 0f) {
+                        posterRatio = (s.width / s.height).coerceIn(0.55f, 1.9f)
+                    }
+                },
                 modifier = Modifier
                     .width(posterWidth)
-                    .aspectRatio(2f / 3f)
+                    .aspectRatio(posterRatio)
                     .clip(RoundedCornerShape(8.dp)),
             )
         }
