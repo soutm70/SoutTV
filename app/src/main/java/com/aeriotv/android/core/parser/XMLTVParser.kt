@@ -45,6 +45,23 @@ object XMLTVParser {
         }
     }
 
+    /** GH #26: parse a downloaded guide FILE in constant memory. The parser
+     *  itself already streams (XmlPullParser over an InputStream); this
+     *  entry point just avoids [parseBytes]'s whole-body ByteArray, which a
+     *  multi-hundred-MB provider XMLTV turned into an OOM on constrained
+     *  heaps. Gzip sniff matches [parseBytes] (0x1F 0x8B magic). */
+    fun parseFile(
+        file: java.io.File,
+        knownChannelKeys: Set<String>? = null,
+    ): List<EPGProgramme> {
+        val head = ByteArray(2)
+        val isGzip = file.inputStream().use { it.read(head) == 2 } &&
+            head[0] == 0x1F.toByte() && head[1] == 0x8B.toByte()
+        val base = file.inputStream().buffered()
+        val stream = if (isGzip) GZIPInputStream(base) else base
+        return stream.use { parse(it, knownChannelKeys) }
+    }
+
     /**
      * Common HTML entities found in XMLTV from sites that scrape HTML guides
      * (BBC, IMDB-driven feeds, etc.) but never declared in the DTD. We register

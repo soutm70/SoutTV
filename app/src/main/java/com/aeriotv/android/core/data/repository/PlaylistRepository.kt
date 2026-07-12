@@ -509,8 +509,9 @@ class PlaylistRepository @Inject constructor(
         val programmes = when (sourceType) {
             SourceType.M3uUrl -> {
                 val epgUrl = playlist.epgUrl?.takeIf { it.isNotBlank() } ?: return@runCatching emptyList()
-                val bytes = fetcher.fetchBytes(epgUrl)
-                XMLTVParser.parseBytes(bytes, knownChannelKeys)
+                // GH #26: constant-memory download + parse (multi-hundred-MB
+                // provider XMLTVs OOM'd fetchBytes the same way big M3Us did).
+                fetchViaTempFile(epgUrl, ".xmltv") { XMLTVParser.parseFile(it, knownChannelKeys) }
             }
             SourceType.DispatcharrApiKey, SourceType.DispatcharrUserPass -> {
                 if (playlist.apiKey.isNullOrBlank()) return@runCatching emptyList()
@@ -561,7 +562,8 @@ class PlaylistRepository @Inject constructor(
                 val customXmltv = playlist.epgUrl?.takeIf { it.isNotBlank() }
                 if (customXmltv != null) {
                     val xmltv = runCatching {
-                        XMLTVParser.parseBytes(fetcher.fetchBytes(customXmltv), knownChannelKeys)
+                        // GH #26: constant-memory download + parse.
+                        fetchViaTempFile(customXmltv, ".xmltv") { XMLTVParser.parseFile(it, knownChannelKeys) }
                     }.getOrElse {
                         // Don't fail the whole EPG load just because the user's
                         // custom XMLTV URL is unreachable; surface a warning
@@ -593,7 +595,8 @@ class PlaylistRepository @Inject constructor(
                     "$b/xmltv.php?username=${xtreamEncode(user)}" +
                         "&password=${xtreamEncode(playlist.password.orEmpty())}"
                 }
-                XMLTVParser.parseBytes(fetcher.fetchBytes(xmltvUrl), knownChannelKeys)
+                // GH #26: constant-memory download + parse.
+                fetchViaTempFile(xmltvUrl, ".xmltv") { XMLTVParser.parseFile(it, knownChannelKeys) }
             }
         }
         dao.update(playlist.copy(lastEpgRefreshedAt = System.currentTimeMillis()))
@@ -883,6 +886,25 @@ class PlaylistRepository @Inject constructor(
         dao.applyDisplayOrder(orderedIds)
     }
 
+    /** GH #26: download-to-temp-file + parse + delete. Constant memory for
+     *  arbitrarily large payloads (XC-panel M3Us and provider XMLTVs run
+     *  100-200MB+; buffering them as one ByteArray OOM'd constrained
+     *  heaps). The temp file lives in cacheDir so the OS can reclaim it
+     *  even if a crash skips the finally. */
+    private suspend fun <T> fetchViaTempFile(
+        url: String,
+        suffix: String,
+        parse: (java.io.File) -> T,
+    ): T {
+        val tmp = java.io.File.createTempFile("aerio_dl", suffix, context.cacheDir)
+        return try {
+            fetcher.fetchToFile(url, tmp)
+            parse(tmp)
+        } finally {
+            tmp.delete()
+        }
+    }
+
     private fun deriveName(url: String): String =
         url.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Source" }
 
@@ -897,8 +919,10 @@ class PlaylistRepository @Inject constructor(
         password: String? = null,
     ): List<M3UChannel> = when (sourceType) {
         SourceType.M3uUrl -> {
-            val bytes = fetcher.fetchBytes(base)
-            M3UParser.parseBytes(bytes)
+            // GH #26: stream the download to a temp file + line-parse it.
+            // A full XC-panel M3U runs 100-200MB; fetchBytes materialized
+            // it as one allocation and OOM'd 256MB-heap phones on Add.
+            fetchViaTempFile(base, ".m3u") { M3UParser.parseFile(it) }
         }
         // Both Dispatcharr modes converge here. UserPass calls in with a key
         // that was resolved via JWT login + /api/accounts/users/me/ earlier in

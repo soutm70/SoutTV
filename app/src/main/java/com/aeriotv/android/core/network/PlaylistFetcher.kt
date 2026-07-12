@@ -6,9 +6,13 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.readRawBytes
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.jvm.javaio.toInputStream
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -54,5 +58,30 @@ class PlaylistFetcher @Inject constructor() {
             )
         }
         return response.readRawBytes()
+    }
+
+    /** GH #26: stream a large body straight to [dest] in constant memory.
+     *  [fetchBytes] materializes the whole payload as ONE allocation, and a
+     *  full XC-panel M3U (or a provider XMLTV guide) runs 100-200MB -- the
+     *  exact 155MB allocation that OOM'd a 256MB-heap phone while adding a
+     *  playlist. The caller owns (and deletes) the file. */
+    suspend fun fetchToFile(
+        url: String,
+        dest: File,
+        userAgent: String? = null,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ): File = client.prepareGet(url) {
+        if (userAgent != null) header("User-Agent", userAgent)
+        for ((k, v) in extraHeaders) header(k, v)
+    }.execute { response ->
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException(
+                "HTTP ${response.status.value} ${response.status.description} from ${LogSanitizer.redactUrl(url)}",
+            )
+        }
+        response.bodyAsChannel().toInputStream().use { input ->
+            dest.outputStream().use { out -> input.copyTo(out, 64 * 1024) }
+        }
+        dest
     }
 }

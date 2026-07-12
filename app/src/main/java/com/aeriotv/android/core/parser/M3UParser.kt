@@ -30,54 +30,80 @@ object M3UParser {
     }
 
     fun parse(content: String): List<M3UChannel> {
+        return parseLines(content.splitToSequence('\n', '\r'))
+    }
+
+    /**
+     * GH #26: parse a downloaded playlist FILE line-by-line in constant
+     * memory. A full XC-panel M3U (live + VOD) runs 100-200MB; the old
+     * path (whole-body ByteArray -> String -> split) held several copies
+     * resident at once and OOM'd 256MB-heap phones during Add Playlist.
+     * Charset semantics match [parseBytes]: strict UTF-8 first, and ANY
+     * malformed byte re-parses the whole file as ISO-8859-1.
+     */
+    fun parseFile(file: java.io.File): List<M3UChannel> {
+        val strictUtf8 = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        return try {
+            java.io.BufferedReader(java.io.InputStreamReader(file.inputStream(), strictUtf8))
+                .use { r -> parseLines(r.lineSequence()) }
+        } catch (_: java.nio.charset.CharacterCodingException) {
+            file.inputStream().bufferedReader(Charsets.ISO_8859_1)
+                .use { r -> parseLines(r.lineSequence()) }
+        }
+    }
+
+    /**
+     * The ONE parse implementation, consuming lines as a sequence so file
+     * and string inputs share it. Semantics preserved from the original
+     * index/lookahead loop:
+     *  - blank lines and #-comments between #EXTINF and its URL are skipped
+     *  - a second #EXTINF before the first found its URL is skipped like a
+     *    comment (the URL that follows still binds to the FIRST #EXTINF)
+     *  - #EXTINF without a URL line is silently dropped
+     *  - a bare URL with no preceding #EXTINF is ignored
+     */
+    private fun parseLines(lines: Sequence<String>): List<M3UChannel> {
         val channels = mutableListOf<M3UChannel>()
-        val lines = content.split('\n', '\r').filter { true } // keep blanks for index math
-
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i].trim()
-
-            if (line.startsWith("#EXTINF:")) {
-                val attrs = parseExtInf(line)
-
-                var j = i + 1
-                var url = ""
-                while (j < lines.size) {
-                    val candidate = lines[j].trim()
-                    if (candidate.isNotEmpty() && !candidate.startsWith("#")) {
-                        url = candidate
-                        i = j
-                        break
-                    }
-                    j++
+        var pendingExtInf: String? = null
+        for (raw in lines) {
+            val line = raw.trim()
+            when {
+                line.startsWith("#EXTINF:") -> {
+                    if (pendingExtInf == null) pendingExtInf = line
                 }
-
-                if (url.isNotEmpty()) {
-                    val tvgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
-                    // Stable ID — prefer tvg-id (the broadcaster's canonical
-                    // channel key), fall back to the stream URL which is also
-                    // stable across refreshes of the same source. iOS uses the
-                    // raw UUID per fetch and stores its own per-channel id in
-                    // ChannelDisplayItem; Android keeps the favorites store
-                    // keyed off this stable string so the user's saved rows
-                    // survive a playlist reload.
-                    channels += M3UChannel(
-                        id = "m3u:${tvgId ?: url}",
-                        name = attrs["name"]?.ifBlank { null } ?: "Unknown Channel",
-                        url = url,
-                        groupTitle = attrs["group-title"].orEmpty(),
-                        tvgID = tvgId.orEmpty(),
-                        tvgName = attrs["tvg-name"].orEmpty(),
-                        tvgLogo = attrs["tvg-logo"].orEmpty(),
-                        channelNumber = attrs["tvg-chno"]?.trim()?.takeIf { it.isNotBlank() },
-                        rawAttributes = attrs.filterKeys { it != "name" },
-                    )
+                line.isEmpty() || line.startsWith("#") -> Unit
+                else -> {
+                    pendingExtInf?.let { ext -> channels += buildChannel(ext, line) }
+                    pendingExtInf = null
                 }
             }
-            i++
         }
-
         return channels
+    }
+
+    private fun buildChannel(extInfLine: String, url: String): M3UChannel {
+        val attrs = parseExtInf(extInfLine)
+        val tvgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
+        // Stable ID — prefer tvg-id (the broadcaster's canonical
+        // channel key), fall back to the stream URL which is also
+        // stable across refreshes of the same source. iOS uses the
+        // raw UUID per fetch and stores its own per-channel id in
+        // ChannelDisplayItem; Android keeps the favorites store
+        // keyed off this stable string so the user's saved rows
+        // survive a playlist reload.
+        return M3UChannel(
+            id = "m3u:${tvgId ?: url}",
+            name = attrs["name"]?.ifBlank { null } ?: "Unknown Channel",
+            url = url,
+            groupTitle = attrs["group-title"].orEmpty(),
+            tvgID = tvgId.orEmpty(),
+            tvgName = attrs["tvg-name"].orEmpty(),
+            tvgLogo = attrs["tvg-logo"].orEmpty(),
+            channelNumber = attrs["tvg-chno"]?.trim()?.takeIf { it.isNotBlank() },
+            rawAttributes = attrs.filterKeys { it != "name" },
+        )
     }
 
     private fun parseExtInf(line: String): Map<String, String> {
