@@ -151,7 +151,7 @@ fun AppearanceSettingsScreen(
                 // density-tunable surfaces (Movies & Series, Live TV List).
                 settingsCard(
                     header = "Display Scale",
-                    footer = "Independent scale for Movies & Series and Live TV List. 100% matches the default; 85-125% lets you trade density for readability. Changes apply live.",
+                    footer = "Independent scale for Movies & Series and Live TV List. 100% matches the default; 85-175% lets you trade density for readability (150%+ shows fewer, larger items - handy on a TV across the room). Changes apply live.",
                 ) {
                     ScaleSliderRow(
                         label = "Movies & Series",
@@ -591,9 +591,13 @@ private fun ToggleRow(
     }
 }
 
-/** tvOS Display Scale segments (s_05/s_06): 85 / 92 / 100 / 114 / 125 %. */
+/** tvOS Display Scale segments (s_05/s_06): 85 / 92 / 100 / 114 / 125 %,
+ *  plus two TV-readability steps above the tvOS ladder (GH #25: "even at
+ *  125% the guide is hard to see" on a TV across the room). Fewer, larger
+ *  items is the intended trade at 150/175. */
 private val SCALE_SEGMENTS: List<Pair<Float, String>> = listOf(
-    0.85f to "85%", 0.92f to "92%", 1.00f to "100%", 1.14f to "114%", 1.25f to "125%",
+    0.85f to "85%", 0.92f to "92%", 1.00f to "100%", 1.14f to "114%",
+    1.25f to "125%", 1.50f to "150%", 1.75f to "175%",
 )
 
 @Composable

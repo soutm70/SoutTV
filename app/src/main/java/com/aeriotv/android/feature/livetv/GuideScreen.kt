@@ -349,10 +349,19 @@ fun GuideScreen(
     // text sizing inside the cells/rail, not from oversized rows. Phone/tablet
     // keep the GuideMetrics defaults.
     val isTv = rememberLiveTvFormFactor().isTv
+    // GH #25: on TV the guide also honors Appearance > Display Scale >
+    // "Live TV List" ("even at 125% the guide is hard to see" from across
+    // the room). 150/175% trades density for size: rows, rail, hour width,
+    // and cell text all grow together, so the grid shows fewer, LARGER
+    // items. Phone keeps 1x here (pinch zoom already covers the phone).
+    val liveTvDisplayScale by settingsVm.displayScaleLiveTV
+        .collectAsStateWithLifecycle(initialValue = 1f)
+    val tvComfortScale = if (isTv) liveTvDisplayScale.coerceIn(0.85f, 1.75f) else 1f
+
     // tvOS pixelsPerHour = 600pt on a 1920x1080pt canvas; the proportional value
     // on the 960x540dp Android-TV canvas is 300 dp/hour (= 600 * 0.5). Phone keeps
     // the GuideMetrics.HOUR_WIDTH base (320dp), scaled by guideScale.
-    val scaledHourWidth = (if (isTv) 300.dp else GuideMetrics.HOUR_WIDTH) * scale
+    val scaledHourWidth = (if (isTv) 300.dp else GuideMetrics.HOUR_WIDTH) * scale * tvComfortScale
 
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     // The channel rail must stay a small slice of the viewport or it eats the
@@ -366,13 +375,13 @@ fun GuideScreen(
     // number+logo+name cell needed 168dp, a quarter of an unfolded-Fold guide
     // (user report). Unlike iOS the width deliberately ignores the guide zoom
     // [scale], which on Android scales the time axis only.
-    val railWidth = if (isTv) 120.dp else 104.dp
+    val railWidth = if (isTv) 120.dp * tvComfortScale else 104.dp
     // Row + time-header sized to tvOS PROPORTIONS on the 960x540dp Android-TV
     // canvas (NOT copied from tvOS point values, which would be ~2x too big).
     // tvOS rowHeight 110pt / 1080 = 10.19% -> 540dp * 0.1019 = 55dp;
     // timeHeader 50pt / 1080 = 4.63% -> 540dp * 0.0463 = 25dp.
-    val rowHeight = if (isTv) 55.dp else GuideMetrics.ROW_HEIGHT
-    val headerHeight = if (isTv) 25.dp else GuideMetrics.HEADER_HEIGHT
+    val rowHeight = if (isTv) 55.dp * tvComfortScale else GuideMetrics.ROW_HEIGHT
+    val headerHeight = if (isTv) 25.dp * tvComfortScale else GuideMetrics.HEADER_HEIGHT
     // tvOS draws the guide grid separators as cyan (accentPrimary) hairlines, not
     // neutral gray; mirror that on TV so the grid reads as one continuous surface.
     // Phone keeps the existing gray surfaceVariant divider.
@@ -1641,13 +1650,22 @@ fun GuideScreen(
                     // press" held even ~0.5s blasted through 7-8 channels before the
                     // user could react. The INITIAL press (repeatCount == 0) always
                     // moves -- so a tap is exactly one channel and stays snappy --
-                    // while repeats step only once per HOLD_SCROLL_MIN_INTERVAL_MS,
-                    // so a long hold gives a smooth fast-scroll you can stop on.
+                    // while repeats step on a rate that ACCELERATES with hold
+                    // duration (GH #29): ~8/s for the first second, ~16/s to 2.5s,
+                    // then ~25/s, so big channel lists are traversable without
+                    // giving up the stop-on-target control of the initial rate.
+                    // Hold duration comes free from the native event's downTime.
                     // (Confirmed via logcat: one event = exactly one channel, so the
                     // over-scroll was the unthrottled auto-repeat, not a cascade.)
                     val nowMs = android.os.SystemClock.uptimeMillis()
+                    val heldMs = event.nativeKeyEvent.eventTime - event.nativeKeyEvent.downTime
+                    val holdInterval = when {
+                        heldMs < 1_000L -> HOLD_SCROLL_MIN_INTERVAL_MS
+                        heldMs < 2_500L -> HOLD_SCROLL_ACCEL_INTERVAL_MS
+                        else -> HOLD_SCROLL_TURBO_INTERVAL_MS
+                    }
                     if (event.nativeKeyEvent.repeatCount != 0 &&
-                        nowMs - guideNav.lastVerticalMoveAtMs < HOLD_SCROLL_MIN_INTERVAL_MS
+                        nowMs - guideNav.lastVerticalMoveAtMs < holdInterval
                     ) {
                         return@onPreviewKeyEvent true
                     }
@@ -1744,6 +1762,7 @@ fun GuideScreen(
                     isTv = isTv,
                     railWidth = railWidth,
                     rowHeight = rowHeight,
+                    textScale = tvComfortScale,
                     horizontalScrollState = horizontalScrollState,
                     activeReminderKeys = activeReminderKeys,
                     remindersVm = remindersVm,
@@ -1858,6 +1877,10 @@ private fun ChannelGuideRow(
     isTv: Boolean,
     railWidth: androidx.compose.ui.unit.Dp,
     rowHeight: androidx.compose.ui.unit.Dp,
+    /** GH #25: multiplies the row's TEXT (sp only, via a fontScale override)
+     *  so the TV comfort scale grows rail + cell type along with the row
+     *  metrics. 1f on phone. */
+    textScale: Float = 1f,
     horizontalScrollState: androidx.compose.foundation.ScrollState,
     activeReminderKeys: Set<String>,
     remindersVm: RemindersViewModel,
@@ -1920,6 +1943,16 @@ private fun ChannelGuideRow(
     // scale (per user request, frees rail width for long names) and 11sp on
     // phone, matching the iOS channelLabel 10pt name.
     val nameStyle = MaterialTheme.typography.labelSmall
+    // GH #25: grow TEXT with the TV comfort scale. fontScale multiplies sp
+    // only, so every Text inside the row (rail name/number + programme cell
+    // title/description/time) scales while the dp/px layout math -- viewport
+    // clip, focus spans, scroll offsets -- is untouched.
+    val rowBaseDensity = LocalDensity.current
+    val rowDensity = if (textScale == 1f) rowBaseDensity else androidx.compose.ui.unit.Density(
+        rowBaseDensity.density,
+        rowBaseDensity.fontScale * textScale,
+    )
+    CompositionLocalProvider(LocalDensity provides rowDensity) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2359,6 +2392,7 @@ private fun ChannelGuideRow(
         }
         }
     }
+    } // CompositionLocalProvider (GH #25 row text scale)
 
     // Register this row's "focus the cell at the anchor time" hook with the
     // guide's vertical-nav state. The handler reads `visibleCellSpans` lazily
@@ -2878,6 +2912,12 @@ private const val MS_PER_HOUR_F = 3_600_000f
  *  blasting 7-8 rows in one press. Tune up for a slower hold-scroll. */
 private const val HOLD_SCROLL_MIN_INTERVAL_MS = 120L
 
+/** GH #29: hold-to-accelerate tiers. After 1s of continuous hold the step
+ *  interval halves (~16 ch/s), after 2.5s it drops again (~25 ch/s -- every
+ *  other system auto-repeat). Tap and short-hold behavior is unchanged. */
+private const val HOLD_SCROLL_ACCEL_INTERVAL_MS = 60L
+private const val HOLD_SCROLL_TURBO_INTERVAL_MS = 40L
+
 /** D-pad LEFT auto-repeat count that counts as a "hold" for the tvOS
  *  return-to-All-pill gesture (#10). Android starts auto-repeating ~400ms after
  *  the initial press, then ~1 count / 50ms, so 4 ~= a half-second hold, matching
@@ -3290,21 +3330,18 @@ private class GuideLeadingEdgeBringIntoViewSpec(
         size: Float,
         containerSize: Float,
     ): Float {
-        // Vertical (channel up/down) move in flight: left-align the newly-focused
-        // cell's leading edge to the captured target x (where the highlight
-        // already sat) so the highlight stays put and the shared timeline scrolls
-        // under it. `offset` is the cell's leading edge relative to the viewport
-        // start, so scrolling by (offset - target) lands it exactly at target; the
-        // ScrollState clamps to its own [0, maxValue] at the window edges.
-        // Task #138 exception: a LEFT-CLIPPED landing cell (a long programme
-        // that began before the viewport) stays put. Before catch-up history
-        // cells were clipped at the 1h window edge so this shift was ~0; with
-        // unclipped 7-day history the raw left-align yanked the timeline hours
-        // into the past on each channel move. The sticky programme title keeps
-        // the name readable at the visible left edge.
-        verticalMoveLeadingEdgeTargetPx()?.let { target ->
-            if (offset < 0f) return 0f
-            return offset - target
+        // Vertical (channel up/down) move in flight: do NOT scroll the
+        // timeline at all (GH #24). The previous model left-aligned the
+        // newly-focused cell's start to the old highlight x, which shifted
+        // the shared timeline left/right by the difference in programme
+        // start times on EVERY channel move -- "the guide lurches side to
+        // side as you scroll" -- and dragged the now-bar with it. The
+        // vertical-nav handler always lands focus on a cell that is
+        // already composed at the anchor column, so the time axis (and
+        // the now-bar) stay rock steady and only the highlight moves;
+        // the sticky programme title keeps left-clipped names readable.
+        verticalMoveLeadingEdgeTargetPx()?.let { _ ->
+            return 0f
         }
         // Already fully visible: no scroll.
         if (offset >= 0f && offset + size <= containerSize) return 0f
