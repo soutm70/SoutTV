@@ -73,9 +73,16 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -584,23 +591,71 @@ fun ChannelListScreen(
         // Touch idiom: phone/tablet only. A collection filter isn't part of
         // the cycle; the first swipe from one lands on All.
         val currentGroupForSwipe by rememberUpdatedState(state.selectedGroup)
+        // 2026-07-12: interactive drag - the list follows the finger while a
+        // horizontal group swipe is in flight (rubber-banded when there's no
+        // group on that side), and a committed swipe pages the old list
+        // off-screen before the new group's list slides in from the opposite
+        // edge, so it reads as dragging between pages instead of an instant
+        // filter change. Mirrored on iOS.
+        val groupDragOffset = remember { androidx.compose.animation.core.Animatable(0f) }
+        val groupSwipeScope = rememberCoroutineScope()
+        // The translation lives on the LazyColumn; the gesture detector lives
+        // on the NON-translated PullToRefreshBox ancestor below. Putting both
+        // on the same node broke the drag mid-flight: graphicsLayer shifts the
+        // node's local coordinate space, so each snapTo re-mapped the
+        // stationary finger and corrupted the drag deltas.
         val groupSwipeModifier = if (isTv) Modifier.fillMaxSize()
+        else Modifier
+            .fillMaxSize()
+            .graphicsLayer { translationX = groupDragOffset.value }
+        val groupSwipeGestureModifier = if (isTv) Modifier.fillMaxSize()
         else Modifier
             .fillMaxSize()
             .pointerInput(groups) {
                 var totalX = 0f
+                // True when a swipe in that direction has a group to land on.
+                fun canCycle(forward: Boolean): Boolean {
+                    if (groups.size < 2) return false
+                    val current = groups.indexOf(currentGroupForSwipe).coerceAtLeast(0)
+                    val target = if (forward) current + 1 else current - 1
+                    return target in 0..groups.lastIndex
+                }
                 detectHorizontalDragGestures(
                     onDragStart = { totalX = 0f },
-                    onHorizontalDrag = { _, dragAmount -> totalX += dragAmount },
+                    onHorizontalDrag = { _, dragAmount ->
+                        totalX += dragAmount
+                        val followed = if (canCycle(forward = totalX < 0)) totalX else totalX / 3f
+                        groupSwipeScope.launch { groupDragOffset.snapTo(followed) }
+                    },
+                    onDragCancel = {
+                        groupSwipeScope.launch {
+                            groupDragOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                        }
+                    },
                     onDragEnd = {
                         val threshold = 80.dp.toPx()
-                        if (kotlin.math.abs(totalX) >= threshold && groups.size > 1) {
+                        val forward = totalX < 0
+                        val commit = kotlin.math.abs(totalX) >= threshold && canCycle(forward)
+                        val width = size.width.toFloat()
+                        groupSwipeScope.launch {
+                            if (!commit) {
+                                groupDragOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                                return@launch
+                            }
+                            // Page the old list out, swap the group off-screen,
+                            // slide the new one in from the opposite edge.
+                            groupDragOffset.animateTo(
+                                if (forward) -width else width,
+                                tween(durationMillis = 120, easing = FastOutLinearInEasing),
+                            )
                             val current = groups.indexOf(currentGroupForSwipe).coerceAtLeast(0)
-                            val target = (if (totalX < 0) current + 1 else current - 1)
+                            val target = (if (forward) current + 1 else current - 1)
                                 .coerceIn(0, groups.lastIndex)
-                            if (target != current || groups[target] != currentGroupForSwipe) {
+                            if (groups[target] != currentGroupForSwipe) {
                                 viewModel.onGroupSelected(groups[target])
                             }
+                            groupDragOffset.snapTo(if (forward) width else -width)
+                            groupDragOffset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = 0.9f))
                         }
                     },
                 )
@@ -650,7 +705,7 @@ fun ChannelListScreen(
             PullToRefreshBox(
                 isRefreshing = state.isLoading,
                 onRefresh = { viewModel.refreshPlaylist() },
-                modifier = Modifier.fillMaxSize(),
+                modifier = groupSwipeGestureModifier,
             ) {
                 channelList()
             }
