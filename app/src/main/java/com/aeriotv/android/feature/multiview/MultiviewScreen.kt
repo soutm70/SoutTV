@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.ViewSidebar
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +54,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +78,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
@@ -1449,6 +1452,15 @@ private fun ExoTile(
     val playerRef = remember { mutableStateOf<ExoPlayer?>(null) }
     // Once-only resume seek guard (first STATE_READY for a VOD tile).
     val didResumeRef = remember(tile.id) { mutableStateOf(false) }
+    // Task #150 (iOS parity): per-tile playback-error overlay. Set when the
+    // bounded re-prepare gives up (or the format is unplayable); cleared by
+    // STATE_READY. The retry lambda is hoisted out of the AndroidView
+    // factory so the overlay's Retry button can re-prime with the factory's
+    // header-aware DataSource.
+    val tileError = remember { mutableStateOf<String?>(null) }
+    val tileRetryRef = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val tileRetrySerial = remember { mutableIntStateOf(0) }
+    Box(modifier = Modifier.fillMaxSize()) {
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
@@ -1549,6 +1561,8 @@ private fun ExoTile(
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_READY) {
                         consecutiveRetries = 0
+                        // Task #150: a retry reached steady playback.
+                        tileError.value = null
                         // Resume from the pre-resolved position (Phase 2 picker
                         // looked it up via WatchProgressDao), once per tile.
                         if (isVod && !didResumeRef.value) {
@@ -1577,12 +1591,20 @@ private fun ExoTile(
                         error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES
                     ) {
                         Log.w(TAG, "Tile format unplayable on this device, not retrying: $channelName (${error.errorCodeName})")
+                        // Task #150: surface the real reason on the tile.
+                        tileError.value = error.cause?.message
+                            ?.let { "${error.errorCodeName}: $it" } ?: error.errorCodeName
                         return
                     }
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastRetryAtMs < 5_000L) return
                     if (consecutiveRetries >= 3) {
                         Log.w(TAG, "Tile giving up after $consecutiveRetries retries: $channelName (${error.errorCodeName})")
+                        // Task #150: the internal fast ladder is exhausted --
+                        // show the error card; its Retry / auto-reconnect
+                        // takes over from here.
+                        tileError.value = error.cause?.message
+                            ?.let { "${error.errorCodeName}: $it" } ?: error.errorCodeName
                         return
                     }
                     lastRetryAtMs = now
@@ -1592,6 +1614,19 @@ private fun ExoTile(
                     player.prepare()
                 }
             })
+
+            // Task #150: hoisted retry for the error overlay (manual button
+            // + auto-reconnect loop). Re-primes the CURRENT url with the
+            // factory's header-aware DataSource.
+            tileRetryRef.value = {
+                val p = playerRef.value
+                val u = currentUrlRef.value
+                if (p != null && u.isNotBlank()) {
+                    Log.i(TAG, "Tile error-overlay retry: $channelName")
+                    p.setMediaSource(buildTileMediaSource(u, dataSourceFactory))
+                    p.prepare()
+                }
+            }
 
             Log.i(TAG, "Tile ExoPlayer loading: $channelName")
             if (url.isNotBlank()) {
@@ -1658,6 +1693,47 @@ private fun ExoTile(
             playerRef.value = null
         },
     )
+
+    // Task #150 (iOS parity): tile playback-error overlay. Real error text,
+    // a Retry button, and an auto-reconnect loop on an escalating 5s->30s
+    // delay. STATE_READY in the listener clears it.
+    tileError.value?.let { errMsg ->
+        LaunchedEffect(tileRetrySerial.intValue) {
+            kotlinx.coroutines.delay(
+                minOf(30, 5 shl minOf(tileRetrySerial.intValue, 3)) * 1_000L,
+            )
+            tileRetrySerial.intValue += 1
+            tileRetryRef.value?.invoke()
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.82f))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Playback Problem",
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White,
+            )
+            Text(
+                text = errMsg,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.85f),
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+            )
+            Button(onClick = {
+                tileRetrySerial.intValue += 1
+                tileRetryRef.value?.invoke()
+            }) {
+                Text("Retry")
+            }
+        }
+    }
+    }
 
     // Periodic save for VOD tiles with a continue-watching id. Reuses the SAME
     // save() the single VOD player calls (VODPlayerScreen.kt), so the

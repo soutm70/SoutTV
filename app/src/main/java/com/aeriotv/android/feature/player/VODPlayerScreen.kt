@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -237,6 +240,13 @@ fun VODPlayerScreen(
     // 503 the server's provider slot).
     var nativeRemintInFlight by remember { mutableStateOf(false) }
     var nativeRemintPendingMs by remember { mutableStateOf<Long?>(null) }
+    // Task #150 (iOS parity): playback-error card state. The card shows the
+    // real error, auto-retries on an escalating 5s->30s delay, and offers a
+    // manual Retry; STATE_READY (any successful retry) clears everything.
+    var playbackErrorMessage by remember { mutableStateOf<String?>(null) }
+    var errorRetrySerial by remember { mutableIntStateOf(0) }
+    var errorRetryCountdown by remember { mutableIntStateOf(0) }
+    var errorReconnecting by remember { mutableStateOf(false) }
     // Programme-relative start of the currently tuned timeshift window (0 on
     // first tune; the seek target after each re-tune).
     var catchupOffsetMs by remember { mutableLongStateOf(0L) }
@@ -473,6 +483,22 @@ fun VODPlayerScreen(
         scrubTargetMs = null
         scrubAccelCount = 0
         scrubLastDirection = 0
+    }
+    // Task #150: retry from the playback-error card (manual button + the
+    // auto-reconnect loop). Catch-up re-tunes through seekPlayer (native
+    // mints a fresh session -- the tuned URL is session-bound and may be
+    // dead; XC rebuilds the window URL); plain VOD/DVR re-prepares the
+    // current item in place (media3 keeps the position across prepare()).
+    val doErrorRetry: () -> Unit = {
+        val p = exoPlayer
+        if (p != null) {
+            if (isCatchup) {
+                seekPlayer(positionMs)
+            } else {
+                p.prepare()
+                p.playWhenReady = true
+            }
+        }
     }
     val togglePlayPause: () -> Unit = {
         exoPlayer?.let { player ->
@@ -728,18 +754,13 @@ fun VODPlayerScreen(
                                 // Catch-up (task #136): a provider that flags
                                 // tv_archive but serves no archive answers the
                                 // timeshift URL with 404 "Catch-up not
-                                // available yet". Surface it instead of a
-                                // silent forever-spinner, and back out.
+                                // available yet". Only a genuine no-archive
+                                // 4xx closes; everything else falls through to
+                                // the task #150 error card below.
                                 if (isCatchup &&
                                     error.errorCode ==
                                     PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
                                 ) {
-                                    // Only a 4xx means "no archive": close.
-                                    // A transient 5xx on a mid-programme
-                                    // re-tune used to kick the user out of a
-                                    // replay they had been watching for an
-                                    // hour; keep the player up and let them
-                                    // scrub to retry.
                                     val status = (error.cause as?
                                         androidx.media3.datasource.HttpDataSource
                                             .InvalidResponseCodeException)?.responseCode ?: 0
@@ -768,28 +789,46 @@ fun VODPlayerScreen(
                                                 p.playWhenReady = true
                                                 Log.i(TAG, "Native catch-up session recovered after 4xx")
                                             } else {
-                                                android.widget.Toast.makeText(
-                                                    ctx,
-                                                    "Catch-up session expired.",
-                                                    android.widget.Toast.LENGTH_LONG,
-                                                ).show()
-                                                onClose()
+                                                // Silent recovery failed: the
+                                                // card (with its remint-aware
+                                                // Retry) takes over.
+                                                playbackErrorMessage =
+                                                    "Catch-up session expired (HTTP $status)"
+                                                errorReconnecting = false
                                             }
                                         }
-                                    } else if (status in 400..499) {
+                                        return
+                                    }
+                                    if (status in 400..499 && !isNativeCatchup) {
                                         android.widget.Toast.makeText(
                                             ctx,
                                             "Catch-up isn't available for this program on your provider.",
                                             android.widget.Toast.LENGTH_LONG,
                                         ).show()
                                         onClose()
-                                    } else {
-                                        android.widget.Toast.makeText(
-                                            ctx,
-                                            "Catch-up stream hiccup (HTTP $status). Scrub to retry.",
-                                            android.widget.Toast.LENGTH_SHORT,
-                                        ).show()
+                                        return
                                     }
+                                }
+                                // Task #150 (iOS parity): every other failure
+                                // surfaces the error card with the REAL error;
+                                // the card auto-retries and offers manual Retry.
+                                playbackErrorMessage = error.cause?.message
+                                    ?.let { "${error.errorCodeName}: $it" }
+                                    ?: error.errorCodeName
+                                errorReconnecting = false
+                            }
+
+                            override fun onPlaybackStateChanged(playbackState: Int) {
+                                // A retry (manual, auto, or the silent native
+                                // re-mint) reached steady playback: dismiss
+                                // the card and reset the escalation.
+                                if (playbackState == Player.STATE_READY &&
+                                    playbackErrorMessage != null
+                                ) {
+                                    playbackErrorMessage = null
+                                    errorReconnecting = false
+                                    errorRetryCountdown = 0
+                                    errorRetrySerial = 0
                                 }
                             }
                         })
@@ -1138,6 +1177,74 @@ fun VODPlayerScreen(
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter),
                 )
+            }
+        }
+
+        // Task #150 (iOS parity): playback-error card. Shows the real error,
+        // auto-retries on an escalating 5s->30s delay, and offers manual
+        // Retry / Close. STATE_READY in the listener clears it the moment a
+        // retry reaches steady playback.
+        playbackErrorMessage?.let { errMsg ->
+            LaunchedEffect(errorRetrySerial) {
+                errorReconnecting = false
+                // 5s, 10s, 20s, then 30s forever.
+                var remaining = minOf(30, 5 shl minOf(errorRetrySerial, 3))
+                while (remaining > 0) {
+                    errorRetryCountdown = remaining
+                    delay(1_000L)
+                    remaining -= 1
+                }
+                errorRetryCountdown = 0
+                errorReconnecting = true
+                errorRetrySerial += 1
+                doErrorRetry()
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f))
+                    .padding(32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFFF9800),
+                    modifier = Modifier.size(44.dp),
+                )
+                Text(
+                    text = "Playback Problem",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                )
+                Text(
+                    text = errMsg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f),
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = when {
+                        errorReconnecting -> "Reconnecting…"
+                        errorRetryCountdown > 0 -> "Retrying in ${errorRetryCountdown}s"
+                        else -> " "
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.72f),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = {
+                        errorReconnecting = true
+                        errorRetrySerial += 1
+                        doErrorRetry()
+                    }) {
+                        Text("Retry Now")
+                    }
+                    Button(onClick = onClose) {
+                        Text("Close")
+                    }
+                }
             }
         }
     }

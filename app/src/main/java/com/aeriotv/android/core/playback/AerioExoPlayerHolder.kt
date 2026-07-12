@@ -309,6 +309,37 @@ class AerioExoPlayerHolder @Inject constructor(
      *  reconnect, so the player UI can show "Channel unavailable" instead of an
      *  endless black screen. Cleared on the next [playUrl]. */
     val streamUnavailable: StateFlow<Boolean> = _streamUnavailable.asStateFlow()
+    private val _lastErrorText = MutableStateFlow<String?>(null)
+    /** Task #150: the most recent playback failure in user-showable form
+     *  (error code name + cause message, or the no-data description). The
+     *  unavailable overlay shows it so "Channel unavailable" stops hiding
+     *  what actually went wrong. Cleared on the next [playUrl]. */
+    val lastErrorText: StateFlow<String?> = _lastErrorText.asStateFlow()
+
+    /** Task #150: manual/auto retry for the unavailable overlay. Clears the
+     *  flag, resets the no-data heal budget, and re-primes the last URL --
+     *  through the LAN/WAN re-probe hook when the screen wired one, so a
+     *  network flip since the failure is picked up. */
+    fun retryUnavailable() {
+        val url = lastPlayUrl ?: return
+        _streamUnavailable.value = false
+        _lastErrorText.value = null
+        noDataHealAttempts = 0
+        val hook = onTerminalErrorRebuildUrl
+        if (hook != null) {
+            watchdogScope.launch {
+                val fresh = runCatching { hook() }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    playUrl(
+                        if (!fresh.isNullOrBlank()) fresh else url,
+                        lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri,
+                    )
+                }
+            }
+        } else {
+            playUrl(url, lastPlayTitle, lastPlaySubtitle, lastPlayArtworkUri)
+        }
+    }
 
     /** Arms the watchdog on first steady playback + recovers on a hard error. */
     private val watchdogListener = object : Player.Listener {
@@ -321,6 +352,11 @@ class AerioExoPlayerHolder @Inject constructor(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // Task #150: remember the failure in user-showable form for the
+            // unavailable overlay (self-heals below may still recover; the
+            // text only surfaces if the stream ends up flagged unavailable).
+            _lastErrorText.value = error.cause?.message
+                ?.let { "${error.errorCodeName}: $it" } ?: error.errorCodeName
             // GH #8: the forced-PCM sink produced no audio / failed to init on
             // some devices. Rebuild once with the stock context sink (which is
             // the path that works everywhere) and replay. A plain forceReload
@@ -1063,6 +1099,9 @@ class AerioExoPlayerHolder @Inject constructor(
      *  "Channel unavailable" (instead of an endless black screen) and stop the
      *  dead connection. A fresh [playUrl] (channel flip / re-tap) clears it. */
     private fun markStreamUnavailable() {
+        if (_lastErrorText.value == null) {
+            _lastErrorText.value = "No data received from the stream"
+        }
         _streamUnavailable.value = true
         stop()
     }
@@ -1120,6 +1159,7 @@ class AerioExoPlayerHolder @Inject constructor(
         noFrameHealAttempts = 0
         noDataHealAttempts = 0
         _streamUnavailable.value = false
+        _lastErrorText.value = null
         streamPrimedAtMs = lastPositionAdvanceAtMs
     }
 

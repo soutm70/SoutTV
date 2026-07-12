@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.style.TextAlign
@@ -534,6 +535,9 @@ fun PlayerScreen(
     // no-data watchdog). Drives the "Channel unavailable" overlay below instead
     // of an endless black screen. A channel flip / re-tap clears it.
     val streamUnavailable by exoHolder.streamUnavailable.collectAsStateWithLifecycle()
+    // Task #150: escalation counter for the unavailable overlay's auto-retry
+    // (5s doubling to a 30s cap). Bumped per retry; reset on channel change.
+    var unavailableRetrySerial by remember(currentChannel?.id) { mutableIntStateOf(0) }
 
     // Returning to the foreground player must always restore video unless the
     // user explicitly chose Audio Only. A media-session controller (or the old
@@ -749,10 +753,28 @@ fun PlayerScreen(
 
         // Dead-upstream net: the holder's no-data watchdog reconnected once and
         // still got zero bytes, so it flagged the channel unavailable + stopped.
-        // Show a clear message instead of an endless black screen. No focusable
-        // surface (no background pointer handler) so the chrome toggle + D-pad
-        // channel flip below still work; a flip / re-tap clears the flag.
+        // Task #150 (iOS parity): show WHAT failed, keep auto-retrying on an
+        // escalating 5s->30s delay, and offer a manual Retry button. D-pad
+        // up/down still bubbles to the root key handler so channel flips keep
+        // working (a flip clears the flag and resets the escalation).
         if (streamUnavailable) {
+            val lastErrorText by exoHolder.lastErrorText.collectAsStateWithLifecycle()
+            var retryCountdown by remember { mutableIntStateOf(0) }
+            var reconnecting by remember { mutableStateOf(false) }
+            LaunchedEffect(unavailableRetrySerial) {
+                reconnecting = false
+                // 5s, 10s, 20s, then 30s forever.
+                var remaining = minOf(30, 5 shl minOf(unavailableRetrySerial, 3))
+                while (remaining > 0) {
+                    retryCountdown = remaining
+                    kotlinx.coroutines.delay(1_000)
+                    remaining -= 1
+                }
+                retryCountdown = 0
+                reconnecting = true
+                unavailableRetrySerial += 1
+                exoHolder.retryUnavailable()
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -762,15 +784,38 @@ fun PlayerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "Channel unavailable",
+                    text = "Channel Unavailable",
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White,
                 )
+                if (!lastErrorText.isNullOrBlank()) {
+                    Text(
+                        text = lastErrorText.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center,
+                    )
+                }
                 Text(
-                    text = "This stream isn't responding right now. Press Back to exit, " +
-                        "or use the D-pad up/down to change channels.",
+                    text = when {
+                        reconnecting -> "Reconnecting…"
+                        retryCountdown > 0 -> "Retrying in ${retryCountdown}s"
+                        else -> " "
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.72f),
+                )
+                Button(onClick = {
+                    reconnecting = true
+                    unavailableRetrySerial += 1
+                    exoHolder.retryUnavailable()
+                }) {
+                    Text("Retry Now")
+                }
+                Text(
+                    text = "Press Back to exit, or use the D-pad up/down to change channels.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.6f),
                     textAlign = TextAlign.Center,
                 )
             }
