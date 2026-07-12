@@ -3476,10 +3476,21 @@ private class GuideLeadingEdgeBringIntoViewSpec(
                 offset >= containerSize -> offset                     // entirely off the right: leading edge -> start
                 else -> offset + size - containerSize                 // entirely off the left: trailing edge -> end
             }
+        } else if (offset < 0f) {
+            // Left-clipped normal cell. When it is already SUBSTANTIALLY
+            // visible (>= 25% of the viewport), stay put: entering the grid
+            // lands on the AIRING cell, which is almost always left-clipped,
+            // and revealing its start dragged the whole timeline back to the
+            // programme start (user report 2026-07-12: "scrolled down from
+            // the All pill and the timeline completely shifted"). The sticky
+            // programme title keeps a clipped name readable, matching the
+            // tvOS model where the time axis never moves on focus. A cell
+            // showing only a sliver still gets the reveal - that shape is an
+            // explicit LEFT navigation, where the scroll is the point.
+            if (offset + size >= containerSize * 0.25f) 0f else offset
         } else {
-            // Normal cell: minimal nudge to bring it just into view (leading if
-            // off the start, trailing if off the end).
-            if (offset < 0f) offset else offset + size - containerSize
+            // Normal cell off the end: minimal trailing-edge reveal.
+            offset + size - containerSize
         }
         // Invariant (2026-07-12 Streamer field trace): a focus change may never
         // move the shared timeline more than ~one viewport. Every legitimate
