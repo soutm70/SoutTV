@@ -410,6 +410,31 @@ class AerioExoPlayerHolder @Inject constructor(
             // the LIVE channel mid-replay. Leave the player in its error
             // state; the unified player surface owns recovery/exit.
             if (isCatchup) {
+                // Codec init at catch-up tune-in can transiently fail while
+                // the previous stream's decoder (mini-player, a 4K live
+                // channel) is still being released - MediaTek boxes report
+                // ERROR_CODE_DECODING_RESOURCES_RECLAIMED. The live path
+                // survives this via forceReload; give the archive replay the
+                // same courtesy with a bounded re-tune before surfacing.
+                val transientDecode =
+                    error.errorCode == PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ||
+                        error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+                val cu = lastCatchupUrl
+                if (transientDecode && cu != null && catchupDecodeRetries < 2) {
+                    catchupDecodeRetries += 1
+                    Log.w(TAG, "[CATCHUP] ${error.errorCodeName} at tune-in; re-tuning (retry $catchupDecodeRetries)")
+                    watchdogScope.launch {
+                        delay(600)
+                        withContext(Dispatchers.Main) {
+                            if (isCatchup) {
+                                catchupRetryPass = true
+                                playCatchup(cu, lastCatchupTitle, lastCatchupSubtitle, lastCatchupArtworkUri)
+                                catchupRetryPass = false
+                            }
+                        }
+                    }
+                    return
+                }
                 Log.w(TAG, "[CATCHUP] terminal error ${error.errorCodeName}; staying (no live re-prime)")
                 // Task #148 milestone B: surface it - the unified TV player
                 // renders its catch-up error overlay off these (a provider
@@ -835,6 +860,16 @@ class AerioExoPlayerHolder @Inject constructor(
     var isCatchup = false
         private set
 
+    // Catch-up decoder-reclaim self-heal state: the last playCatchup args so
+    // onPlayerError can replay the exact tune, a bounded retry counter, and a
+    // flag so the retry replay doesn't reset its own counter.
+    private var lastCatchupUrl: String? = null
+    private var lastCatchupTitle: String? = null
+    private var lastCatchupSubtitle: String? = null
+    private var lastCatchupArtworkUri: android.net.Uri? = null
+    private var catchupDecodeRetries = 0
+    private var catchupRetryPass = false
+
     /**
      * Tune the shared player onto a catch-up timeshift URL. Raw MPEG-TS,
      * unseekable by design (Dispatcharr serves an estimated-length
@@ -857,6 +892,11 @@ class AerioExoPlayerHolder @Inject constructor(
         }
         isCatchup = true
         timeshiftErrorRetries = 0
+        if (!catchupRetryPass) catchupDecodeRetries = 0
+        lastCatchupUrl = url
+        lastCatchupTitle = title
+        lastCatchupSubtitle = subtitle
+        lastCatchupArtworkUri = artworkUri
         resetWatchdogStateForNewStream()
         setVideoTrackEnabled(true)
         val mediaMetadata = MediaMetadata.Builder()

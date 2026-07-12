@@ -248,7 +248,23 @@ fun PlayerScreen(
     // hidden) so the remote's up/down reaches the channel-flip handler on TV.
     val playbackFocus = remember { FocusRequester() }
     val nowProgramme by remember(epgByChannel, currentChannel) {
-        derivedStateOf { currentChannel?.let { epgByChannel[it.guideMatchKey]?.nowPlaying() } }
+        derivedStateOf {
+            // Catch-up: the info card / footer must describe the REPLAYED
+            // programme, not whatever happens to be airing live on the
+            // channel right now (task #148 milestone B polish).
+            if (isCatchupMode) {
+                EPGProgramme(
+                    channelId = currentChannel?.guideMatchKey.orEmpty(),
+                    title = catchupTitle.ifBlank { currentChannel?.name.orEmpty() },
+                    description = "",
+                    startMillis = catchupStartMillis,
+                    endMillis = catchupEndMillis,
+                    category = "",
+                )
+            } else {
+                currentChannel?.let { epgByChannel[it.guideMatchKey]?.nowPlaying() }
+            }
+        }
     }
 
     // Persist last-watched channel for the App Behaviors > Resume Last Channel
@@ -1002,8 +1018,19 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White,
                 )
+                // A 4xx really means "no archive"; anything else (decoder,
+                // network) gets neutral copy so we don't blame the provider
+                // for a local failure.
+                val noArchive = lastErrorText.orEmpty().let {
+                    it.contains("404") || it.contains("Not Found", ignoreCase = true) ||
+                        it.contains("BAD_HTTP_STATUS")
+                }
                 Text(
-                    text = "Your provider doesn't have an archive for this programme.",
+                    text = if (noArchive) {
+                        "Your provider doesn't have an archive for this programme."
+                    } else {
+                        "Playback of this programme's archive failed."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.72f),
                     textAlign = TextAlign.Center,
