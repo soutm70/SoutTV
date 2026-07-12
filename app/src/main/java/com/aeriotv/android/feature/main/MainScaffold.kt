@@ -421,6 +421,7 @@ fun MainScaffold(
                     onWatchLive = onWatchLive,
                     onWatchFromBeginning = onWatchFromBeginning,
                     onOpenSearch = onOpenSearch,
+                    viewModel = viewModel,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -555,6 +556,7 @@ fun MainScaffold(
                 onWatchLive = onWatchLive,
                 onWatchFromBeginning = onWatchFromBeginning,
                 onOpenSearch = onOpenSearch,
+                viewModel = viewModel,
                 modifier = Modifier.fillMaxSize(),
             )
             // iOS "Syncing" pill, top-left over content (below the status bar).
@@ -740,6 +742,14 @@ private fun MainTabContent(
     onWatchLive: (String, String, Boolean) -> Unit,
     onWatchFromBeginning: (String, String, Boolean) -> Unit,
     onOpenSearch: () -> Unit = {},
+    // The PLAYLIST_GRAPH-scoped PlaylistViewModel, threaded down so no tab
+    // self-resolves a bare hiltViewModel() against the MAIN entry's store.
+    // That default silently minted a SECOND PlaylistViewModel whose init ran
+    // the whole channel+EPG bootstrap again (2026-07-12 Streamer report:
+    // doubled Room reads, two 24k-row EPG maps, GC storm + jank for the
+    // first minute of every cold launch, and the guide running on a
+    // different state timeline than the scaffold).
+    viewModel: PlaylistViewModel,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -752,6 +762,7 @@ private fun MainTabContent(
                 // through the recording-player route with programme window +
                 // panel tz for the scrubbable timeline.
                 onPlayCatchup = onPlayCatchup,
+                viewModel = viewModel,
             )
             AppTab.Favorites -> FavoritesTabContent(onChannelClick = onChannelClick)
             AppTab.DVR -> DvrTabContent(
@@ -766,7 +777,7 @@ private fun MainTabContent(
                 onResumeMovie = onResumeMovie,
                 onOpenSearch = onOpenSearch,
             )
-            AppTab.Settings -> SettingsTabContent()
+            AppTab.Settings -> SettingsTabContent(playlistViewModel = viewModel)
         }
     }
 }
@@ -972,7 +983,13 @@ internal fun Modifier.collapsibleChrome(visibleFraction: Float): Modifier = this
     }
 
 @Composable
-private fun SettingsTabContent() {
+private fun SettingsTabContent(
+    // The PLAYLIST_GRAPH-scoped instance, threaded from MainTabContent. A
+    // bare hiltViewModel() here resolved against the MAIN entry's store and
+    // minted a second PlaylistViewModel (full bootstrap re-run) the moment
+    // Settings opened - same leak as LiveTVTabContent's old default.
+    playlistViewModel: PlaylistViewModel,
+) {
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     var addMoreOpen by remember { mutableStateOf(false) }
     var playlistDetailOpen by remember { mutableStateOf(false) }
@@ -980,7 +997,7 @@ private fun SettingsTabContent() {
     var playlistsOpen by remember { mutableStateOf(false) }
     var logViewerOpen by remember { mutableStateOf(false) }
     var addPlaylistStep by remember { mutableStateOf<AddPlaylistStep>(AddPlaylistStep.None) }
-    val playlistVm: PlaylistViewModel = hiltViewModel()
+    val playlistVm = playlistViewModel
     val playlistState by playlistVm.state.collectAsStateWithLifecycle()
     // Watch for a playlist id flip while we're inside the Add Playlist flow;
     // that means the user's onboarding Save succeeded and the new row was
@@ -1067,13 +1084,16 @@ private fun SettingsTabContent() {
             onBack = { playlistsOpen = false },
             onAddPlaylist = { addPlaylistStep = AddPlaylistStep.ChooseType },
             onOpenPlaylistDetail = { playlistDetailOpen = true },
+            viewModel = playlistVm,
         )
         editPlaylistOpen -> com.aeriotv.android.feature.settings.EditPlaylistScreen(
             onBack = { editPlaylistOpen = false },
+            viewModel = playlistVm,
         )
         playlistDetailOpen -> com.aeriotv.android.feature.settings.PlaylistDetailScreen(
             onBack = { playlistDetailOpen = false },
             onEdit = { editPlaylistOpen = true },
+            viewModel = playlistVm,
         )
         addMoreOpen -> AddMoreCategoriesScreen(onBack = { addMoreOpen = false })
         section == null -> SettingsScreen(
@@ -1081,6 +1101,7 @@ private fun SettingsTabContent() {
             onOpenPlaylistDetail = { playlistDetailOpen = true },
             onOpenPlaylists = { playlistsOpen = true },
             onAddPlaylist = { addPlaylistStep = AddPlaylistStep.ChooseType },
+            viewModel = playlistVm,
         )
         section == SettingsSection.Appearance -> AppearanceSettingsScreen(
             onBack = { section = null },

@@ -636,17 +636,37 @@ fun GuideScreen(
     // transition so it positions the grid each time the guide opens but never
     // yanks the user back to "now" mid-browse (e.g. when the hour ticks over
     // and windowStart shifts).
-    // Task #136: initial scroll-to-now, run ONCE per guide session.
-    // epgHistoryHours is published with the playlist row itself (before the
-    // guide composes), so windowStart is stable from the first frame and the
-    // only wait is for the strip to measure its full scroll range.
-    // rememberSaveable survives a nav push/pop (catch-up / recording
+    // Task #136: initial scroll-to-now, run once per guide session PLUS a
+    // re-anchor when windowStart shifts while the strip still sits at our
+    // own anchor (see the effect comment below - slow first-launch hydration
+    // can publish a wider history window after the first anchor).
+    // epgHistoryHours is normally published with the playlist row itself
+    // (before the guide composes), so windowStart is stable from the first
+    // frame and the only wait is for the strip to measure its full scroll
+    // range. rememberSaveable survives a nav push/pop (catch-up / recording
     // playback), so returning from a player keeps the timeline where the user
     // left it (rememberScrollState restores the px value) instead of yanking
     // back to now.
     var didScrollToNow by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(filteredChannels.isNotEmpty()) {
-        if (filteredChannels.isEmpty() || didScrollToNow) return@LaunchedEffect
+    // Pixel offset of OUR last programmatic anchor. -1 = unknown (e.g. after
+    // a nav return, where rememberScrollState restored the user's spot and we
+    // must not touch it). Deliberately NOT saveable.
+    var autoAnchorPx by remember { mutableStateOf(-1) }
+    // Re-keyed on windowStart (2026-07-12 Streamer field report): on a slow
+    // first-post-install launch the deferred history merge publishes a wider
+    // epgHistoryHours AFTER the initial anchor, windowStart leaps back, and
+    // the preserved pixel offset silently points at a different wall-clock -
+    // the guide sat hours off "now" over empty future cells. When the window
+    // shifts and the strip is still EXACTLY where our anchor put it (the
+    // user hasn't scrolled), re-anchor on the new timeline; a user-moved
+    // strip is never yanked.
+    LaunchedEffect(filteredChannels.isNotEmpty(), windowStart) {
+        if (filteredChannels.isEmpty()) return@LaunchedEffect
+        if (didScrollToNow &&
+            (autoAnchorPx < 0 || horizontalScrollState.value != autoAnchorPx)
+        ) {
+            return@LaunchedEffect
+        }
         val nowOffsetPx =
             ((System.currentTimeMillis() - windowStart).toFloat() / 3_600_000f) * hourWidthPx
         // Place "now" at ~20% from the left (matches the tvOS screenshots:
@@ -659,7 +679,8 @@ fun GuideScreen(
             snapshotFlow { horizontalScrollState.maxValue }.first { it >= wanted }
         } ?: horizontalScrollState.maxValue.takeIf { it > 0 } ?: return@LaunchedEffect
         didScrollToNow = true
-        horizontalScrollState.scrollTo(wanted.coerceIn(0, maxScroll))
+        autoAnchorPx = wanted.coerceIn(0, maxScroll)
+        horizontalScrollState.scrollTo(autoAnchorPx)
     }
 
     // The host Scaffold sets contentWindowInsets = WindowInsets(0,0,0,0), so each
@@ -1309,11 +1330,13 @@ fun GuideScreen(
 
         // Audit task #21: when the user comes back from the player, scroll the
         // guide to the channel they just watched (iOS LiveTV behaviour). Keyed
-        // on (lastWatched, channels-loaded) so the scroll fires both on cold
-        // launch once channels arrive AND when a fresh lastWatched id flows in
-        // after the player closes. If the user is currently filtering and the
-        // last-watched channel isn't in the filtered list, indexOfFirst returns
-        // -1 and we no-op - the visible filter wins.
+        // on (lastWatched, channels-loaded). Only ids written by THIS
+        // session's playback scroll the guide - the id persisted by a
+        // PREVIOUS session is consumed silently on cold launch (user report
+        // 2026-07-12, Streamer: guide opened scrolled to a days-old channel
+        // with nothing playing). If the user is currently filtering and the
+        // last-watched channel isn't in the filtered list, indexOfFirst
+        // returns -1 and we no-op - the visible filter wins.
         val listState = rememberLazyListState()
         val lastWatchedId by settingsVm.lastWatchedChannelId
             .collectAsStateWithLifecycle(initialValue = "")
@@ -1328,6 +1351,13 @@ fun GuideScreen(
         LaunchedEffect(lastWatchedId, filteredChannels.isNotEmpty()) {
             if (lastWatchedId.isBlank() || filteredChannels.isEmpty()) return@LaunchedEffect
             if (lastWatchedId == consumedLastWatchedId) return@LaunchedEffect
+            // Fresh process: the first non-blank id is the one persisted by a
+            // previous session. Consume it WITHOUT scrolling so a cold launch
+            // always opens at the top of the guide.
+            if (consumedLastWatchedId.isEmpty()) {
+                consumedLastWatchedId = lastWatchedId
+                return@LaunchedEffect
+            }
             // On TV, when the mini-player is showing (we just backed out of the
             // fullscreen player), the focus-on-return effect below -- keyed on the
             // mini-player session -- owns BOTH the scroll and the D-pad focus.

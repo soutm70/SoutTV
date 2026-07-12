@@ -31,7 +31,15 @@ fun LiveTVTabContent(
      *  scrub-seek URL rebuilds. Guide-only (the List view surfaces no past
      *  programmes). */
     onPlayCatchup: (String, String, String, Long, Long, String, String) -> Unit = { _, _, _, _, _, _, _ -> },
-    viewModel: PlaylistViewModel = hiltViewModel(),
+    // REQUIRED, no hiltViewModel() default (2026-07-12 field report): this
+    // composable lives under the MAIN nav entry, so a bare default resolved
+    // against MAIN's store and minted a SECOND PlaylistViewModel besides the
+    // PLAYLIST_GRAPH-scoped one. Its init re-ran the whole channel+EPG
+    // bootstrap on every cold launch (doubled Room reads, two in-memory EPG
+    // maps, a GC storm + first-minute jank on the Streamer) and the guide ran
+    // on a different state timeline than the scaffold. Callers must thread
+    // the graph-scoped instance down.
+    viewModel: PlaylistViewModel,
     settingsVm: SettingsViewModel = hiltViewModel(),
 ) {
     val formFactor = rememberLiveTvFormFactor()
