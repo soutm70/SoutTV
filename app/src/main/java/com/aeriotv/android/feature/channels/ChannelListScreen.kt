@@ -72,7 +72,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -572,10 +575,39 @@ fun ChannelListScreen(
         // skipped entirely (no pull gesture, and the indicator otherwise hangs
         // stuck mid-screen while loading); TV renders the list bare. Phone /
         // tablet keep the swipe-to-refresh affordance.
+        // Apple GH #55 (jayegles): swiping left/right on the LIST cycles the
+        // selected group pill (left = next, right = previous, clamped at the
+        // ends). detectHorizontalDragGestures only wins the pointer contest
+        // when the gesture is predominantly horizontal (horizontal touch
+        // slop), so vertical scrolling and pull-to-refresh are untouched.
+        // Touch idiom: phone/tablet only. A collection filter isn't part of
+        // the cycle; the first swipe from one lands on All.
+        val currentGroupForSwipe by rememberUpdatedState(state.selectedGroup)
+        val groupSwipeModifier = if (isTv) Modifier.fillMaxSize()
+        else Modifier
+            .fillMaxSize()
+            .pointerInput(groups) {
+                var totalX = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { totalX = 0f },
+                    onHorizontalDrag = { _, dragAmount -> totalX += dragAmount },
+                    onDragEnd = {
+                        val threshold = 80.dp.toPx()
+                        if (kotlin.math.abs(totalX) >= threshold && groups.size > 1) {
+                            val current = groups.indexOf(currentGroupForSwipe).coerceAtLeast(0)
+                            val target = (if (totalX < 0) current + 1 else current - 1)
+                                .coerceIn(0, groups.lastIndex)
+                            if (target != current || groups[target] != currentGroupForSwipe) {
+                                viewModel.onGroupSelected(groups[target])
+                            }
+                        }
+                    },
+                )
+            }
         val channelList: @Composable () -> Unit = {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = groupSwipeModifier,
                 // 104dp bottom clears the MainScaffold NavigationBar so the
                 // final channel row stays fully visible above the tab bar.
                 contentPadding = PaddingValues(
