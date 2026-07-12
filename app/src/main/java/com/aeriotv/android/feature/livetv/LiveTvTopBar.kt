@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
@@ -129,7 +131,22 @@ fun LiveTvPillsRow(
     onManageGroups: () -> Unit,
     collectionPillItem: @Composable (ChannelCollection) -> Unit,
 ) {
+    val pillListState = rememberLazyListState()
+    // GH #55 polish: whenever the selection changes (pill tap OR a list
+    // group-swipe), glide the row so the selected pill sits about a third
+    // in from the left edge - the pills visibly follow the swipe.
+    LaunchedEffect(selectedGroup, groups, collections) {
+        val idx = groups.indexOf(selectedGroup)
+        if (idx >= 0) {
+            val item = 1 +
+                collections.count { it.placement == ChannelCollection.PLACEMENT_BEGINNING } +
+                idx
+            val viewport = pillListState.layoutInfo.viewportEndOffset
+            pillListState.animateScrollToItem(item, scrollOffset = -(viewport / 3))
+        }
+    }
     LazyRow(
+        state = pillListState,
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp),

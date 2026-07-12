@@ -651,17 +651,23 @@ private fun FloatingTabBar(
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 2026-07-12 (user report: mistapping channels behind the pill when
+    // changing tabs): sized up to the iPhone bar's proportions - the pill
+    // now spans the width minus side margins with evenly distributed,
+    // taller tab targets instead of a compact wrap-content cluster.
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(32.dp))
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .clip(RoundedCornerShape(36.dp))
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
             .border(
                 1.dp,
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                RoundedCornerShape(32.dp),
+                RoundedCornerShape(36.dp),
             )
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         tabs.forEach { tab ->
@@ -669,24 +675,25 @@ private fun FloatingTabBar(
             androidx.compose.foundation.layout.Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
+                    .weight(1f)
+                    .clip(RoundedCornerShape(22.dp))
                     .background(
                         if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                         else Color.Transparent,
                     )
                     .clickable { onSelect(tab) }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                    .padding(vertical = 9.dp),
             ) {
                 Icon(
                     imageVector = if (isSel) tab.iconSelected else tab.iconUnselected,
                     contentDescription = tab.label,
                     tint = if (isSel) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(24.dp),
                 )
                 Text(
                     text = tab.label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = if (isSel) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
