@@ -1098,15 +1098,24 @@ fun PlayerScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.72f),
                 )
-                Button(onClick = {
-                    reconnecting = true
-                    unavailableRetrySerial += 1
-                    exoHolder.retryUnavailable()
-                }) {
-                    Text("Retry Now")
+                // Phone/tablet: tappable Retry on the card itself. On TV the
+                // Retry lives in the standard controls (focusable via the
+                // remote) - the card stays informational there.
+                if (!isTvForm) {
+                    Button(onClick = {
+                        reconnecting = true
+                        unavailableRetrySerial += 1
+                        exoHolder.retryUnavailable()
+                    }) {
+                        Text("Retry Now")
+                    }
                 }
                 Text(
-                    text = "Press Back to exit, or use the D-pad up/down to change channels.",
+                    text = if (isTvForm) {
+                        "Retry is highlighted below - press Select. Back to exit, or D-pad up/down to change channels."
+                    } else {
+                        "Press Back to exit, or use the D-pad up/down to change channels."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.6f),
                     textAlign = TextAlign.Center,
@@ -1226,6 +1235,13 @@ fun PlayerScreen(
             chromeVisible = chromeVisible,
             pillVisible = pillVisible,
             isTv = isTvForm,
+            // Focusable Retry in the standard controls while the stream is
+            // unavailable (the center card's button can't take remote focus).
+            connectionIssue = streamUnavailable,
+            onRetry = {
+                unavailableRetrySerial += 1
+                exoHolder.retryUnavailable()
+            },
             // #10 player gesture hints: only advertise Up/Down channel-flip when
             // it can actually do something (setting on + more than one channel).
             showChannelFlipHint = appleTVChannelFlip && channels.size >= 2,
@@ -1340,10 +1356,17 @@ fun PlayerScreen(
         subtitles != null || audioTracks != null || playbackSpeedSheet != null ||
         switchStream != null || multiviewPickerOpen
     LaunchedEffect(chromeVisible, lastInteractionAt, interactionLocked) {
-        if (chromeVisible && !interactionLocked) {
+        // Never auto-hide while the stream is unavailable: the chrome hosts the
+        // Retry control the user needs, so it must stay put during an outage.
+        if (chromeVisible && !interactionLocked && !streamUnavailable) {
             delay(AUTO_HIDE_MS)
             chromeVisible = false
         }
+    }
+    // Auto-summon the controls on TV when the stream drops so the focusable
+    // Retry pill is immediately reachable (and re-summon on each retry cycle).
+    LaunchedEffect(streamUnavailable, unavailableRetrySerial) {
+        if (streamUnavailable && isTvForm) chromeVisible = true
     }
 
 

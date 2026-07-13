@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.outlined.AspectRatio
@@ -151,6 +152,11 @@ fun PlayerChromeOverlay(
     onSetSleepMinutes: (Int) -> Unit,
     sleepRemainingMillis: Long?,
     onInteractingChange: (Boolean) -> Unit = {},
+    // Connection-issue Retry (2026-07-12): shown in the standard controls ONLY
+    // while the stream is unavailable, so the remote has a focusable Retry
+    // (the center error-card button can't take focus on TV). onRetry re-tunes.
+    connectionIssue: Boolean = false,
+    onRetry: () -> Unit = {},
     // Live Rewind (task #143). Null state = feature off or no buffer
     // session; the band falls back to the read-only EPG progress bar.
     timeshiftState: com.aeriotv.android.core.timeshift.TimeshiftController.State? = null,
@@ -213,10 +219,19 @@ fun PlayerChromeOverlay(
     // below whenever chromeVisible flips to true.
     val optionsFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val closeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    LaunchedEffect(chromeVisible) {
+    val retryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(chromeVisible, connectionIssue) {
         if (chromeVisible) {
             kotlinx.coroutines.delay(100)
-            runCatching { (if (isTv) optionsFocus else closeFocus).requestFocus() }
+            // During a connection issue the Retry pill is the primary action,
+            // so land focus there; otherwise the usual Options / Close target.
+            runCatching {
+                when {
+                    connectionIssue && isTv -> retryFocus.requestFocus()
+                    isTv -> optionsFocus.requestFocus()
+                    else -> closeFocus.requestFocus()
+                }
+            }
         }
     }
 
@@ -349,6 +364,17 @@ fun PlayerChromeOverlay(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Connection-issue Retry: leads the standard control row and
+                // auto-focuses (see the focus LaunchedEffect) so the remote has
+                // a reachable re-tune while "Channel Unavailable" is showing.
+                if (connectionIssue) {
+                    PlayerPill(
+                        icon = Icons.Filled.Refresh,
+                        label = "Retry",
+                        onClick = onRetry,
+                        modifier = Modifier.focusRequester(retryFocus),
+                    )
+                }
                 if (tvTransport) {
                     PlayerPill(
                         icon = Icons.Filled.Replay30,
