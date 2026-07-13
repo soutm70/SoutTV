@@ -3,8 +3,9 @@ package com.aeriotv.android.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Brand theme presets mirroring iOS AerioTV's AppTheme enum.
- * User-selectable from Settings. Default is [Aerio] (cyan on navy).
+ * Brand theme presets.
+ * User-selectable from Settings. Default is [SoutTV] (purple on near-black,
+ * inspired by the HBO Max / Max classic deep-violet era).
  */
 enum class AppTheme(
     val displayName: String,
@@ -13,46 +14,53 @@ enum class AppTheme(
     val appBackground: Color,
     val cardBackground: Color,
 ) {
+    SoutTV(
+        displayName = "SoutTV",
+        accentPrimary   = Color(0xFF9B30FF),  // Vivid purple
+        accentSecondary = Color(0xFF6B00C8),  // Deep violet
+        appBackground   = Color(0xFF0A000F),  // Near-black, purple-tinted
+        cardBackground  = Color(0xFF16002A),  // Dark plum
+    ),
     Aerio(
         displayName = "AerioTV",
-        accentPrimary = Color(0xFF1AC4D8),
+        accentPrimary   = Color(0xFF1AC4D8),
         accentSecondary = Color(0xFF1A8FA8),
-        appBackground = Color(0xFF0A1628),
-        cardBackground = Color(0xFF0D1E35),
+        appBackground   = Color(0xFF0A1628),
+        cardBackground  = Color(0xFF0D1E35),
     ),
     Midnight(
         displayName = "Midnight",
-        accentPrimary = Color(0xFF60A5FA),
+        accentPrimary   = Color(0xFF60A5FA),
         accentSecondary = Color(0xFF3B82F6),
-        appBackground = Color(0xFF0A0F1A),
-        cardBackground = Color(0xFF111827),
+        appBackground   = Color(0xFF0A0F1A),
+        cardBackground  = Color(0xFF111827),
     ),
     Sunset(
         displayName = "Sunset",
-        accentPrimary = Color(0xFFFB923C),
+        accentPrimary   = Color(0xFFFB923C),
         accentSecondary = Color(0xFFF97316),
-        appBackground = Color(0xFF0F0A07),
-        cardBackground = Color(0xFF1A1108),
+        appBackground   = Color(0xFF0F0A07),
+        cardBackground  = Color(0xFF1A1108),
     ),
     Forest(
         displayName = "Forest",
-        accentPrimary = Color(0xFF4ADE80),
+        accentPrimary   = Color(0xFF4ADE80),
         accentSecondary = Color(0xFF22C55E),
-        appBackground = Color(0xFF080F0A),
-        cardBackground = Color(0xFF0E1A10),
+        appBackground   = Color(0xFF080F0A),
+        cardBackground  = Color(0xFF0E1A10),
     ),
     Lavender(
         displayName = "Lavender",
-        accentPrimary = Color(0xFFA78BFA),
+        accentPrimary   = Color(0xFFA78BFA),
         accentSecondary = Color(0xFF8B5CF6),
-        appBackground = Color(0xFF0C0A12),
-        cardBackground = Color(0xFF130F1E),
+        appBackground   = Color(0xFF0C0A12),
+        cardBackground  = Color(0xFF130F1E),
     ),
     Monochrome(
         displayName = "Monochrome",
-        accentPrimary = Color(0xFFE2E8F0),
+        accentPrimary   = Color(0xFFE2E8F0),
         accentSecondary = Color(0xFF94A3B8),
-        appBackground = Color(0xFF0A0A0A),
-        cardBackground = Color(0xFF111111),
+        appBackground   = Color(0xFF0A0A0A),
+        cardBackground  = Color(0xFF111111),
     ),
 }

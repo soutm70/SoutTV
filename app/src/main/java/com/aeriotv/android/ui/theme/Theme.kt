@@ -9,11 +9,11 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 
-val LocalAppTheme = staticCompositionLocalOf { AppTheme.Aerio }
+val LocalAppTheme = staticCompositionLocalOf { AppTheme.SoutTV }
 
 @Composable
 fun AerioTVTheme(
-    appTheme: AppTheme = AppTheme.Aerio,
+    appTheme: AppTheme = AppTheme.SoutTV,
     customAccent: Color? = null,
     content: @Composable () -> Unit,
 ) {
@@ -28,19 +28,15 @@ fun AerioTVTheme(
         Configuration.UI_MODE_TYPE_TELEVISION
     // Mirrors iOS Colors.swift textSecondary = accent.opacity(0.65 phone / 0.75
     // tvOS). Every secondary copy (subtitles, card descriptions, info-banner
-    // body, hint text) renders cyan-tinted instead of plain white, which is what
-    // gives the iOS Welcome / Add Playlist / Configure screens their soft
-    // branded feel. Mapped through Material3 onSurfaceVariant so every call site
+    // body, hint text) renders purple-tinted instead of plain white, which gives
+    // the SoutTV screens their soft branded feel.
+    // Mapped through Material3 onSurfaceVariant so every call site
     // (`MaterialTheme.colorScheme.onSurfaceVariant`) picks it up.
     val textSecondary = effectivePrimary.copy(alpha = if (isTv) 0.75f else 0.65f)
-    // Visual-parity polish: iOS has a SECOND, dimmer rung under textSecondary.
-    // Colors.swift textTertiary = accent.opacity(0.45 tvOS / 0.28 phone), used
-    // for channel numbers, time ranges, and hints so they recede behind the
-    // title/description hierarchy. Android previously rendered all of those on
-    // the single textSecondary rung, which is a big part of why the Apple apps
-    // read "cleaner". Carried on Material3's otherwise-unused `tertiary` slot
-    // (same pattern as textSecondary riding onSurfaceVariant above); reach it
-    // via `MaterialTheme.colorScheme.tertiary`.
+    // Visual-parity polish: textTertiary = accent.opacity(0.45 tvOS / 0.28 phone),
+    // used for channel numbers, time ranges, and hints so they recede behind the
+    // title/description hierarchy. Carried on Material3's otherwise-unused
+    // `tertiary` slot; reach it via `MaterialTheme.colorScheme.tertiary`.
     val textTertiary = effectivePrimary.copy(alpha = if (isTv) 0.45f else 0.28f)
     val colorScheme = darkColorScheme(
         primary = effectivePrimary,
