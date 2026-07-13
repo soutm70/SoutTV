@@ -2379,7 +2379,17 @@ private fun ChannelGuideRow(
         // VERTICAL axis and glued the focused row to the top of the guide
         // (user report: scrolling stuck to the top row).
         val stripBringIntoViewSpec = remember(guideNav) {
-            GuideLeadingEdgeBringIntoViewSpec { guideNav.leadingEdgeTargetPx }
+            GuideLeadingEdgeBringIntoViewSpec(
+                verticalMoveLeadingEdgeTargetPx = { guideNav.leadingEdgeTargetPx },
+                // Reveal window: fresh for ~800ms after the last explicit
+                // LEFT/RIGHT press (auto-repeat keeps refreshing it). Long
+                // enough that a legitimate reveal animation finishes; every
+                // focus event outside it leaves the timeline untouched.
+                horizontalNavActive = {
+                    android.os.SystemClock.uptimeMillis() -
+                        guideNav.lastHorizontalNavAtMs < 800L
+                },
+            )
         }
         CompositionLocalProvider(LocalBringIntoViewSpec provides stripBringIntoViewSpec) {
         // Programme strip - horizontally scrolled with the header.
@@ -3214,10 +3224,20 @@ private class GuideVerticalNavState {
         anchorTimeMs = timeMs
     }
 
+    /** Wall-clock of the last explicit LEFT/RIGHT press. The bring-into-view
+     *  spec only reveals a focused cell while this is fresh (see
+     *  horizontalNavActive at the spec construction) - every OTHER focus
+     *  change (grid entry, vertical channel moves, focus restore, node
+     *  rebinds) leaves the timeline untouched, matching tvOS where the time
+     *  axis never moves because of focus. */
+    var lastHorizontalNavAtMs: Long = 0L
+
     /** The user pressed LEFT/RIGHT (or clicked): drop the vertical-move pin so
-     *  normal horizontal bring-into-view (leading-edge / minimal-nudge) runs. */
+     *  normal horizontal bring-into-view (leading-edge / minimal-nudge) runs,
+     *  and open the short reveal window the spec checks. */
     fun allowHorizontalScroll() {
         leadingEdgeTargetPx = null
+        lastHorizontalNavAtMs = android.os.SystemClock.uptimeMillis()
     }
 
     /** Per-row hook: focus the cell at [anchorTimeMs]; returns true if a cell
@@ -3467,6 +3487,7 @@ private object GuideVerticalMinimalBringIntoViewSpec : BringIntoViewSpec {
 @OptIn(ExperimentalFoundationApi::class)
 private class GuideLeadingEdgeBringIntoViewSpec(
     private val verticalMoveLeadingEdgeTargetPx: () -> Float?,
+    private val horizontalNavActive: () -> Boolean,
 ) : BringIntoViewSpec {
     override fun calculateScrollDistance(
         offset: Float,
@@ -3486,6 +3507,15 @@ private class GuideLeadingEdgeBringIntoViewSpec(
         verticalMoveLeadingEdgeTargetPx()?.let { _ ->
             return 0f
         }
+        // tvOS model (2026-07-12, after two field reports of the timeline
+        // "jumping" on focus): FOCUS never moves the timeline. Only an
+        // explicit LEFT/RIGHT navigation - a short window refreshed by every
+        // press, including auto-repeat - may reveal the newly focused cell.
+        // Grid entry, vertical moves, focus restores and node rebinds all
+        // land with the time axis untouched; the sticky programme title
+        // keeps left-clipped names readable. (A 25%-visibility threshold
+        // tried first was defeated by an airing cell with 24% showing.)
+        if (!horizontalNavActive()) return 0f
         // Already fully visible: no scroll.
         if (offset >= 0f && offset + size <= containerSize) return 0f
         // Oversized cell (wider than the viewport): if ANY part already overlaps
@@ -3501,21 +3531,10 @@ private class GuideLeadingEdgeBringIntoViewSpec(
                 offset >= containerSize -> offset                     // entirely off the right: leading edge -> start
                 else -> offset + size - containerSize                 // entirely off the left: trailing edge -> end
             }
-        } else if (offset < 0f) {
-            // Left-clipped normal cell. When it is already SUBSTANTIALLY
-            // visible (>= 25% of the viewport), stay put: entering the grid
-            // lands on the AIRING cell, which is almost always left-clipped,
-            // and revealing its start dragged the whole timeline back to the
-            // programme start (user report 2026-07-12: "scrolled down from
-            // the All pill and the timeline completely shifted"). The sticky
-            // programme title keeps a clipped name readable, matching the
-            // tvOS model where the time axis never moves on focus. A cell
-            // showing only a sliver still gets the reveal - that shape is an
-            // explicit LEFT navigation, where the scroll is the point.
-            if (offset + size >= containerSize * 0.25f) 0f else offset
         } else {
-            // Normal cell off the end: minimal trailing-edge reveal.
-            offset + size - containerSize
+            // Normal cell during explicit L/R navigation: minimal reveal
+            // (leading edge if off the start, trailing edge if off the end).
+            if (offset < 0f) offset else offset + size - containerSize
         }
         // Invariant (2026-07-12 Streamer field trace): a focus change may never
         // move the shared timeline more than ~one viewport. Every legitimate
