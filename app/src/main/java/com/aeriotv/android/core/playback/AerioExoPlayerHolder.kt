@@ -318,13 +318,23 @@ class AerioExoPlayerHolder @Inject constructor(
      *  unavailable overlay shows it so "Channel unavailable" stops hiding
      *  what actually went wrong. Cleared on the next [playUrl]. */
     val lastErrorText: StateFlow<String?> = _lastErrorText.asStateFlow()
+    /** The URL to replay when the unavailable overlay retries. Preserved by
+     *  [markStreamUnavailable] BEFORE it calls [stop] (which nulls
+     *  [lastPlayUrl]) - without this every [retryUnavailable] hit the
+     *  `lastPlayUrl ?: return` guard and no-op'd, so the countdown cycled
+     *  forever but never re-tuned and a returning server never recovered
+     *  (Streamer field test 2026-07-12: Dispatcharr container killed then
+     *  restarted, retry never reconnected). Cleared on a fresh [playUrl]. */
+    private var reconnectUrl: String? = null
 
     /** Task #150: manual/auto retry for the unavailable overlay. Clears the
      *  flag, resets the no-data heal budget, and re-primes the last URL --
      *  through the LAN/WAN re-probe hook when the screen wired one, so a
      *  network flip since the failure is picked up. */
     fun retryUnavailable() {
-        val url = lastPlayUrl ?: return
+        // lastPlayUrl is null here (markStreamUnavailable -> stop() cleared it),
+        // so fall back to the URL preserved at markStreamUnavailable time.
+        val url = lastPlayUrl ?: reconnectUrl ?: return
         _streamUnavailable.value = false
         _lastErrorText.value = null
         noDataHealAttempts = 0
@@ -1243,6 +1253,11 @@ class AerioExoPlayerHolder @Inject constructor(
      *  "Channel unavailable" (instead of an endless black screen) and stop the
      *  dead connection. A fresh [playUrl] (channel flip / re-tap) clears it. */
     private fun markStreamUnavailable() {
+        // Preserve the replay URL BEFORE stop() nulls lastPlayUrl, so the
+        // overlay's countdown + Retry can actually re-tune (and recover when
+        // the server returns). Prefer whatever fresh URL a rebuild hook would
+        // yield next; the raw lastPlayUrl is the reliable fallback.
+        reconnectUrl = lastPlayUrl ?: reconnectUrl
         if (_lastErrorText.value == null) {
             _lastErrorText.value = "No data received from the stream"
         }
@@ -1304,6 +1319,10 @@ class AerioExoPlayerHolder @Inject constructor(
         noDataHealAttempts = 0
         _streamUnavailable.value = false
         _lastErrorText.value = null
+        // A fresh stream is starting; if it fails, markStreamUnavailable will
+        // re-preserve the current URL. (retryUnavailable already captured its
+        // URL before the playUrl that lands here, so clearing is safe.)
+        reconnectUrl = null
         streamPrimedAtMs = lastPositionAdvanceAtMs
     }
 
