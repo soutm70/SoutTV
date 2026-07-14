@@ -103,7 +103,7 @@ private fun SplashContent(modifier: Modifier = Modifier) {
         visible = false
     }
 
-    val accent = Color(0xFF1AC4D8)
+    val accent = Color(0xFF9B30FF)
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -121,7 +121,7 @@ private fun SplashContent(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(logoBottomPad))
             Text(
-                text = "AerioTV",
+                text = "SoutsTV",
                 fontSize = titleSize,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
