@@ -40,7 +40,7 @@ object PipState {
     val audioPlaybackActive = MutableStateFlow(false)
 
     /** Now-playing labels for the background notification used on audio-only leave. */
-    @Volatile var nowPlayingTitle: String = "AerioTV"
+    @Volatile var nowPlayingTitle: String = "SoutsTV"
     @Volatile var nowPlayingSubtitle: String = ""
 
     /** Now-playing channel logo URL, shown as the notification's large icon. */

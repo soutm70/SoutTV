@@ -190,13 +190,13 @@ private fun UpdatePromptBody(
         is UpdateState.Available -> {
             titleText = "Update available"
             val mb = state.info.apkSizeBytes / (1024 * 1024)
-            bodyText = "AerioTV ${state.info.versionName} is ready to download (${mb} MB)."
+            bodyText = "SoutsTV ${state.info.versionName} is ready to download (${mb} MB)."
             notes = state.info.notes
             primaryLabel = "Download"
         }
         is UpdateState.Downloading -> {
             titleText = "Downloading update"
-            bodyText = "AerioTV ${state.info.versionName}"
+            bodyText = "SoutsTV ${state.info.versionName}"
             progressPercent = state.progressPercent
             laterLabel = null
         }
@@ -208,7 +208,7 @@ private fun UpdatePromptBody(
         }
         is UpdateState.ReadyToInstall -> {
             titleText = "Ready to install"
-            bodyText = "AerioTV ${state.info.versionName} is verified and ready. Your " +
+            bodyText = "SoutsTV ${state.info.versionName} is verified and ready. Your " +
                 "channels, settings, and recordings are kept. AerioTV will close to " +
                 "install; reopen it from your home screen."
             primaryLabel = "Install"

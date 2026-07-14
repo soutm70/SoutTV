@@ -204,7 +204,7 @@ private fun BrandBlock(alignStart: Boolean = false) {
         BrandLogo()
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "AerioTV",
+            text = "SoutsTV",
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold,

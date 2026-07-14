@@ -241,7 +241,7 @@ class AerioExoPlayerHolder @Inject constructor(
                         readTimeout = 8000
                         requestMethod = "GET"
                         httpHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
-                        setRequestProperty("User-Agent", "AerioTV-switch-keepalive")
+                        setRequestProperty("User-Agent", "SoutsTV-switch-keepalive")
                     }
                     connHolder.set(c)
                     c.inputStream.use { ins ->
@@ -1473,6 +1473,6 @@ class AerioExoPlayerHolder @Inject constructor(
          * shape as DispatcharrClient's UA + iOS DeviceInfo.defaultUserAgent.
          */
         private val DEFAULT_PLAYBACK_USER_AGENT =
-            "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+            "SoutsTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
     }
 }

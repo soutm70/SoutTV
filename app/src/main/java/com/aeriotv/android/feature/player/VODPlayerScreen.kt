@@ -706,7 +706,7 @@ fun VODPlayerScreen(
                     .setReadTimeoutMs(30_000)
                     // Send a real player UA (parity with live path); some
                     // panels reject the platform "Dalvik/..." default.
-                    .setUserAgent("AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
+                    .setUserAgent("SoutsTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
                 if (httpHeaders.isNotEmpty()) {
                     dataSourceFactory.setDefaultRequestProperties(httpHeaders)
                     httpHeaders.entries

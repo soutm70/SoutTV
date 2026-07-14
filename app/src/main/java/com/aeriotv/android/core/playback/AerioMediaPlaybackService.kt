@@ -279,7 +279,7 @@ class AerioMediaPlaybackService : MediaLibraryService() {
     private fun buildPlaceholderNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("AerioTV")
+            .setContentTitle("SoutsTV")
             .setContentText("Starting playback...")
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

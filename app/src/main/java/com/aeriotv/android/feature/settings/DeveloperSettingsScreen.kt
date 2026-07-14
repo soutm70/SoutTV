@@ -166,7 +166,7 @@ fun DeveloperSettingsScreen(
             title = { Text("Enable Debug Logging?") },
             text = {
                 Text(
-                    "AerioTV will write detailed diagnostic logs to a file in the app's " +
+                    "SoutsTV will write detailed diagnostic logs to a file in the app's " +
                         "private storage.\n\nLogs include network requests, playback events, " +
                         "and error details. They never leave the device unless you share the " +
                         "file from this screen.\n\nLogging has a minor impact on performance " +
@@ -513,7 +513,7 @@ private fun shareLogFile(
     val sendIntent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_SUBJECT, "AerioTV debug logs")
+        putExtra(Intent.EXTRA_SUBJECT, "SoutsTV debug logs")
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     val chooser = Intent.createChooser(sendIntent, "Share Log File")

@@ -478,7 +478,7 @@ private fun LanUrlField(state: PlaylistViewModel.UiState, viewModel: PlaylistVie
         )
     }
     Text(
-        text = "AerioTV uses this URL automatically whenever your server is reachable on " +
+        text = "SoutsTV uses this URL automatically whenever your server is reachable on " +
                 "the local network, and the public one above otherwise. No setup needed.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

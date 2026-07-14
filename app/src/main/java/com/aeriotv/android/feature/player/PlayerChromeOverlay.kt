@@ -629,7 +629,7 @@ fun PlayerChromeOverlay(
                     }
                 } ?: run {
                     Text(
-                        text = channel?.name ?: "AerioTV",
+                        text = channel?.name ?: "SoutsTV",
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,

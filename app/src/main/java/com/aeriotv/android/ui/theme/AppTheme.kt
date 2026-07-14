@@ -22,7 +22,7 @@ enum class AppTheme(
         cardBackground  = Color(0xFF16002A),  // Dark plum
     ),
     Aerio(
-        displayName = "AerioTV",
+        displayName = "SoutsTV",
         accentPrimary   = Color(0xFF1AC4D8),
         accentSecondary = Color(0xFF1A8FA8),
         appBackground   = Color(0xFF0A1628),

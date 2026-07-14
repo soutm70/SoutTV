@@ -233,7 +233,7 @@ fun SettingsScreen(
                             updatedAt,
                         )
                         val cm = context.getSystemService(android.content.ClipboardManager::class.java)
-                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("AerioTV diagnostics", text))
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("SoutsTV diagnostics", text))
                         android.widget.Toast.makeText(
                             context,
                             "Copied diagnostics to clipboard.",
@@ -720,7 +720,7 @@ private fun buildAboutClipboard(
     installedAt: Long,
     updatedAt: Long,
 ): String = buildString {
-    appendLine("AerioTV diagnostics")
+    appendLine("SoutsTV diagnostics")
     appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim())
     appendLine("System: Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})")
     appendLine("App Version: $versionName ($versionCode)")

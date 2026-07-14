@@ -312,7 +312,7 @@ class DispatcharrClient @Inject constructor() {
      * ships (iOS deviceNickname pref equivalent).
      */
     private val dispatcharrUserAgent: String by lazy {
-        "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+        "SoutsTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
     }
 
     /**

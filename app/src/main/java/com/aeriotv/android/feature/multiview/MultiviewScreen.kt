@@ -1486,7 +1486,7 @@ private fun ExoTile(
                 .setReadTimeoutMs(30_000)
                 // Send a real player UA (parity with live path); some panels
                 // reject the platform "Dalvik/..." default.
-                .setUserAgent("AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
+                .setUserAgent("SoutsTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
             if (headers.isNotEmpty()) {
                 httpFactory.setDefaultRequestProperties(headers)
                 headers.entries

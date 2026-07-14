@@ -663,7 +663,7 @@ fun PlayerScreen(
     // (not audio-only) auto-enters PiP; audio-only instead keeps a background
     // media notification (no PiP). Cleared when the player leaves composition.
     DisposableEffect(audioOnly, currentChannel?.id, nowProgramme?.title) {
-        PipState.nowPlayingTitle = currentChannel?.name ?: "AerioTV"
+        PipState.nowPlayingTitle = currentChannel?.name ?: "SoutsTV"
         PipState.nowPlayingSubtitle = nowProgramme?.title.orEmpty()
         PipState.nowPlayingLogo = currentChannel?.tvgLogo?.takeIf { it.isNotBlank() }
         PipState.videoPlaybackActive.value = !audioOnly

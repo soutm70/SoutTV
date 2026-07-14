@@ -1,0 +1,25 @@
+app/src/main/java/com/aeriotv/android/core/network/DispatcharrClient.kt:315:        "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+app/src/main/java/com/aeriotv/android/core/pip/PipState.kt:43:    @Volatile var nowPlayingTitle: String = "AerioTV"
+app/src/main/java/com/aeriotv/android/core/debug/ResourceTelemetry.kt:26: * is the diagnostic the "AerioTV crashes on the Google TV Streamer" reports
+app/src/main/java/com/aeriotv/android/core/playback/AutoBrowseTree.kt:68:    fun rootItem(): MediaItem = browsable(ROOT_ID, "AerioTV")
+app/src/main/java/com/aeriotv/android/core/playback/AerioExoPlayerHolder.kt:244:                        setRequestProperty("User-Agent", "AerioTV-switch-keepalive")
+app/src/main/java/com/aeriotv/android/core/playback/AerioExoPlayerHolder.kt:1476:            "AerioTV/${BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})"
+app/src/main/java/com/aeriotv/android/core/playback/AerioMediaPlaybackService.kt:282:            .setContentTitle("AerioTV")
+app/src/main/java/com/aeriotv/android/AerioTVApplication.kt:155:        // "AerioTV crashes on the Google TV Streamer" reports - by the time a
+app/src/main/java/com/aeriotv/android/feature/settings/SettingsScreen.kt:236:                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("AerioTV diagnostics", text))
+app/src/main/java/com/aeriotv/android/feature/settings/SettingsScreen.kt:723:    appendLine("AerioTV diagnostics")
+app/src/main/java/com/aeriotv/android/feature/settings/DeveloperSettingsScreen.kt:169:                    "AerioTV will write detailed diagnostic logs to a file in the app's " +
+app/src/main/java/com/aeriotv/android/feature/settings/DeveloperSettingsScreen.kt:516:        putExtra(Intent.EXTRA_SUBJECT, "AerioTV debug logs")
+app/src/main/java/com/aeriotv/android/feature/settings/AppearanceSettingsScreen.kt:526:                text = "AerioTV Sample Program",
+app/src/main/java/com/aeriotv/android/feature/multiview/MultiviewScreen.kt:1489:                .setUserAgent("AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
+app/src/main/java/com/aeriotv/android/feature/onboarding/ConfigureSourceScreen.kt:481:        text = "AerioTV uses this URL automatically whenever your server is reachable on " +
+app/src/main/java/com/aeriotv/android/feature/onboarding/WelcomeScreen.kt:207:            text = "AerioTV",
+app/src/main/java/com/aeriotv/android/feature/player/PlayerChromeOverlay.kt:632:                        text = channel?.name ?: "AerioTV",
+app/src/main/java/com/aeriotv/android/feature/player/VODPlayerScreen.kt:709:                    .setUserAgent("AerioTV/${com.aeriotv.android.BuildConfig.VERSION_NAME} (Android; ${android.os.Build.MODEL})")
+app/src/main/java/com/aeriotv/android/feature/player/PlayerScreen.kt:666:        PipState.nowPlayingTitle = currentChannel?.name ?: "AerioTV"
+app/src/main/java/com/aeriotv/android/feature/dvr/LocalRecordingService.kt:421:            "AerioTV:LocalRecording",
+app/src/main/java/com/aeriotv/android/feature/update/UpdateUi.kt:193:            bodyText = "AerioTV ${state.info.versionName} is ready to download (${mb} MB)."
+app/src/main/java/com/aeriotv/android/feature/update/UpdateUi.kt:199:            bodyText = "AerioTV ${state.info.versionName}"
+app/src/main/java/com/aeriotv/android/feature/update/UpdateUi.kt:211:            bodyText = "AerioTV ${state.info.versionName} is verified and ready. Your " +
+app/src/main/java/com/aeriotv/android/feature/splash/SplashScreen.kt:40: * bold "AerioTV", and the cyan "Live TV · Movies · Series" subtitle.
+app/src/main/java/com/aeriotv/android/ui/theme/AppTheme.kt:25:        displayName = "AerioTV",

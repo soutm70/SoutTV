@@ -523,7 +523,7 @@ private fun PreviewCard(theme: AppTheme, customAccentHex: String?) {
                 )
             }
             Text(
-                text = "AerioTV Sample Program",
+                text = "SoutsTV Sample Program",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White,
                 fontWeight = FontWeight.SemiBold,

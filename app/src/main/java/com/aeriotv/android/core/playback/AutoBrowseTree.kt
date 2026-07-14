@@ -65,7 +65,7 @@ class AutoBrowseTree @Inject constructor(
 
     // ---- Browse tree -------------------------------------------------------
 
-    fun rootItem(): MediaItem = browsable(ROOT_ID, "AerioTV")
+    fun rootItem(): MediaItem = browsable(ROOT_ID, "SoutsTV")
 
     /** Children of a browsable node. [parentId] is always a node id. */
     suspend fun children(parentId: String): List<MediaItem> {
